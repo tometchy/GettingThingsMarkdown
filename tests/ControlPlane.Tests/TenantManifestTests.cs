@@ -57,6 +57,39 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void HistoryPrivateKeyIsNeverMountedInSync()
+    {
+        var id = Guid.NewGuid();
+        using var syncthing = JsonDocument.Parse(TenantManifests
+            .Build(id, "basic", 2, null, "sync", "history")
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "sync").Json);
+        string serialized = syncthing.RootElement.ToString();
+        Assert.Contains("history-ca", serialized);
+        Assert.DoesNotContain("history-tls", serialized);
+        var pair = TenantCertificate.CreatePair(TenantNames.Namespace(id));
+        using var publicSecret = JsonDocument.Parse(pair.Public.Json);
+        Assert.True(publicSecret.RootElement.GetProperty("data").TryGetProperty("tls.crt", out _));
+        Assert.False(publicSecret.RootElement.GetProperty("data").TryGetProperty("tls.key", out _));
+    }
+
+    [Fact]
+    public void PreferDifferentAvailabilityZone()
+    {
+        var id = Guid.NewGuid();
+        using var syncthing = JsonDocument.Parse(TenantManifests
+            .Build(id, "basic", 2, null, "sync", "history")
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "sync").Json);
+        var pod = syncthing.RootElement.GetProperty("spec").GetProperty("template")
+            .GetProperty("spec");
+        var preferred = pod.GetProperty("affinity").GetProperty("podAntiAffinity")
+            .GetProperty("preferredDuringSchedulingIgnoredDuringExecution");
+        Assert.Equal("topology.kubernetes.io/zone", preferred[0]
+            .GetProperty("podAffinityTerm").GetProperty("topologyKey").GetString());
+        Assert.Equal("ScheduleAnyway", pod.GetProperty("topologySpreadConstraints")[0]
+            .GetProperty("whenUnsatisfiable").GetString());
+    }
+
+    [Fact]
     public void ServerCertificateMatchesInternalHistoryHost()
     {
         var resource = TenantCertificate.Create("gtm-abc");

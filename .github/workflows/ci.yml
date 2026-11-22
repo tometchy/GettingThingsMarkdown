@@ -85,3 +85,24 @@ jobs:
             kubectl -n "$ns" logs sync-0 --tail=60 || true
             kubectl -n "$ns" logs history-0 --tail=60 || true
           done
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.17.4
+      - name: Validate Helm chart and render non-public defaults
+        run: |
+          helm lint infrastructure/helm/gtm-controlplane
+          helm template gtm infrastructure/helm/gtm-controlplane > /tmp/gtm-helm-manifest.yaml
+          grep -q 'kind: Deployment' /tmp/gtm-helm-manifest.yaml
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.10.0
+      - name: Validate Scaleway module without deploying
+        working-directory: infrastructure/terraform/scaleway
+        run: |
+          tofu fmt -check -recursive
+          tofu init -backend=false -input=false
+          tofu validate
