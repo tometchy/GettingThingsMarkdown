@@ -135,6 +135,30 @@ authenticated.MapPost("/billing/portal", async (ClaimsPrincipal user, AppDb db,
 });
 
 // Emergency/admin operations require a separate server-only secret, never a user account flag.
+app.MapGet("/api/admin/accounts", async (string? email, HttpContext context,
+    AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    var query = db.Accounts.AsNoTracking();
+    if (!string.IsNullOrWhiteSpace(email))
+    {
+        var normalized = email.Trim().ToLowerInvariant();
+        query = query.Where(a => a.Email == normalized);
+    }
+    var accounts = await query.OrderBy(x => x.Email).Take(50).ToListAsync(ct);
+    return Results.Ok(accounts.Select(a => PlanCatalog.View(a, clock.GetUtcNow())));
+});
+
+app.MapGet("/api/admin/accounts/{id:guid}/audit", async (Guid id, HttpContext context,
+    AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    var entries = await db.Audit.AsNoTracking()
+        .Where(x => x.AccountId == id).OrderByDescending(x => x.OccurredUtc)
+        .Take(50).ToListAsync(ct);
+    return Results.Ok(entries);
+});
+
 app.MapPost("/api/admin/accounts/{id:guid}/extend-trial", async (
     Guid id, ExtendTrialRequest request, HttpContext context,
     AppDb db, CancellationToken ct) =>
@@ -210,7 +234,8 @@ app.MapPost("/api/webhooks/stripe", async (HttpContext context,
                 account.PaidUntilUtc = end;
             // A paid plan is selected only by a signed Stripe subscription event.
             var items = StripeGateway.Nested(data, "items", "data");
-            if (items.ValueKind == JsonValueKind.Array)
+            if (account.StripeStatus == "active" && account.PaidUntilUtc > clock.GetUtcNow() &&
+                items.ValueKind == JsonValueKind.Array)
                 foreach (var item in items.EnumerateArray())
                 {
                     var price = StripeGateway.String(StripeGateway.Nested(item, "price"), "id");
