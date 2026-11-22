@@ -12,7 +12,7 @@ password="$(openssl rand -base64 32)"
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
   if [ -n "${pf:-}" ]; then kill "$pf" 2>/dev/null || true; fi
-  rm -rf "$root"
+  rm -rf "$root" 2>/dev/null || true # Container-owned Syncthing database in ephemeral CI workspace
 }
 trap cleanup EXIT
 
@@ -34,6 +34,12 @@ done
 [ -s "$root/status.json" ] || { docker logs "$name" | tail -50; exit 1; }
 client_id="$(jq -r .myID "$root/status.json")"
 echo "Client device ID created"
+# Fail before pairing if shell serialization damaged the token or account ID.
+if [[ ! "$GTM_E2E_ACCOUNT_ID" =~ ^[a-f0-9-]{36}$ ]] ||
+   [ "$(awk -F. '{print NF}' <<< "$GTM_E2E_JWT")" != 3 ]; then
+  echo "Invalid account ID/JWT from provisioning smoke test" >&2
+  exit 1
+fi
 
 result="$(curl -fsS -X POST -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GTM_E2E_JWT" \
