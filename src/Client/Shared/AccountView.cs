@@ -14,7 +14,7 @@ public sealed class AccountView : UserControl
     private readonly TextBlock _description = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBlock _status = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBlock _account = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly TextBox _email = new() { Watermark = "E-mail" };
+    private readonly TextBox _email = new() { PlaceholderText = "E-mail" };
     private readonly TextBox _password = new() { PasswordChar = '●' };
     private readonly ComboBox _plan = new() { SelectedIndex = 0 };
     private readonly Button _register = new();
