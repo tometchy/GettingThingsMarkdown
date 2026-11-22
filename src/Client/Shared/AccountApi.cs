@@ -28,6 +28,7 @@ public record TenantStatusInfo(string Status, string? ServerDeviceId, string? De
 [JsonSerializable(typeof(PairDevicePayload))]
 [JsonSerializable(typeof(TenantStatusInfo))]
 [JsonSerializable(typeof(ServerPairing))]
+[JsonSerializable(typeof(string[]))]
 public partial class AccountJsonContext : JsonSerializerContext { }
 
 public sealed class AccountApi : IDisposable
@@ -96,6 +97,15 @@ public sealed class AccountApi : IDisposable
             AccountJsonContext.Default.PairDevicePayload);
         return await RequestAsync(HttpMethod.Post, "api/devices",
             payload, AccountJsonContext.Default.ServerPairing);
+    }
+
+    public Task<string[]> DevicesAsync() =>
+        RequestAsync(HttpMethod.Get, "api/devices", null, AccountJsonContext.Default.StringArray);
+
+    public async Task RevokeDeviceAsync(string deviceId)
+    {
+        using var result = await _http.DeleteAsync("api/devices/" + Uri.EscapeDataString(deviceId));
+        result.EnsureSuccessStatusCode();
     }
 
     public void Dispose() => _http.Dispose();
