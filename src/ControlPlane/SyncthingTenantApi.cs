@@ -73,6 +73,43 @@ public sealed class SyncthingTenantApi : IDisposable
         save.EnsureSuccessStatusCode();
     }
 
+    public async Task<IReadOnlyList<string>> ListPairedDeviceIdsAsync(CancellationToken ct)
+    {
+        var ownId = await DeviceIdAsync(ct);
+        var json = await _http.GetFromJsonAsync<JsonArray>("rest/config/devices", ct)
+            ?? throw new InvalidOperationException("Cannot read paired devices.");
+        return json.Select(x => x?["deviceID"]?.ToString() ?? "")
+            .Where(x => ValidId(x) && x != ownId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    public async Task RemoveDeviceAsync(string deviceId, CancellationToken ct)
+    {
+        if (!ValidId(deviceId) || deviceId == await DeviceIdAsync(ct))
+            throw new ArgumentException("Invalid device ID.");
+
+        using var folderResponse = await _http.GetAsync(
+            "rest/config/folders/" + TenantNames.FolderId, ct);
+        if (folderResponse.IsSuccessStatusCode)
+        {
+            var folder = JsonNode.Parse(await folderResponse.Content.ReadAsStringAsync(ct))!.AsObject();
+            var devices = folder["devices"] as JsonArray ?? new JsonArray();
+            for (int i = devices.Count - 1; i >= 0; i--)
+            {
+                if (devices[i]?["deviceID"]?.ToString() == deviceId)
+                    devices.RemoveAt(i);
+            }
+            if (folder["devices"] is null) folder["devices"] = devices;
+            using var saved = await _http.PutAsJsonAsync(
+                "rest/config/folders/" + TenantNames.FolderId, folder, ct);
+            saved.EnsureSuccessStatusCode();
+        }
+        using var removed = await _http.DeleteAsync("rest/config/devices/" + deviceId, ct);
+        if (!removed.IsSuccessStatusCode && removed.StatusCode != System.Net.HttpStatusCode.NotFound)
+            removed.EnsureSuccessStatusCode();
+    }
+
     public void Dispose() => _http.Dispose();
 }
 
