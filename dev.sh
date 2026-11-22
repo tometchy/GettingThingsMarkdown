@@ -14,11 +14,17 @@ case "${1:-help}" in
   browser)
     exec dotnet run --project src/Client/Browser
     ;;
+  web-publish)
+    dotnet publish src/Client/Browser/GettingThingsMarkdown.Client.Browser.csproj -c Release
+    mkdir -p src/ControlPlane/wwwroot/app
+    cp -a src/Client/Browser/bin/Release/net10.0-browser/publish/wwwroot/. src/ControlPlane/wwwroot/app/
+    echo "Avalonia WASM published to /app/ on the Control Plane host"
+    ;;
   test)
     exec dotnet test tests/ControlPlane.Tests/ControlPlane.Tests.csproj
     ;;
   *)
-    echo "Available: ./dev.sh api | desktop | browser | test"
+    echo "Available: ./dev.sh api | desktop | browser | web-publish | test"
     echo "Required Kubernetes/Syncthing setup, up, down, and E2EE tests are NOT implemented."
     exit 1
     ;;
