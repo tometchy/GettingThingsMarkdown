@@ -20,6 +20,9 @@ builder.Services.AddSingleton(tokenService);
 builder.Services.AddSingleton<IPasswordHasher<Account>, PasswordHasher<Account>>();
 builder.Services.AddDbContext<AppDb>(o => o.UseSqlite(
     builder.Configuration["GTM_DB"] ?? "Data Source=gtm.sqlite"));
+builder.Services.AddDbContext<ProvisioningDb>(o => o.UseSqlite(
+    builder.Configuration["GTM_PROVISIONING_DB"] ?? "Data Source=gtm-provisioning.sqlite"));
+builder.Services.AddHostedService<ProvisioningWorker>();
 builder.Services.AddHttpClient<StripeGateway>(client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o => o.TokenValidationParameters = tokenService.Validation);
@@ -52,7 +55,10 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 using (var scope = app.Services.CreateScope())
+{
     await scope.ServiceProvider.GetRequiredService<AppDb>().Database.EnsureCreatedAsync();
+    await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
+}
 
 var clock = TimeProvider.System;
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
@@ -105,6 +111,43 @@ authenticated.MapGet("/account", async (ClaimsPrincipal user, AppDb db, Cancella
     var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
     return account is null ? Results.NotFound() :
         Results.Ok(PlanCatalog.View(account, clock.GetUtcNow()));
+});
+
+authenticated.MapGet("/tenant", async (ClaimsPrincipal user, ProvisioningDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var tenant = await db.Tenants.FindAsync([id.Value], ct);
+    return Results.Ok(tenant is null
+        ? new TenantStatusView("Pending", null, "Provisioning not started.", TenantNames.FolderId, null)
+        : new TenantStatusView(tenant.Status, tenant.ServerDeviceId,
+            tenant.Status == "Failed" ? tenant.LastError : null, TenantNames.FolderId,
+            builder.Configuration["GTM_SYNC_PUBLIC_ADDRESS"]));
+});
+
+authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal user,
+    ProvisioningDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
+    if (tenant is null || tenant.Status != "Ready") return Results.Problem(
+        "Tenant not yet ready.", statusCode: 409);
+    if (!builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED"))
+        return Results.Problem("Kubernetes not enabled.", statusCode: 503);
+    using var kube = new KubeApi();
+    var credentials = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (credentials is null) return Results.Problem("Missing tenant credentials.", statusCode: 503);
+    using var syncthing = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"]);
+    try
+    {
+        await syncthing.AddDeviceAsync(input.DeviceId, input.Name, ct);
+        return Results.Ok(new PairResponse(TenantNames.FolderId,
+            tenant.ServerDeviceId ?? await syncthing.DeviceIdAsync(ct),
+            builder.Configuration["GTM_SYNC_PUBLIC_ADDRESS"] ?? "",
+            "Syncthing Untrusted Device Encryption; key remains on trusted clients"));
+    }
+    catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
+    catch (HttpRequestException) { return Results.Problem("Syncthing pairing failed.", statusCode: 503); }
 });
 
 authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
