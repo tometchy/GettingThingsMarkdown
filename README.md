@@ -43,7 +43,7 @@ It takes time for Gitea and Syncthing to initialize. `./dev.sh integration` regi
 Desktop UI with an embedded, release-verified Syncthing binary:
 
 ```bash
-./packaging/linux/bundle-syncthing.sh
+bash packaging/linux/bundle-syncthing.sh
 ./dev.sh desktop
 ```
 
