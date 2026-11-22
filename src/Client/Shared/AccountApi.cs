@@ -1,0 +1,85 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+
+namespace GettingThingsMarkdown.Client.Shared;
+
+public record AccountInfo(Guid Id, string Email, string Plan, long QuotaBytes,
+    DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
+    string PaymentStatus, bool CanWrite, string Entitlement);
+public record LoginResult(string AccessToken, AccountInfo Account);
+public record CheckoutUrl(string Url);
+public record RegisterPayload(string Email, string Password, string Plan);
+public record LoginPayload(string Email, string Password);
+public record CheckoutPayload(string Plan);
+
+// WASM trimming and future iOS AOT: all API JSON shapes must be source-generated.
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(AccountInfo))]
+[JsonSerializable(typeof(LoginResult))]
+[JsonSerializable(typeof(CheckoutUrl))]
+[JsonSerializable(typeof(RegisterPayload))]
+[JsonSerializable(typeof(LoginPayload))]
+[JsonSerializable(typeof(CheckoutPayload))]
+public partial class AccountJsonContext : JsonSerializerContext { }
+
+public sealed class AccountApi : IDisposable
+{
+    private readonly HttpClient _http = new() { BaseAddress = ApiConfiguration.BaseAddress };
+
+    private async Task<T> RequestAsync<T>(HttpMethod method, string path,
+        HttpContent? payload, JsonTypeInfo<T> responseType)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = payload };
+        using var response = await _http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        return await response.Content.ReadFromJsonAsync(responseType)
+            ?? throw new InvalidOperationException("Empty response.");
+    }
+
+    public async Task<AccountInfo> RegisterAsync(string email, string password, string plan)
+    {
+        using var payload = JsonContent.Create(
+            new RegisterPayload(email, password, plan), AccountJsonContext.Default.RegisterPayload);
+        var result = await RequestAsync(HttpMethod.Post, "api/auth/register",
+            payload, AccountJsonContext.Default.LoginResult);
+        SetToken(result.AccessToken);
+        return result.Account;
+    }
+
+    public async Task<AccountInfo> LoginAsync(string email, string password)
+    {
+        using var payload = JsonContent.Create(
+            new LoginPayload(email, password), AccountJsonContext.Default.LoginPayload);
+        var result = await RequestAsync(HttpMethod.Post, "api/auth/login",
+            payload, AccountJsonContext.Default.LoginResult);
+        SetToken(result.AccessToken);
+        return result.Account;
+    }
+
+    private void SetToken(string token) =>
+        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+    public Task<AccountInfo> CurrentAsync() =>
+        RequestAsync(HttpMethod.Get, "api/account", null, AccountJsonContext.Default.AccountInfo);
+
+    public async Task<Uri> CheckoutAsync(string plan)
+    {
+        using var payload = JsonContent.Create(new CheckoutPayload(plan),
+            AccountJsonContext.Default.CheckoutPayload);
+        var result = await RequestAsync(HttpMethod.Post, "api/billing/checkout",
+            payload, AccountJsonContext.Default.CheckoutUrl);
+        return new Uri(result.Url);
+    }
+
+    public async Task<Uri> PortalAsync()
+    {
+        var result = await RequestAsync(HttpMethod.Post, "api/billing/portal",
+            null, AccountJsonContext.Default.CheckoutUrl);
+        return new Uri(result.Url);
+    }
+
+    public void Dispose() => _http.Dispose();
+}
