@@ -1,0 +1,261 @@
+using System.ComponentModel.DataAnnotations;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
+using System.Threading.RateLimiting;
+using GettingThingsMarkdown.ControlPlane;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+string? jwtSecret = builder.Configuration["GTM_JWT_SECRET"];
+if (string.IsNullOrWhiteSpace(jwtSecret))
+    throw new InvalidOperationException("Set GTM_JWT_SECRET to a random string of at least 32 bytes.");
+var tokenService = new TokenService(jwtSecret);
+builder.Services.AddSingleton(tokenService);
+builder.Services.AddSingleton<IPasswordHasher<Account>, PasswordHasher<Account>>();
+builder.Services.AddDbContext<AppDb>(o => o.UseSqlite(
+    builder.Configuration["GTM_DB"] ?? "Data Source=gtm.sqlite"));
+builder.Services.AddHttpClient<StripeGateway>(client => client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o => o.TokenValidationParameters = tokenService.Validation);
+builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ =>
+            new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+            }));
+});
+builder.Services.AddCors(o => o.AddPolicy("browser", policy =>
+{
+    var allowed = builder.Configuration["GTM_WEB_ORIGIN"];
+    if (!string.IsNullOrWhiteSpace(allowed))
+        policy.WithOrigins(allowed).AllowAnyHeader().AllowAnyMethod();
+}));
+
+var app = builder.Build();
+if (!app.Environment.IsDevelopment()) app.UseHsts();
+app.UseHttpsRedirection();
+app.UseCors("browser");
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+using (var scope = app.Services.CreateScope())
+    await scope.ServiceProvider.GetRequiredService<AppDb>().Database.EnsureCreatedAsync();
+
+var clock = TimeProvider.System;
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Quotas.Select(p =>
+    new { id = p.Key, quotaBytes = p.Value })));
+
+app.MapPost("/api/auth/register", async (RegisterRequest input, AppDb db,
+    IPasswordHasher<Account> hasher, TokenService tokens, CancellationToken ct) =>
+{
+    var email = (input.Email ?? "").Trim().ToLowerInvariant();
+    var plan = (input.Plan ?? "").Trim().ToLowerInvariant();
+    if (!new EmailAddressAttribute().IsValid(email) || email.Length > 254 ||
+        input.Password is null || input.Password.Length < 12 || input.Password.Length > 1024 ||
+        !PlanCatalog.IsValid(plan))
+        return Results.BadRequest(new { error = "Invalid email, plan or password (minimum 12 characters)." });
+
+    var now = clock.GetUtcNow();
+    bool longTrial = app.Environment.IsDevelopment() &&
+        builder.Configuration.GetValue<bool>("GTM_DEV_LONG_TRIAL");
+    var account = new Account
+    {
+        Email = email, Plan = plan, CreatedUtc = now,
+        TrialUntilUtc = TrialPolicy.NewTrialEnd(now, app.Environment.IsDevelopment(), longTrial)
+    };
+    account.PasswordHash = hasher.HashPassword(account, input.Password);
+    db.Accounts.Add(account);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException) { return Results.Conflict(new { error = "Account already exists." }); }
+    return Results.Created("/api/account", new AuthResponse(tokens.Issue(account),
+        PlanCatalog.View(account, now)));
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/auth/login", async (LoginRequest input, AppDb db,
+    IPasswordHasher<Account> hasher, TokenService tokens, CancellationToken ct) =>
+{
+    var email = (input.Email ?? "").Trim().ToLowerInvariant();
+    var account = await db.Accounts.SingleOrDefaultAsync(a => a.Email == email, ct);
+    if (account is null || input.Password is null ||
+        hasher.VerifyHashedPassword(account, account.PasswordHash, input.Password)
+            == PasswordVerificationResult.Failed)
+        return Results.Unauthorized();
+    return Results.Ok(new AuthResponse(tokens.Issue(account),
+        PlanCatalog.View(account, clock.GetUtcNow())));
+}).RequireRateLimiting("auth");
+
+var authenticated = app.MapGroup("/api").RequireAuthorization();
+authenticated.MapGet("/account", async (ClaimsPrincipal user, AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    return account is null ? Results.NotFound() :
+        Results.Ok(PlanCatalog.View(account, clock.GetUtcNow()));
+});
+
+authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
+    ClaimsPrincipal user, AppDb db, StripeGateway stripe, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    var plan = (request.Plan ?? "").ToLowerInvariant();
+    if (!PlanCatalog.IsValid(plan)) return Results.BadRequest(new { error = "Unknown plan." });
+    if (!stripe.Configured) return Results.Problem("Stripe is not configured.", statusCode: 503);
+    try { return Results.Ok(await stripe.CheckoutAsync(account, plan, ct)); }
+    catch (InvalidOperationException) { return Results.Problem("Checkout unavailable.", statusCode: 503); }
+});
+
+authenticated.MapPost("/billing/portal", async (ClaimsPrincipal user, AppDb db,
+    StripeGateway stripe, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    if (!stripe.Configured || account.StripeCustomerId is null)
+        return Results.Problem("Customer portal unavailable.", statusCode: 503);
+    try { return Results.Ok(await stripe.PortalAsync(account, ct)); }
+    catch (InvalidOperationException) { return Results.Problem("Customer portal unavailable.", statusCode: 503); }
+});
+
+// Emergency/admin operations require a separate server-only secret, never a user account flag.
+app.MapPost("/api/admin/accounts/{id:guid}/extend-trial", async (
+    Guid id, ExtendTrialRequest request, HttpContext context,
+    AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    if (request.Days is < 1 or > 36500) return Results.BadRequest(new { error = "Invalid days." });
+    var account = await db.Accounts.FindAsync([id], ct);
+    if (account is null) return Results.NotFound();
+    var now = clock.GetUtcNow();
+    var before = account.TrialUntilUtc;
+    account.TrialUntilUtc = TrialPolicy.Extend(before, now, request.Days);
+    db.Audit.Add(new AuditEntry
+    {
+        AccountId = id, Action = "extend-trial", Actor = "admin-token",
+        OccurredUtc = now,
+        Details = $"days={request.Days};before={before:O};after={account.TrialUntilUtc:O};reason={request.Reason?.Replace(';', ',').Substring(0, Math.Min(request.Reason.Length, 120))}"
+    });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(PlanCatalog.View(account, now));
+});
+
+// Webhooks are authoritative only after signature verification. Do not trust redirect success URLs.
+app.MapPost("/api/webhooks/stripe", async (HttpContext context,
+    AppDb db, StripeGateway stripe, CancellationToken ct) =>
+{
+    if (context.Request.ContentLength is > 1048576)
+        return Results.StatusCode(413);
+    using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
+    var payload = await reader.ReadToEndAsync(ct);
+    var signature = context.Request.Headers["Stripe-Signature"].ToString();
+    if (!stripe.VerifySignature(payload, signature, clock.GetUtcNow()))
+        return Results.Unauthorized();
+
+    using var document = JsonDocument.Parse(payload);
+    var root = document.RootElement;
+    string? eventId = StripeGateway.String(root, "id");
+    string? type = StripeGateway.String(root, "type");
+    var data = StripeGateway.Nested(root, "data", "object");
+    if (string.IsNullOrEmpty(eventId) || eventId.Length > 255 || data.ValueKind != JsonValueKind.Object)
+        return Results.BadRequest();
+    if (await db.HandledStripeEvents.AnyAsync(x => x.Id == eventId, ct))
+        return Results.Ok(new { duplicate = true });
+
+    string? customerId = StripeGateway.String(data, "customer");
+    string? subscriptionId = type == "checkout.session.completed"
+        ? StripeGateway.String(data, "subscription")
+        : StripeGateway.String(data, "id");
+    var metadataId = StripeGateway.String(StripeGateway.Nested(data, "metadata"), "gtm_account_id");
+    var checkoutId = type == "checkout.session.completed"
+        ? StripeGateway.String(data, "client_reference_id") : null;
+    Guid? accountId = Guid.TryParse(metadataId ?? checkoutId, out var parsed) ? parsed : null;
+    Account? account = accountId is not null
+        ? await db.Accounts.FindAsync([accountId.Value], ct) : null;
+    if (account is null && subscriptionId is not null)
+        account = await db.Accounts.FirstOrDefaultAsync(x => x.StripeSubscriptionId == subscriptionId, ct);
+    if (account is null && customerId is not null)
+        account = await db.Accounts.FirstOrDefaultAsync(x => x.StripeCustomerId == customerId, ct);
+
+    if (account is not null)
+    {
+        if (type == "checkout.session.completed")
+        {
+            account.StripeCustomerId = customerId ?? account.StripeCustomerId;
+            account.StripeSubscriptionId = subscriptionId ?? account.StripeSubscriptionId;
+            // No entitlement granted by an unverified payment / mere checkout completion.
+        }
+        if (type is "customer.subscription.created" or "customer.subscription.updated")
+        {
+            account.StripeCustomerId = customerId ?? account.StripeCustomerId;
+            account.StripeSubscriptionId = subscriptionId ?? account.StripeSubscriptionId;
+            account.StripeStatus = StripeGateway.String(data, "status") ?? "unknown";
+            if (account.StripeStatus == "active" && StripeGateway.PeriodEnd(data) is { } end)
+                account.PaidUntilUtc = end;
+            // A paid plan is selected only by a signed Stripe subscription event.
+            var priceId = StripeGateway.String(StripeGateway.Nested(data, "items", "data"), "id");
+            var items = StripeGateway.Nested(data, "items", "data");
+            if (items.ValueKind == JsonValueKind.Array)
+                foreach (var item in items.EnumerateArray())
+                {
+                    var price = StripeGateway.String(StripeGateway.Nested(item, "price"), "id");
+                    foreach (var plan in PlanCatalog.Quotas.Keys)
+                        if (price is not null && price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()])
+                            account.Plan = plan;
+                }
+        }
+        if (type == "customer.subscription.deleted")
+        {
+            account.StripeStatus = "canceled";
+            account.PaidUntilUtc = clock.GetUtcNow();
+        }
+        if (type == "invoice.payment_failed")
+            account.StripeStatus = "past_due";
+        if (type == "invoice.paid")
+        {
+            // Also accept older and newer invoice subscription-reference shapes.
+            var parentSubscription = StripeGateway.String(
+                StripeGateway.Nested(data, "parent", "subscription_details"), "subscription");
+            var invoiceSubscription = StripeGateway.String(data, "subscription") ?? parentSubscription;
+            if (invoiceSubscription == account.StripeSubscriptionId)
+            {
+                var lines = StripeGateway.Nested(data, "lines", "data");
+                if (lines.ValueKind == JsonValueKind.Array)
+                    foreach (var line in lines.EnumerateArray())
+                    {
+                        var endJson = StripeGateway.Nested(line, "period", "end");
+                        if (endJson.ValueKind == JsonValueKind.Number && endJson.TryGetInt64(out var unix))
+                        {
+                            var until = DateTimeOffset.FromUnixTimeSeconds(unix);
+                            if (until > clock.GetUtcNow())
+                            {
+                                account.PaidUntilUtc = until;
+                                account.StripeStatus = "active";
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    db.HandledStripeEvents.Add(new HandledStripeEvent { Id = eventId, HandledUtc = clock.GetUtcNow() });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok();
+});
+
+app.Run();
+
+public partial class Program { }
