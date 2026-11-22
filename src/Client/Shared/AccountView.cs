@@ -21,6 +21,7 @@ public sealed class AccountView : UserControl
     private readonly Button _login = new();
     private readonly Button _checkout = new();
     private readonly Button _portal = new();
+    private readonly Button _refresh = new();
     private readonly Button _language = new();
     private readonly Button _openLink = new();
     private Uri? _pendingUrl;
@@ -40,11 +41,17 @@ public sealed class AccountView : UserControl
         _login.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             _current = await _api.LoginAsync(_email.Text ?? "", _password.Text ?? "");
+            _plan.SelectedIndex = _current.Plan switch { "plus" => 1, "pro" => 2, _ => 0 };
             Render();
         });
         _checkout.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             _pendingUrl = await _api.CheckoutAsync(Plan);
+            Render();
+        });
+        _refresh.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            _current = await _api.CurrentAsync();
             Render();
         });
         _portal.Click += async (_, _) => await ExecuteAsync(async () =>
@@ -68,6 +75,7 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_register);
         layout.Children.Add(_login);
         layout.Children.Add(_account);
+        layout.Children.Add(_refresh);
         layout.Children.Add(_checkout);
         layout.Children.Add(_portal);
         layout.Children.Add(_openLink);
@@ -95,6 +103,8 @@ public sealed class AccountView : UserControl
         _login.Content = T("Zaloguj się", "Sign in");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
+        _refresh.Content = T("Odśwież stan abonamentu", "Refresh subscription status");
+        _refresh.IsEnabled = _current is not null;
         _openLink.Content = T("Otwórz bezpieczną stronę Stripe", "Open secure Stripe page");
         _openLink.IsVisible = _pendingUrl is not null;
         _checkout.IsEnabled = _current is not null;
