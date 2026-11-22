@@ -150,6 +150,38 @@ authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal
     catch (HttpRequestException) { return Results.Problem("Syncthing pairing failed.", statusCode: 503); }
 });
 
+authenticated.MapGet("/devices", async (ClaimsPrincipal user,
+    ProvisioningDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
+    if (tenant is null || tenant.Status != "Ready")
+        return Results.Problem("Tenant not ready.", statusCode: 409);
+    if (!KubeApi.Available) return Results.Problem("Kubernetes unavailable.", statusCode: 503);
+    using var kube = new KubeApi();
+    var credentials = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (credentials is null) return Results.Problem("Tenant unavailable.", statusCode: 503);
+    using var sync = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"]);
+    return Results.Ok(await sync.ListPairedDeviceIdsAsync(ct));
+});
+
+authenticated.MapDelete("/devices/{deviceId}", async (string deviceId,
+    ClaimsPrincipal user, ProvisioningDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
+    if (tenant is null || tenant.Status != "Ready")
+        return Results.Problem("Tenant not ready.", statusCode: 409);
+    if (!KubeApi.Available) return Results.Problem("Kubernetes unavailable.", statusCode: 503);
+    using var kube = new KubeApi();
+    var credentials = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (credentials is null) return Results.Problem("Tenant unavailable.", statusCode: 503);
+    using var sync = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"]);
+    try { await sync.RemoveDeviceAsync(deviceId, ct); }
+    catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
+    return Results.NoContent();
+});
+
 // Gitea is never reachable directly from untrusted clients. The API exposes
 // only bounded read-only encrypted Git objects belonging to the current account.
 async Task<IResult> GetHistoryAsync(ClaimsPrincipal user, string? sha, string kind,
