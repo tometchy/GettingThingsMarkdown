@@ -23,7 +23,7 @@ public sealed class KubeApi : IDisposable
         string port = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT") ?? "443";
         const string path = "/var/run/secrets/kubernetes.io/serviceaccount/";
         string token = File.ReadAllText(path + "token").Trim();
-        var ca = X509Certificate2.CreateFromPemFile(path + "ca.crt");
+        var ca = X509CertificateLoader.LoadCertificateFromFile(path + "ca.crt");
         var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = (_, cert, _, sslErrors) =>
