@@ -10,6 +10,7 @@ RUN dotnet publish src/ControlPlane/GettingThingsMarkdown.ControlPlane.csproj -c
 # so that public /app/ registration actually works on a fresh kind deployment.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS browser-build
 WORKDIR /source
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python-is-python3 && rm -rf /var/lib/apt/lists/*
 RUN dotnet workload install wasm-tools
 COPY src/Automations/GettingThingsMarkdown.Automations.csproj src/Automations/
 COPY src/Client/Shared/GettingThingsMarkdown.Client.Shared.csproj src/Client/Shared/
