@@ -8,3 +8,5 @@
 !.env.example
 **/appsettings.*.Local.json
 .DS_Store
+
+/src/ControlPlane/wwwroot/app/
