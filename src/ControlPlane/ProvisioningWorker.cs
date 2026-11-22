@@ -108,7 +108,17 @@ public sealed class ProvisioningWorker(
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))
-            await kube.ApplyAsync(TenantCertificate.Create(ns), ct);
+        {
+            var pair = TenantCertificate.CreatePair(ns);
+            await kube.ApplyAsync(pair.Server, ct);
+            await kube.ApplyAsync(pair.Public, ct);
+        }
+        else if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-ca", ct))
+        {
+            var existing = await kube.SecretAsync(ns, "history-tls", ct)
+                ?? throw new InvalidOperationException("Missing Gitea certificate.");
+            await kube.ApplyAsync(TenantCertificate.PublicOnly(ns, existing["tls.crt"]), ct);
+        }
 
         // Apply Services before StatefulSets. A/B must remain in different nodes.
         foreach (var resource in declarations.Skip(1))
@@ -118,6 +128,27 @@ public sealed class ProvisioningWorker(
 
 public static class TenantCertificate
 {
+    public static (KubeObject Server, KubeObject Public) CreatePair(string ns)
+    {
+        var server = Create(ns);
+        using var json = JsonDocument.Parse(server.Json);
+        var base64 = json.RootElement.GetProperty("data").GetProperty("tls.crt").GetString()!;
+        var pem = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+        return (server, PublicOnly(ns, pem));
+    }
+
+    public static KubeObject PublicOnly(string ns, string pem) =>
+        KubeObject.From("v1", "Secret", "history-ca", ns, new
+        {
+            apiVersion = "v1", kind = "Secret",
+            metadata = new { name = "history-ca", @namespace = ns },
+            type = "Opaque",
+            data = new Dictionary<string,string>
+            {
+                ["tls.crt"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(pem))
+            }
+        });
+
     public static KubeObject Create(string ns)
     {
         string dns = $"history.{ns}.svc.cluster.local";
