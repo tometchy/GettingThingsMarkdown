@@ -31,7 +31,7 @@ jobs:
           path: src/Client/Browser/bin/Release/net10.0-browser/publish/wwwroot/
   images:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Validate local scripts
@@ -44,3 +44,39 @@ jobs:
         run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
       - name: Build Gitea History image
         run: docker build -f server/history/Dockerfile -t gtm/history:ci .
+      - name: Start disposable kind cluster for integration
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: gtm
+          config: infrastructure/kind/config.yaml
+      - name: Load real images and start API
+        run: |
+          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci
+          docker tag gtm/controlplane:ci gtm/controlplane:dev
+          docker tag gtm/sync:ci gtm/sync:dev
+          docker tag gtm/history:ci gtm/history:dev
+          kind load docker-image --name gtm gtm/controlplane:dev gtm/sync:dev gtm/history:dev
+          kubectl apply -f infrastructure/kubernetes/control-plane.yaml
+          kubectl -n gtm-system create secret generic controlplane-secrets \
+            --from-literal=jwt="$(openssl rand -hex 32)" \
+            --from-literal=admin="$(openssl rand -hex 32)"
+          kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
+      - name: Run real two-tenant provisioning smoke test
+        run: |
+          kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &
+          pf=$!
+          trap 'kill "$pf" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5080/healthz >/dev/null; then break; fi
+            sleep 2
+          done
+          bash tests/integration/kind-smoke.sh
+      - name: Dump diagnostic logs if integration fails
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n gtm-system logs deployment/controlplane --tail=200 || true
+          for ns in $(kubectl get namespace -o name | grep namespace/gtm- | sed 's@namespace/@@'); do
+            kubectl -n "$ns" logs sync-0 --tail=60 || true
+            kubectl -n "$ns" logs history-0 --tail=60 || true
+          done
