@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using Avalonia.Input.Platform;
 
 namespace GettingThingsMarkdown.Client.Shared;
 
@@ -75,8 +76,8 @@ public sealed class AccountView : UserControl
         {
             var tenant = await _api.TenantAsync();
             _tenantState.Text = T("Serwer: ", "Server: ") + tenant.Status +
-                (tenant.ServerDeviceId is null ? "" : "\\nSyncthing: " + tenant.ServerDeviceId) +
-                (tenant.Detail is null ? "" : "\\n" + tenant.Detail);
+                (tenant.ServerDeviceId is null ? "" : "\nSyncthing: " + tenant.ServerDeviceId) +
+                (tenant.Detail is null ? "" : "\n" + tenant.Detail);
             if (!string.IsNullOrWhiteSpace(tenant.LocalSyncAddress))
                 _syncAddress.Text = tenant.LocalSyncAddress;
         });
@@ -102,7 +103,7 @@ public sealed class AccountView : UserControl
             await _sync.ConfigureFolderAsync(_folderPath.Text ?? "", remote.FolderId,
                 remote.ServerDeviceId, address);
             _syncState.Text = T("Urządzenie połączone: ", "Device paired: ") + id +
-                "\\n" + await _sync.StatusAsync(remote.FolderId);
+                "\n" + await _sync.StatusAsync(remote.FolderId);
         });
         _recovery.Click += async (_, _) => await ExecuteAsync(async () =>
         {
