@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GettingThingsMarkdown.Client.Shared;
+using GettingThingsMarkdown.Automations;
 
 namespace GettingThingsMarkdown.Client.Desktop;
 
@@ -19,6 +20,9 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
     private HttpClient? _api;
     private Process? _process;
     private string? _apiKey;
+    private FileSystemWatcher? _watcher;
+    private string? _workspaceRoot;
+    private readonly SemaphoreSlim _automationGate = new(1, 1);
 
     public LocalSyncthingEngine()
     {
@@ -141,6 +145,36 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
         using var result = await api.PutAsJsonAsync("rest/config/folders/" + Uri.EscapeDataString(folderId),
             folder, ct);
         result.EnsureSuccessStatusCode();
+        await StartAutomationWatcherAsync(path, ct);
+    }
+
+    private async Task StartAutomationWatcherAsync(string workspace, CancellationToken ct)
+    {
+        _watcher?.Dispose();
+        _workspaceRoot = workspace;
+        var todo = Path.Combine(workspace, "ToDo");
+        Directory.CreateDirectory(todo);
+        foreach (var path in Directory.EnumerateFiles(todo, "*.md", SearchOption.AllDirectories))
+            await ProcessAutomationAsync(path, ct);
+        _watcher = new FileSystemWatcher(todo, "*.md")
+        {
+            IncludeSubdirectories = true,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite |
+                           NotifyFilters.CreationTime,
+            EnableRaisingEvents = true
+        };
+        _watcher.Created += (_, e) => _ = ProcessAutomationAsync(e.FullPath, CancellationToken.None);
+        _watcher.Changed += (_, e) => _ = ProcessAutomationAsync(e.FullPath, CancellationToken.None);
+        _watcher.Renamed += (_, e) => _ = ProcessAutomationAsync(e.FullPath, CancellationToken.None);
+    }
+
+    private async Task ProcessAutomationAsync(string path, CancellationToken ct)
+    {
+        if (_workspaceRoot is null) return;
+        await _automationGate.WaitAsync(ct);
+        try { await ArchiveCompletedTasks.ApplyAsync(_workspaceRoot, path, ct); }
+        catch (IOException) { /* File may be in transit; next watcher event retries. */ }
+        finally { _automationGate.Release(); }
     }
 
     public async Task<string> StatusAsync(string folderId, CancellationToken ct = default)
@@ -187,6 +221,7 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
 
     public async ValueTask DisposeAsync()
     {
+        _watcher?.Dispose();
         _api?.Dispose();
         if (_process is not null)
         {
