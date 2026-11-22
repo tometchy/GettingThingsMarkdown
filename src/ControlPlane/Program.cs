@@ -150,6 +150,58 @@ authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal
     catch (HttpRequestException) { return Results.Problem("Syncthing pairing failed.", statusCode: 503); }
 });
 
+// Gitea is never reachable directly from untrusted clients. The API exposes
+// only bounded read-only encrypted Git objects belonging to the current account.
+async Task<IResult> GetHistoryAsync(ClaimsPrincipal user, string? sha, string kind,
+    ProvisioningDb states, CancellationToken ct)
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var tenant = await states.Tenants.FindAsync([id.Value], ct);
+    if (tenant is null || tenant.Status != "Ready")
+        return Results.Problem("History tenant not ready.", statusCode: 409);
+    if (sha is not null && !GitHistoryProxy.ValidGitOid(sha))
+        return Results.BadRequest(new { error = "Invalid Git SHA." });
+    if (!KubeApi.Available)
+        return Results.Problem("History access requires Kubernetes.", statusCode: 503);
+    using var kube = new KubeApi();
+    var cert = await kube.SecretAsync(tenant.Namespace, "history-ca", ct);
+    var secrets = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (cert is null || secrets is null)
+        return Results.Problem("Missing tenant history credentials.", statusCode: 503);
+    using var history = new GitHistoryProxy(tenant.Namespace,
+        cert["tls.crt"], secrets["admin-pass"]);
+    try
+    {
+        string body = kind switch
+        {
+            "commits" => await history.RecentCommitsAsync(ct),
+            "tree" => await history.TreeAsync(sha!, ct),
+            "blob" => await history.EncryptedBlobAsync(sha!, ct),
+            _ => throw new InvalidOperationException("Unknown history action")
+        };
+        return Results.Content(body, "application/json");
+    }
+    catch (HttpRequestException)
+    {
+        return Results.Problem("Encrypted history unavailable.", statusCode: 503);
+    }
+    catch (InvalidOperationException)
+    {
+        return Results.Problem("Encrypted history response rejected.", statusCode: 413);
+    }
+}
+
+authenticated.MapGet("/history/commits", (ClaimsPrincipal user,
+    ProvisioningDb states, CancellationToken ct) =>
+    GetHistoryAsync(user, null, "commits", states, ct));
+authenticated.MapGet("/history/tree/{sha}", (ClaimsPrincipal user, string sha,
+    ProvisioningDb states, CancellationToken ct) =>
+    GetHistoryAsync(user, sha, "tree", states, ct));
+authenticated.MapGet("/history/blob/{sha}", (ClaimsPrincipal user, string sha,
+    ProvisioningDb states, CancellationToken ct) =>
+    GetHistoryAsync(user, sha, "blob", states, ct));
+
 authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     ClaimsPrincipal user, AppDb db, StripeGateway stripe, CancellationToken ct) =>
 {
