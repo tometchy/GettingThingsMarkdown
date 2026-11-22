@@ -98,7 +98,7 @@ public sealed class AccountView : UserControl
         _language.Content = _polish ? "English" : "Polski";
         _description.Text = T("Konto i abonament · jeden interfejs w WWW i aplikacji. Miesiąc bezpłatnie, bez karty.",
             "Account and subscription · same interface on web and desktop. One month free, no card.");
-        _password.Watermark = T("Hasło (min. 12 znaków)", "Password (min. 12 characters)");
+        _password.PlaceholderText = T("Hasło (min. 12 znaków)", "Password (min. 12 characters)");
         _register.Content = T("Załóż konto · trial", "Create account · trial");
         _login.Content = T("Zaloguj się", "Sign in");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
