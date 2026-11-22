@@ -16,7 +16,7 @@ public sealed class GitHistoryProxy : IDisposable
     {
         if (string.IsNullOrWhiteSpace(pem) || string.IsNullOrEmpty(archivePassword))
             throw new InvalidOperationException("Missing history credentials.");
-        var pinned = X509Certificate2.CreateFromPem(pem);
+        var pinned = X509CertificateLoader.LoadCertificate(Encoding.UTF8.GetBytes(pem));
         var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = (_, cert, _, errors) =>
