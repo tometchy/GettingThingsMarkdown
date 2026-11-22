@@ -195,6 +195,35 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
         return File.Exists(file) ? await File.ReadAllTextAsync(file, ct) : null;
     }
 
+    public async Task ImportRecoverySecretAsync(string folderId, string key,
+        CancellationToken ct = default)
+    {
+        if (folderId != "notes") throw new ArgumentException("Unsupported folder ID.");
+        string normalized = key.Trim();
+        byte[] raw;
+        try { raw = Convert.FromBase64String(normalized); }
+        catch (FormatException) { throw new ArgumentException("Invalid recovery secret."); }
+        if (raw.Length != 32) throw new ArgumentException("Recovery secret must decode to exactly 32 bytes.");
+        var file = Path.Combine(_keys, folderId + ".txt");
+        if (File.Exists(file))
+        {
+            string existing = (await File.ReadAllTextAsync(file, ct)).Trim();
+            if (!CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(existing)),
+                    SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalized))))
+                throw new InvalidOperationException(
+                    "This device already has a different folder key; changing it would make existing encrypted files inaccessible.");
+            return;
+        }
+        await using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write,
+            FileShare.None, 4096, FileOptions.Asynchronous))
+        {
+            await using var writer = new StreamWriter(stream);
+            await writer.WriteAsync(normalized.AsMemory(), ct);
+        }
+        RestrictPermissions(file, false);
+    }
+
     private async Task<string> GetOrCreateKeyAsync(string folderId, CancellationToken ct)
     {
         if (folderId != "notes") throw new ArgumentException("Unsupported folder ID.");

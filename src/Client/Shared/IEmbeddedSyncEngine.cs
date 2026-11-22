@@ -10,6 +10,7 @@ public interface IEmbeddedSyncEngine : IAsyncDisposable
         string remoteAddress, CancellationToken ct = default);
     Task<string> StatusAsync(string folderId, CancellationToken ct = default);
     Task<string?> ExportRecoverySecretAsync(string folderId, CancellationToken ct = default);
+    Task ImportRecoverySecretAsync(string folderId, string key, CancellationToken ct = default);
 }
 
 public static class ClientRuntime

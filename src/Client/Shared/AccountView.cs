@@ -36,6 +36,9 @@ public sealed class AccountView : UserControl
     private readonly Button _browse = new();
     private readonly Button _pair = new();
     private readonly Button _recovery = new();
+    private readonly TextBox _recoveryImport = new() { PasswordChar = '●',
+        PlaceholderText = "Paste recovery secret from your trusted device" };
+    private readonly Button _importRecovery = new();
     private readonly Button _tenantRefresh = new();
     private readonly ListBox _devices = new() { MaxHeight = 160 };
     private readonly Button _refreshDevices = new();
@@ -120,6 +123,14 @@ public sealed class AccountView : UserControl
             _syncState.Text = T("Urządzenie połączone: ", "Device paired: ") + id +
                 "\n" + await _sync.StatusAsync(remote.FolderId);
         });
+        _importRecovery.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_sync is null) return;
+            await _sync.ImportRecoverySecretAsync("notes", _recoveryImport.Text ?? "");
+            _recoveryImport.Text = "";
+            _syncState.Text = T("Klucz odzyskiwania zapisano tylko na tym urządzeniu.",
+                "Recovery key saved only on this device.");
+        });
         _recovery.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             if (_sync is null) return;
@@ -202,6 +213,8 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_syncAddress);
             layout.Children.Add(_pair);
             layout.Children.Add(_recovery);
+            layout.Children.Add(_recoveryImport);
+            layout.Children.Add(_importRecovery);
             layout.Children.Add(_syncState);
             layout.Children.Add(new TextBlock { Text = "Markdown",
                 FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
@@ -247,6 +260,7 @@ public sealed class AccountView : UserControl
         _browse.Content = T("Wybierz folder", "Choose folder");
         _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
         _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
+        _importRecovery.Content = T("Importuj klucz z zaufanego urządzenia", "Import key from trusted device");
         _listDocuments.Content = T("Wyświetl pliki Markdown", "List Markdown files");
         _openDocument.Content = T("Otwórz zaznaczony plik", "Open selected file");
         _saveDocument.Content = T("Zapisz plik", "Save Markdown file");
