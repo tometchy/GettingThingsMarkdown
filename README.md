@@ -1,80 +1,103 @@
 # GettingThingsMarkdown
 
-Open-source, E2EE-first Markdown synchronization SaaS. **This is an early vertical slice, not the complete MVP and not production-ready.**
+A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history and Markdown task automation. **Unreleased engineering preview. Not production-ready.**
 
-## Implemented in this branch
+## Implemented on feature/cluster-syncthing-git-mvp
 
-- ASP.NET Core 10 Control Plane prototype using SQLite for **account and subscription metadata only**.
-- Register/login API with salted password hashing, signed bearer tokens and basic IP rate limiting.
-- Plan catalog: Basic 15 GiB, Plus 200 GiB, Pro 1 TiB (quota metadata only; enforcement pending).
-- 1-calendar-month free trial, no credit card; dev-only opt-in 100-year trial.
-- Separate administrator secret for audited trial extension.
-- Stripe Checkout subscription sessions, Stripe Billing Portal, signed webhook processing, idempotency by Stripe event ID.
-- Shared Avalonia UI library and desktop + browser/WASM hosts with PL/EN account screens.
-- Initial marketing page and CI workflow.
+- Backend: ASP.NET Core 10 identity, SQLite account/subscription metadata, JWT, password hashing, rate limiting, PL/EN Avalonia shared subscription UI for desktop and WebAssembly.
+- Billing: month trial, admin trial extension with audit, Stripe Checkout/Portal and signed webhooks. Server-only 100-year trial when **Development** and explicitly enabled.
+- Kubernetes: reconciler creates a separate namespace per account, exactly two tenant StatefulSets (Sync and History), two PVCs, hard inter-pod anti-affinity across nodes, services, credentials, internal TLS and network restrictions.
+- Sync tenant: official Syncthing native server in Receive Encrypted mode + separated Git worktree and Git metadata, stabilized automatic commits, push by HTTPS to History.
+- History tenant: self-hosted private Gitea+SQLite on separate volume; Git non-fast-forward and delete protection.
+- Desktop: Avalonia .NET, native packaged Syncthing process in local profile, E2EE folder password generated on the client, pairing via authenticated API, local-only YAML frontmatter automation that archives completed tasks.
+- Shell: rootless Podman + kind with two worker nodes, local image build/load and safe cluster lifecycle.
+- Tests: policy/registration/signature tests, tenant-manifest invariants, local archive automation tests, CI builds of all three containers, experimental real-kind two-account and ciphertext/Git end-to-end scripts.
 
-**Not implemented:** provisioning, kind/Podman, Syncthing, E2EE, Git history, Kubernetes, mobile runtimes, actual quota enforcement, outbound email verification, account recovery, password resets, deployment/migrations, and release hardening. No user file is stored by this code. No live payment was processed or tested against Stripe. The public site links to `/app/`, which requires publishing the browser output to that path.
+**Only claim a test passed after the associated GitHub Actions job actually succeeds.** The codebase is currently *in development*, and not every operation described here has passed end-to-end integration.
 
-## Run locally (Linux Mint)
+## Local first run — Linux Mint
 
-Prerequisites: .NET 10 SDK and Avalonia's Linux system libraries. For the browser host install `dotnet workload install wasm-tools`.
+Prerequisites: .NET 10 SDK, Podman rootless, cgroups v2, kind, kubectl, curl, jq, openssl and the Linux libraries required by Avalonia. Docker Desktop is not required.
 
 ```bash
 git clone https://github.com/tometchy/GettingThingsMarkdown.git
 cd GettingThingsMarkdown
-# Check out the PR branch until merged:
-git switch feature/subscriptions-trial-web-avalonia
-
-export GTM_JWT_SECRET="$(openssl rand -hex 32)"
-export GTM_ADMIN_TOKEN="$(openssl rand -hex 32)"
-export GTM_DEV_LONG_TRIAL=true
-./dev.sh api
+git switch feature/cluster-syncthing-git-mvp
+chmod +x dev.sh
+./dev.sh setup
+./dev.sh up
 ```
 
-The local API listens at `http://localhost:5080`. Keep it on loopback. In another terminal run `./dev.sh desktop`. For the WWW account page, first run `dotnet workload install wasm-tools` followed by `./dev.sh web-publish` (this copies the Avalonia Browser output to the Control Plane static folder); then open `http://localhost:5080/app/`. Both the WWW and desktop app use the same account UI and API client. `./dev.sh browser` is an isolated browser development server and needs API reverse-proxying for sign-in.
+This starts a development Kubernetes Control Plane at `http://127.0.0.1:5080` through a loopback-only port-forward. All three images are built on the local Podman. The first run downloads container images and may consume substantial disk space. No production cloud resources are created.
 
-Example API operations:
+Create a test user, or register using `POST /api/auth/register`:
 
 ```bash
-curl -sS http://localhost:5080/healthz
-curl -sS -H 'Content-Type: application/json' \
-  -d '{"email":"demo@example.com","password":"use-a-long-password-here","plan":"plus"}' \
-  http://localhost:5080/api/auth/register
+./dev.sh create-user test@example.com basic
+./dev.sh status
+./dev.sh integration
 ```
 
-The registration response includes an access token and the server-calculated trial expiry. Pass `Authorization: Bearer <token>` to `GET /api/account`.
+It takes time for Gitea and Syncthing to initialize. `./dev.sh integration` registers two new accounts and checks isolated workload provisioning and node anti-affinity. For detailed failures use `./dev.sh logs` and `kubectl get pods -A`.
 
-To find an account as administrator, use `GET /api/admin/accounts?email=demo@example.com` with header `X-Admin-Token`. To see its audit log, use `GET /api/admin/accounts/ACCOUNT-UUID/audit` with the same header.\n\nTo extend an existing trial, use the account UUID from the registration response or the admin lookup:
+Desktop UI with an embedded, release-verified Syncthing binary:
 
 ```bash
-curl -X POST "http://localhost:5080/api/admin/accounts/ACCOUNT-UUID/extend-trial" \
-  -H "X-Admin-Token: $GTM_ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"days":30,"reason":"support request"}'
+./packaging/linux/bundle-syncthing.sh
+./dev.sh desktop
 ```
 
-The 100-year trial is calculated **only on the backend** when the ASP.NET environment is `Development` and `GTM_DEV_LONG_TRIAL=true`. The desktop app cannot extend production accounts, irrespective of the machine it runs on. Never enable Development in a public deployment.
-
-## Stripe configuration
-
-Configure `GTM_STRIPE_SECRET_KEY`, `GTM_STRIPE_WEBHOOK_SECRET`, `GTM_STRIPE_PRICE_BASIC`, `GTM_STRIPE_PRICE_PLUS`, `GTM_STRIPE_PRICE_PRO`, and `GTM_PUBLIC_URL` on the **server**. These keys must never be shipped in client binaries or committed. Use Stripe **test mode** first. Subscribe webhook endpoint `POST /api/webhooks/stripe` to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`. Customer billing state is updated by signed webhooks, not success-page redirects. Only Stripe controls prices; user-supplied plan IDs map to server-configured Price IDs.
-
-Webhook event ordering and paid entitlement reconciliation require further integration and adversarial testing before collecting real money. Accounting/tax/VAT and PSD2/SCA obligations also require review. The system is not yet wired to stop tenant writes when an entitlement expires.
-
-### App store distribution
-
-Apple and Google Play have distinct rules for selling cloud-storage/digital subscriptions inside apps. A common account UI does not imply that an in-app Stripe Checkout button is permitted in all store builds. Keep payment launch policy platform-specific, and check relevant regional exceptions before distributing Android/iOS builds.
-
-## Testing
+Register or log in using the same account as the backend. Wait until the tenant status becomes `Ready`, choose a folder for Markdown, then expose that tenant's Syncthing port via a **separate terminal**:
 
 ```bash
-./dev.sh test
-dotnet build src/Client/Desktop/GettingThingsMarkdown.Client.Desktop.csproj
+./dev.sh expose-sync ACCOUNT_UUID 22000
+```
+
+Use `tcp://127.0.0.1:22000` in the desktop client to pair. Never forward the administrative REST API or share its key publicly. The server must not receive plaintext encryption keys. The app's localhost profile stores recovery material locally; back it up securely before trusting the service.
+
+Build the same Avalonia account screens for WebAssembly:
+
+```bash
 dotnet workload install wasm-tools
-dotnet publish src/Client/Browser/GettingThingsMarkdown.Client.Browser.csproj -c Release
+./dev.sh web-publish
 ```
 
-Tests cover trial dates, dev gating, administrative calculations, Stripe webhook signature validation, and isolated account registration. GitHub Actions builds the backend/desktop and browser. **No successful test runs are claimed before CI verification.**
+`web-publish` places assets into the local Control Plane source tree, not inside the running Kubernetes image; to serve `/app/` through the Kubernetes Control Plane container, rebuild and reload that image. Standalone `./dev.sh api` can serve the locally published assets. The public marketing page also exists in `src/ControlPlane/wwwroot/index.html`.
 
-## Licensing
+The development backend applies a **100-year trial only when both** `ASPNETCORE_ENVIRONMENT=Development` and `GTM_DEV_LONG_TRIAL=true`. Production accounts must use normal one-month trial; disabling this env flag does not retroactively shorten existing development accounts.
 
-MPL-2.0 applies to our own code. Components retain their respective licenses. A dependency/license audit is required prior to release.
+Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, and `docs/architecture-and-gaps.md` for limitations.
+
+## Runtime commands
+
+```bash
+./dev.sh status                         # cluster pods and PVC
+./dev.sh logs                           # Control Plane logs
+./dev.sh test                           # .NET unit tests
+./dev.sh integration                    # two-tenant integration
+./dev.sh down                           # stop API port-forward only, no data deletion
+./dev.sh destroy --yes-delete-everything # irreversibly removes kind cluster + data
+```
+
+`./dev.sh up` is intended to be re-runnable; `down` is non-destructive. Kind's storage is **not production-grade disaster recovery**.
+
+## Payment configuration
+
+Stripe is **directly** integrated (not via EasyTools). To test real Stripe sandbox workflows, configure in the backend environment: `GTM_STRIPE_SECRET_KEY`, `GTM_STRIPE_WEBHOOK_SECRET`, `GTM_STRIPE_PRICE_BASIC`, `GTM_STRIPE_PRICE_PLUS`, `GTM_STRIPE_PRICE_PRO`, `GTM_PUBLIC_URL`. Never put production keys into repo, client, Docker image or CI logs. Webhook events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. Payment redirects alone never authorize access.
+
+Before charging users, complete Stripe reconciliation, pricing/VAT, email verification, storage enforcement, cancellation and grace periods, and app-store billing policy validation.
+
+## Release blockers
+
+- **E2EE/Git recovery:** Must pass real Syncthing transfer and historical version retrieval + native decrypt tests; repository restoration on new nodes is not yet implemented. Git revisions currently retain encrypted file blobs but there is no user-facing history UI.
+- **Tenancy and quotas:** No production-complete quota enforcement or suspension. Need authorization/rate limiting for device count, entitlement reconciliation, Gitea read-only history tokens, deletion/retention procedures and no-force-push audit.
+- **Syncthing:** Browser cannot run the native filesystem daemon. Android and iOS platform-native bridges, secure storage, background execution and Apple file integrations still needed; iOS background limitations cannot be removed with a shared UI.
+- **Infrastructure:** TLS public ingress, cert-manager, production relay/discovery, monitoring, backups, failure/recovery automation, production Scaleway Terraform/OpenTofu and Helm not complete.
+- **Product:** Markdown explorer/editor/restore UX and advanced automations incomplete; email verification and account recovery absent; security review required.
+- No live Stripe charge or paid cloud provisioning has been performed.
+
+This project cannot be presented as a complete or production-ready MVP until these requirements pass acceptance tests.
+
+## License
+
+Own source files are released under MPL-2.0; dependencies retain their licenses. Full dependency and packaging audit is pending.
