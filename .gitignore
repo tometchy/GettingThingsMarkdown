@@ -12,3 +12,8 @@
 /src/ControlPlane/wwwroot/app/
 /src/Client/Desktop/native/
 /.gtm/
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate*
+**/*.tfvars
+**/*.tfplan
