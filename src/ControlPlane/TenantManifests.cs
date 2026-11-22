@@ -181,7 +181,7 @@ public static class TenantManifests
                         ports = new object[] { new { protocol = "TCP", port = 3000 } }
                     },
                     new {
-                        from = Array.Empty<object>(),
+                        // Omitted source selector admits external Syncthing peers on 22000.
                         ports = new object[] { new { protocol = "TCP", port = 22000 } }
                     }
                 }
