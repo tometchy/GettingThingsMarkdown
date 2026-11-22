@@ -108,7 +108,7 @@ public static class TenantManifests
             var mounts = role == "sync"
                 ? new object[] {
                     new { name = "data", mountPath = "/data" },
-                    new { name = "history-tls", mountPath = "/tls", readOnly = true }
+                    new { name = "history-ca", mountPath = "/tls", readOnly = true }
                 }
                 : new object[] {
                     new { name = "data", mountPath = "/var/lib/gitea" },
@@ -118,7 +118,7 @@ public static class TenantManifests
             var volumes = role == "sync"
                 ? new object[] {
                     new { name = "data", persistentVolumeClaim = new { claimName = "sync-data" } },
-                    new { name = "history-tls", secret = new { secretName = "history-tls" } }
+                    new { name = "history-ca", secret = new { secretName = "history-ca" } }
                 }
                 : new object[] {
                     new { name = "data", persistentVolumeClaim = new { claimName = "history-data" } },
