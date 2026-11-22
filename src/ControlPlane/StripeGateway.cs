@@ -84,7 +84,9 @@ public sealed class StripeGateway(HttpClient http, IConfiguration config)
         }
         if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unix))
             return false;
-        var at = DateTimeOffset.FromUnixTimeSeconds(unix);
+        DateTimeOffset at;
+        try { at = DateTimeOffset.FromUnixTimeSeconds(unix); }
+        catch (ArgumentOutOfRangeException) { return false; }
         if (Math.Abs((now - at).TotalMinutes) > 5) return false;
         byte[] expected = HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret),
             Encoding.UTF8.GetBytes(timestamp + "." + payload));
