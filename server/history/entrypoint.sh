@@ -25,7 +25,7 @@ HOST="$GITEA__server__DOMAIN"
 ROOT="https://${HOST}:3000"
 CURL="curl --silent --show-error --fail --cacert /tls/tls.crt --resolve ${HOST}:3000:127.0.0.1 --noproxy '*'"
 count=0
-until $CURL "$ROOT/api/v1/version" >/dev/null 2>&1; do
+until $CURL --user "archive:$GTM_GITEA_ADMIN_PASSWORD" "$ROOT/api/v1/version" >/dev/null 2>&1; do
   count=$((count+1))
   if [ "$count" -gt 90 ]; then echo "Gitea did not become healthy" >&2; exit 1; fi
   sleep 2

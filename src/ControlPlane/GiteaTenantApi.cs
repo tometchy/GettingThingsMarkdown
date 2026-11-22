@@ -7,7 +7,7 @@ namespace GettingThingsMarkdown.ControlPlane;
 public static class GiteaTenantApi
 {
     public static async Task<bool> RepositoryReadyAsync(string ns,
-        Dictionary<string, string>? tls, CancellationToken ct)
+        Dictionary<string, string>? tls, string archivePassword, CancellationToken ct)
     {
         if (tls is null || !tls.TryGetValue("tls.crt", out string? pem))
             return false;
@@ -19,10 +19,13 @@ public static class GiteaTenantApi
                 pinned.RawData.SequenceEqual(cert.RawData)
         };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
+        if (string.IsNullOrWhiteSpace(archivePassword)) return false;
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes("archive:" + archivePassword)));
         try
         {
             using var r = await client.GetAsync(
-                $"https://history.{ns}.svc.cluster.local:3000/api/v1/version", ct);
+                $"https://history.{ns}.svc.cluster.local:3000/api/v1/repos/archive/history", ct);
             return r.IsSuccessStatusCode;
         }
         catch (HttpRequestException) { return false; }

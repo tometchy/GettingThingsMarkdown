@@ -67,7 +67,7 @@ public sealed class ProvisioningWorker(
                     var sync = new SyncthingTenantApi(state.Namespace, secret["sync-api-key"]);
                     var serverId = await sync.DeviceIdAsync(ct);
                     if (await GiteaTenantApi.RepositoryReadyAsync(state.Namespace,
-                        await kube.SecretAsync(state.Namespace, "history-tls", ct), ct))
+                        await kube.SecretAsync(state.Namespace, "history-ca", ct), secret["admin-pass"], ct))
                     {
                         state.ServerDeviceId = serverId;
                         state.Status = "Ready";
