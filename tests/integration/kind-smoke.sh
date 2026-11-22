@@ -22,6 +22,11 @@ b_id="$(jq -r '.account.id' <<< "$b")"
 [ "$a_id" != "$b_id" ]
 ns_a="gtm-${a_id//-/}"; ns_b="gtm-${b_id//-/}"
 echo "Created $ns_a and $ns_b"
+{
+  printf 'export GTM_E2E_ACCOUNT_ID=%q\\n' "$a_id"
+  printf 'export GTM_E2E_JWT=%q\\n' "$(jq -r '.accessToken' <<< "$a")"
+} >/tmp/gtm-kind-e2e-account.env
+chmod 600 /tmp/gtm-kind-e2e-account.env
 for ns in "$ns_a" "$ns_b"; do
   kubectl get namespace "$ns" --request-timeout=10s || {
     echo "Tenant namespace creation is asynchronous, continuing to poll."
