@@ -29,3 +29,18 @@ jobs:
         with:
           name: account-ui-browser
           path: src/Client/Browser/bin/Release/net10.0-browser/publish/wwwroot/
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate local scripts
+        run: |
+          bash -n dev.sh tests/integration/kind-smoke.sh packaging/linux/bundle-syncthing.sh
+          for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
+      - name: Build Control Plane image
+        run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
+      - name: Build encrypted Sync/Git image
+        run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
+      - name: Build Gitea History image
+        run: docker build -f server/history/Dockerfile -t gtm/history:ci .
