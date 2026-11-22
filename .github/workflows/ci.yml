@@ -71,6 +71,8 @@ jobs:
             sleep 2
           done
           bash tests/integration/kind-smoke.sh
+          source /tmp/gtm-kind-e2e-account.env
+          bash tests/integration/e2ee-git.sh
       - name: Dump diagnostic logs if integration fails
         if: failure()
         run: |
