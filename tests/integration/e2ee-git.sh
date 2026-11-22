@@ -90,4 +90,23 @@ remote_head="$(kubectl -n "$ns" exec history-0 -- \
 [ "$local_head" = "$remote_head" ] || {
   echo "Encrypted history divergence between A and B" >&2; exit 1
 }
-echo "PASS: encrypted Syncthing transfer, encrypted Git commit and HTTPS Git push to Gitea"
+# Restore from the encrypted Git archive in B, not from A's local working copy.
+# The native Syncthing decrypt implementation must recover the exact plaintext
+# without any secret being sent to either SaaS container.
+mkdir -p "$root/cipher" "$root/restored"
+chmod 777 "$root/cipher" "$root/restored"
+kubectl -n "$ns" exec history-0 -- \
+  git --git-dir=/var/lib/gitea/git/repositories/archive/history.git archive main | \
+  tar -C "$root/cipher" -xf -
+docker run --rm --network none --user 1000:1000 \
+  -e FOLDER_PASSWORD="$password" \
+  -v "$root/cipher:/cipher:ro" -v "$root/restored:/plain" \
+  --entrypoint /bin/syncthing ghcr.io/syncthing/syncthing:2.1.7 \
+  decrypt --folder-id notes --to=/plain /cipher
+if [ ! -f "$root/restored/ToDo/test.md" ] || \
+   ! grep -q PRIVATE_E2E_SENTINEL_8c2f "$root/restored/ToDo/test.md"; then
+  echo "Decryption of encrypted history from Gitea failed" >&2
+  find "$root/restored" -maxdepth 5 -type f || true
+  exit 1
+fi
+echo "PASS: Syncthing E2EE, encrypted Git commit, HTTPS push, Git history export and native offline decrypt"
