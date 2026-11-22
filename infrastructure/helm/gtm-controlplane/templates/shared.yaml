@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gtm-controller
+  namespace: {{ .Values.namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gtm-controller
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, secrets, services, persistentvolumeclaims]
+    verbs: [get, list, watch, create, patch, update]
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, watch, create, patch, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gtm-controller
+subjects:
+  - kind: ServiceAccount
+    name: gtm-controller
+    namespace: {{ .Values.namespace | quote }}
+roleRef:
+  kind: ClusterRole
+  name: gtm-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gtm-control-plane-data
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.storage.className }}
+  storageClassName: {{ .Values.storage.className | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.controlPlaneGi }}Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: controlplane
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  selector:
+    app: gtm-controlplane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

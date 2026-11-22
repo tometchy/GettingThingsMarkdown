@@ -1,0 +1,28 @@
+# Configure version-pinned container images before production rollout.
+namespace: gtm-system
+image:
+  repository: gtm/controlplane
+  tag: dev
+syncImage: gtm/sync:dev
+historyImage: gtm/history:dev
+existingSecret: controlplane-secrets
+storage:
+  controlPlaneGi: 2
+  className: ""
+api:
+  host: api.example.invalid
+  ingressEnabled: false
+  tlsSecret: gtm-api-tls
+  issuerName: ""
+  ingressClassName: nginx
+development:
+  enabled: false
+  longTrial: false
+  tenantVolumeGi: 0
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 768Mi

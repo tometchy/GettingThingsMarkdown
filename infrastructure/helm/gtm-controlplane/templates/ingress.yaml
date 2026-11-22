@@ -1,0 +1,29 @@
+{{- if .Values.api.ingressEnabled }}
+{{- if not .Values.api.issuerName }}
+{{- fail "api.issuerName (existing cert-manager ClusterIssuer) is required for HTTPS ingress" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane
+  namespace: {{ .Values.namespace | quote }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.api.issuerName | quote }}
+spec:
+  ingressClassName: {{ .Values.api.ingressClassName | quote }}
+  tls:
+    - hosts:
+        - {{ .Values.api.host | quote }}
+      secretName: {{ .Values.api.tlsSecret | quote }}
+  rules:
+    - host: {{ .Values.api.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: controlplane
+                port:
+                  number: 8080
+{{- end }}
