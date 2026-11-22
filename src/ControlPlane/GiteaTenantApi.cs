@@ -11,7 +11,7 @@ public static class GiteaTenantApi
     {
         if (tls is null || !tls.TryGetValue("tls.crt", out string? pem))
             return false;
-        var pinned = X509Certificate2.CreateFromPem(pem);
+        var pinned = X509CertificateLoader.LoadCertificate(Encoding.UTF8.GetBytes(pem));
         using var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = (_, cert, _, errors) =>
