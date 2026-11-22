@@ -92,6 +92,9 @@ public static class TenantManifests
                 {
                     FromSecret("GTM_GITEA_ADMIN_PASSWORD", "admin-pass"),
                     FromSecret("GTM_GITEA_SYNC_PASSWORD", "sync-pass"),
+                    FromSecret("GITEA__security__SECRET_KEY", "gitea-secret-key"),
+                    FromSecret("GITEA__security__INTERNAL_TOKEN", "gitea-internal-token"),
+                    FromSecret("GITEA__oauth2__JWT_SECRET", "gitea-oauth-jwt"),
                     new { name = "GITEA__server__PROTOCOL", value = "https" },
                     new { name = "GITEA__server__DOMAIN", value = historyHost },
                     new { name = "GITEA__server__ROOT_URL", value = $"https://{historyHost}:3000/" },
@@ -199,6 +202,9 @@ public static class TenantManifests
         {
             ["admin-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
             ["sync-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
-            ["sync-api-key"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24))
+            ["sync-api-key"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
+            ["gitea-secret-key"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+            ["gitea-internal-token"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+            ["gitea-oauth-jwt"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32))
         };
 }
