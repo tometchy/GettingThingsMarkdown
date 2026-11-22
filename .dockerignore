@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.git/
+.gtm/
+.env
+.env.*
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm
+src/Client/Desktop/native/
