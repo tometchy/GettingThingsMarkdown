@@ -3,24 +3,18 @@ using System.Net.Http.Json;
 using GettingThingsMarkdown.ControlPlane;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 
 namespace GettingThingsMarkdown.Tests;
 
+// WebApplicationFactory starts Program before ConfigureAppConfiguration callbacks
+// are applied; startup secrets must therefore be present in process environment.
+[Collection("Integration environment")]
 public sealed class RegistrationTests
 {
-    private static WebApplicationFactory<Program> CreateFactory(string dbPath, bool longTrial) =>
+    private static WebApplicationFactory<Program> CreateFactory() =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
             host.UseEnvironment("Development");
-            host.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["GTM_JWT_SECRET"] = "integration-tests-have-a-secret-over-32-characters",
-                    ["GTM_DB"] = "Data Source=" + dbPath,
-                    ["GTM_DEV_LONG_TRIAL"] = longTrial.ToString(),
-                    ["GTM_ADMIN_TOKEN"] = "integration-admin-only-secret"
-                }));
         });
 
     [Theory]
@@ -29,9 +23,16 @@ public sealed class RegistrationTests
     public async Task RegistrationCreatesAccountAndPreventsCrossAccountAccess(bool longTrial, int minimumDays)
     {
         var db = Path.Combine(Path.GetTempPath(), "gtm-" + Guid.NewGuid() + ".db");
+        string[] keys = ["GTM_DB", "GTM_JWT_SECRET", "GTM_ADMIN_TOKEN", "GTM_DEV_LONG_TRIAL"];
+        var previous = keys.ToDictionary(x => x, Environment.GetEnvironmentVariable);
         try
         {
-            using var factory = CreateFactory(db, longTrial);
+            Environment.SetEnvironmentVariable("GTM_DB", "Data Source=" + db);
+            Environment.SetEnvironmentVariable("GTM_JWT_SECRET", "integration-tests-have-a-secret-over-32-characters");
+            Environment.SetEnvironmentVariable("GTM_ADMIN_TOKEN", "integration-admin-only-secret");
+            Environment.SetEnvironmentVariable("GTM_DEV_LONG_TRIAL", longTrial.ToString());
+
+            using var factory = CreateFactory();
             using var client = factory.CreateClient();
             var first = await client.PostAsJsonAsync("/api/auth/register",
                 new { email = "first@example.com", password = "a long and safe password", plan = "plus" });
@@ -53,11 +54,22 @@ public sealed class RegistrationTests
             var forbidden = await client.PostAsJsonAsync(
                 $"/api/admin/accounts/{own.Id}/extend-trial", new { days = 5, reason = "test" });
             Assert.Equal(HttpStatusCode.Unauthorized, forbidden.StatusCode);
+
+            client.DefaultRequestHeaders.Add("X-Admin-Token", "integration-admin-only-secret");
+            var granted = await client.PostAsJsonAsync(
+                $"/api/admin/accounts/{own.Id}/extend-trial", new { days = 5, reason = "support" });
+            Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
+            var extended = await granted.Content.ReadFromJsonAsync<AccountView>();
+            Assert.True(extended!.TrialUntilUtc > own.TrialUntilUtc.AddDays(4));
         }
         finally
         {
+            foreach (var key in keys) Environment.SetEnvironmentVariable(key, previous[key]);
             foreach (var suffix in new[] { "", "-wal", "-shm" })
                 if (File.Exists(db + suffix)) File.Delete(db + suffix);
         }
     }
 }
+
+[CollectionDefinition("Integration environment", DisableParallelization = true)]
+public sealed class IntegrationEnvironmentCollection { }
