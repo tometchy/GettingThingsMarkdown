@@ -2,6 +2,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Platform.Storage;
 
 namespace GettingThingsMarkdown.Client.Shared;
 
@@ -24,6 +25,16 @@ public sealed class AccountView : UserControl
     private readonly Button _refresh = new();
     private readonly Button _language = new();
     private readonly Button _openLink = new();
+    private readonly IEmbeddedSyncEngine? _sync = ClientRuntime.EmbeddedSyncEngineFactory?.Invoke();
+    private readonly TextBlock _tenantState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock _syncState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBox _folderPath = new() { PlaceholderText = "Path to notes folder" };
+    private readonly TextBox _syncAddress = new() { PlaceholderText = "tcp://127.0.0.1:22000",
+        Text = "tcp://127.0.0.1:22000" };
+    private readonly Button _browse = new();
+    private readonly Button _pair = new();
+    private readonly Button _recovery = new();
+    private readonly Button _tenantRefresh = new();
     private Uri? _pendingUrl;
     private AccountInfo? _current;
     private bool _polish = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "en";
@@ -60,6 +71,51 @@ public sealed class AccountView : UserControl
             Render();
         });
         _language.Click += (_, _) => { _polish = !_polish; Render(); };
+        _tenantRefresh.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            var tenant = await _api.TenantAsync();
+            _tenantState.Text = T("Serwer: ", "Server: ") + tenant.Status +
+                (tenant.ServerDeviceId is null ? "" : "\\nSyncthing: " + tenant.ServerDeviceId) +
+                (tenant.Detail is null ? "" : "\\n" + tenant.Detail);
+            if (!string.IsNullOrWhiteSpace(tenant.LocalSyncAddress))
+                _syncAddress.Text = tenant.LocalSyncAddress;
+        });
+        _browse.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            var top = TopLevel.GetTopLevel(this) ??
+                throw new InvalidOperationException("No window available.");
+            var choices = await top.StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions { Title = "GettingThingsMarkdown",
+                    AllowMultiple = false });
+            var localPath = choices.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(localPath)) _folderPath.Text = localPath;
+        });
+        _pair.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null)
+                throw new InvalidOperationException("Sign in first.");
+            await _sync.StartAsync();
+            var id = await _sync.DeviceIdAsync();
+            var remote = await _api.PairDeviceAsync(id, Environment.MachineName);
+            var address = !string.IsNullOrWhiteSpace(remote.Address)
+                ? remote.Address : _syncAddress.Text ?? "";
+            await _sync.ConfigureFolderAsync(_folderPath.Text ?? "", remote.FolderId,
+                remote.ServerDeviceId, address);
+            _syncState.Text = T("Urządzenie połączone: ", "Device paired: ") + id +
+                "\\n" + await _sync.StatusAsync(remote.FolderId);
+        });
+        _recovery.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_sync is null) return;
+            var key = await _sync.ExportRecoverySecretAsync("notes");
+            if (string.IsNullOrEmpty(key))
+                throw new InvalidOperationException("No recovery key exists yet.");
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard ??
+                throw new InvalidOperationException("Clipboard unavailable.");
+            await clipboard.SetTextAsync(key);
+            _syncState.Text = T("Klucz odzyskiwania skopiowano. Chroń go.",
+                "Recovery key copied. Protect it.");
+        });
         _openLink.Click += async (_, _) =>
         {
             if (_pendingUrl is not null) await OpenAsync(_pendingUrl);
@@ -79,6 +135,19 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_checkout);
         layout.Children.Add(_portal);
         layout.Children.Add(_openLink);
+        layout.Children.Add(_tenantRefresh);
+        layout.Children.Add(_tenantState);
+        if (_sync is not null)
+        {
+            layout.Children.Add(new TextBlock { Text = "Syncthing E2EE",
+                FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            layout.Children.Add(_folderPath);
+            layout.Children.Add(_browse);
+            layout.Children.Add(_syncAddress);
+            layout.Children.Add(_pair);
+            layout.Children.Add(_recovery);
+            layout.Children.Add(_syncState);
+        }
         layout.Children.Add(_status);
 
         Content = new Border
@@ -104,6 +173,12 @@ public sealed class AccountView : UserControl
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
         _refresh.Content = T("Odśwież stan abonamentu", "Refresh subscription status");
+        _tenantRefresh.Content = T("Sprawdź stan serwera", "Check tenant server");
+        _browse.Content = T("Wybierz folder", "Choose folder");
+        _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
+        _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
+        _tenantRefresh.IsEnabled = _current is not null;
+        _pair.IsEnabled = _current is not null;
         _refresh.IsEnabled = _current is not null;
         _openLink.Content = T("Otwórz bezpieczną stronę Stripe", "Open secure Stripe page");
         _openLink.IsVisible = _pendingUrl is not null;
