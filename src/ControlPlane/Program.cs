@@ -7,6 +7,7 @@ using System.Threading.RateLimiting;
 using GettingThingsMarkdown.ControlPlane;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -115,6 +116,8 @@ authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     var plan = (request.Plan ?? "").ToLowerInvariant();
     if (!PlanCatalog.IsValid(plan)) return Results.BadRequest(new { error = "Unknown plan." });
     if (!stripe.Configured) return Results.Problem("Stripe is not configured.", statusCode: 503);
+    if (account.StripeStatus == "active" && account.PaidUntilUtc > clock.GetUtcNow())
+        return Results.Conflict(new { error = "Subscription is active. Use the billing portal to change plans." });
     try { return Results.Ok(await stripe.CheckoutAsync(account, plan, ct)); }
     catch (InvalidOperationException) { return Results.Problem("Checkout unavailable.", statusCode: 503); }
 });
@@ -206,7 +209,6 @@ app.MapPost("/api/webhooks/stripe", async (HttpContext context,
             if (account.StripeStatus == "active" && StripeGateway.PeriodEnd(data) is { } end)
                 account.PaidUntilUtc = end;
             // A paid plan is selected only by a signed Stripe subscription event.
-            var priceId = StripeGateway.String(StripeGateway.Nested(data, "items", "data"), "id");
             var items = StripeGateway.Nested(data, "items", "data");
             if (items.ValueKind == JsonValueKind.Array)
                 foreach (var item in items.EnumerateArray())
