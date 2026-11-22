@@ -17,6 +17,6 @@ internal static partial class Program
     {
         await JSHost.ImportAsync("GtmRuntime", "./js/runtime.js");
         ApiConfiguration.BaseAddress = new Uri(GetOrigin());
-        await AppBuilder.Configure<App>().StartBrowserAppAsync("out");
+        await AppBuilder.Configure<App>().StartBrowserAppAsync("out", new BrowserPlatformOptions());
     }
 }
