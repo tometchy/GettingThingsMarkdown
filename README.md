@@ -31,7 +31,7 @@ export GTM_DEV_LONG_TRIAL=true
 ./dev.sh api
 ```
 
-The local API listens at `http://localhost:5080`. Keep it on loopback. In another terminal run `./dev.sh desktop`, or `./dev.sh browser`. Browser host uses its own HTTP origin: for local browser testing you must either reverse-proxy `/api` to port 5080 or set up an explicit same-origin host. The final site will serve the compiled browser app at `/app/`.
+The local API listens at `http://localhost:5080`. Keep it on loopback. In another terminal run `./dev.sh desktop`. For the WWW account page, first run `dotnet workload install wasm-tools` followed by `./dev.sh web-publish` (this copies the Avalonia Browser output to the Control Plane static folder); then open `http://localhost:5080/app/`. Both the WWW and desktop app use the same account UI and API client. `./dev.sh browser` is an isolated browser development server and needs API reverse-proxying for sign-in.
 
 Example API operations:
 
