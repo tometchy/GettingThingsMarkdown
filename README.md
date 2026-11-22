@@ -44,7 +44,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 The registration response includes an access token and the server-calculated trial expiry. Pass `Authorization: Bearer <token>` to `GET /api/account`.
 
-To extend an existing trial, use the account UUID from the registration response:
+To find an account as administrator, use `GET /api/admin/accounts?email=demo@example.com` with header `X-Admin-Token`. To see its audit log, use `GET /api/admin/accounts/ACCOUNT-UUID/audit` with the same header.\n\nTo extend an existing trial, use the account UUID from the registration response or the admin lookup:
 
 ```bash
 curl -X POST "http://localhost:5080/api/admin/accounts/ACCOUNT-UUID/extend-trial" \
