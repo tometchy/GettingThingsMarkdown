@@ -66,7 +66,7 @@ public sealed class SyncthingTenantApi : IDisposable
         var members = folder["devices"] as JsonArray ?? new JsonArray();
         if (!members.Any(x => x?["deviceID"]?.ToString() == deviceId))
             members.Add(new JsonObject { ["deviceID"] = deviceId });
-        folder["devices"] = members;
+        if (folder["devices"] is null) folder["devices"] = members;
 
         using var save = await _http.PutAsJsonAsync(
             "rest/config/folders/" + TenantNames.FolderId, folder, ct);
