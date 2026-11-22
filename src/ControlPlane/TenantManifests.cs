@@ -77,6 +77,16 @@ public static class TenantManifests
                     labelSelector = new { matchLabels = new Dictionary<string, string> {
                         ["gtm.io/tenant"] = ns, ["gtm.io/role"] = opposite } },
                     topologyKey = "kubernetes.io/hostname"
+                }},
+                preferredDuringSchedulingIgnoredDuringExecution = new[] { new
+                {
+                    weight = 100,
+                    podAffinityTerm = new
+                    {
+                        labelSelector = new { matchLabels = new Dictionary<string, string> {
+                            ["gtm.io/tenant"] = ns, ["gtm.io/role"] = opposite } },
+                        topologyKey = "topology.kubernetes.io/zone"
+                    }
                 }}
             };
             string historyHost = $"history.{ns}.svc.cluster.local";
@@ -142,6 +152,14 @@ public static class TenantManifests
                         {
                             securityContext = new { runAsNonRoot = true, runAsUser = 1000, runAsGroup = 1000, fsGroup = 1000 },
                             affinity = new { podAntiAffinity = podAnti },
+                            topologySpreadConstraints = new[] { new {
+                                maxSkew = 1,
+                                topologyKey = "topology.kubernetes.io/zone",
+                                whenUnsatisfiable = "ScheduleAnyway",
+                                labelSelector = new { matchLabels = new Dictionary<string,string> {
+                                    ["gtm.io/tenant"] = ns
+                                } }
+                            } },
                             containers = new[] { new
                             {
                                 name = role, image = role == "sync" ? syncImage : historyImage,
