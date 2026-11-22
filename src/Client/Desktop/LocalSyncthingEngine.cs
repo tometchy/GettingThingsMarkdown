@@ -36,11 +36,10 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
     {
         if (_api is not null) return;
         int port;
-        using (var listener = new TcpListener(IPAddress.Loopback, 0))
-        {
-            listener.Start();
-            port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        }
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
         _apiKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
         var binary = GetBinary();
         var start = new ProcessStartInfo(binary)
@@ -138,7 +137,7 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
             devices.Add(new JsonObject {
                 ["deviceID"] = remoteId, ["encryptionPassword"] = key
             });
-        folder["devices"] = devices;
+        if (folder["devices"] is null) folder["devices"] = devices;
         using var result = await api.PutAsJsonAsync("rest/config/folders/" + Uri.EscapeDataString(folderId),
             folder, ct);
         result.EnsureSuccessStatusCode();
