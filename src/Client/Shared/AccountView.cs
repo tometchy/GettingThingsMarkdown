@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using GettingThingsMarkdown.Automations;
 using Avalonia.Input.Platform;
 
 namespace GettingThingsMarkdown.Client.Shared;
@@ -36,6 +37,17 @@ public sealed class AccountView : UserControl
     private readonly Button _pair = new();
     private readonly Button _recovery = new();
     private readonly Button _tenantRefresh = new();
+    private readonly TextBox _newDocument = new() { PlaceholderText = "Notes/new.md" };
+    private readonly ListBox _documents = new() { MaxHeight = 240 };
+    private readonly TextBox _editor = new() { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        MinHeight = 180, MaxHeight = 500 };
+    private readonly Button _listDocuments = new();
+    private readonly Button _openDocument = new();
+    private readonly Button _saveDocument = new();
+    private readonly Button _previewDocument = new();
+    private readonly ContentControl _previewContent = new();
+    private MarkdownWorkspace? _workspace;
+    private string? _openedDocument;
     private Uri? _pendingUrl;
     private AccountInfo? _current;
     private bool _polish = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "en";
@@ -117,6 +129,32 @@ public sealed class AccountView : UserControl
             _syncState.Text = T("Klucz odzyskiwania skopiowano. Chroń go.",
                 "Recovery key copied. Protect it.");
         });
+        _listDocuments.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            var path = _folderPath.Text ?? "";
+            _workspace = new MarkdownWorkspace(path);
+            _documents.ItemsSource = _workspace.List();
+            await Task.CompletedTask;
+        });
+        _openDocument.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_workspace is null) throw new InvalidOperationException("Select and list a workspace folder.");
+            _openedDocument = _documents.SelectedItem as string
+                ?? throw new InvalidOperationException("Choose a Markdown file.");
+            _editor.Text = await _workspace.ReadAsync(_openedDocument);
+            _newDocument.Text = _openedDocument;
+        });
+        _saveDocument.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_workspace is null) throw new InvalidOperationException("Select and list a workspace folder.");
+            var path = (_newDocument.Text ?? _openedDocument ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(path)) throw new InvalidOperationException("Enter a Markdown file path.");
+            await _workspace.SaveAsync(path, _editor.Text ?? "");
+            _openedDocument = path;
+            _documents.ItemsSource = _workspace.List();
+        });
+        _previewDocument.Click += (_, _) =>
+            _previewContent.Content = MarkdownPreview.Create(_editor.Text ?? "");
         _openLink.Click += async (_, _) =>
         {
             if (_pendingUrl is not null) await OpenAsync(_pendingUrl);
@@ -148,6 +186,16 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_pair);
             layout.Children.Add(_recovery);
             layout.Children.Add(_syncState);
+            layout.Children.Add(new TextBlock { Text = "Markdown",
+                FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            layout.Children.Add(_listDocuments);
+            layout.Children.Add(_documents);
+            layout.Children.Add(_openDocument);
+            layout.Children.Add(_newDocument);
+            layout.Children.Add(_editor);
+            layout.Children.Add(_saveDocument);
+            layout.Children.Add(_previewDocument);
+            layout.Children.Add(_previewContent);
         }
         layout.Children.Add(_status);
 
@@ -178,6 +226,10 @@ public sealed class AccountView : UserControl
         _browse.Content = T("Wybierz folder", "Choose folder");
         _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
         _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
+        _listDocuments.Content = T("Wyświetl pliki Markdown", "List Markdown files");
+        _openDocument.Content = T("Otwórz zaznaczony plik", "Open selected file");
+        _saveDocument.Content = T("Zapisz plik", "Save Markdown file");
+        _previewDocument.Content = T("Podgląd Markdown", "Markdown preview");
         _tenantRefresh.IsEnabled = _current is not null;
         _pair.IsEnabled = _current is not null;
         _refresh.IsEnabled = _current is not null;
