@@ -37,6 +37,9 @@ public sealed class AccountView : UserControl
     private readonly Button _pair = new();
     private readonly Button _recovery = new();
     private readonly Button _tenantRefresh = new();
+    private readonly ListBox _devices = new() { MaxHeight = 160 };
+    private readonly Button _refreshDevices = new();
+    private readonly Button _revokeDevice = new();
     private readonly TextBox _newDocument = new() { PlaceholderText = "Notes/new.md" };
     private readonly ListBox _documents = new() { MaxHeight = 240 };
     private readonly TextBox _editor = new() { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
@@ -129,6 +132,17 @@ public sealed class AccountView : UserControl
             _syncState.Text = T("Klucz odzyskiwania skopiowano. Chroń go.",
                 "Recovery key copied. Protect it.");
         });
+        _refreshDevices.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            _devices.ItemsSource = await _api.DevicesAsync();
+        });
+        _revokeDevice.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            var selected = _devices.SelectedItem as string;
+            if (selected is null) throw new InvalidOperationException("Select a device.");
+            await _api.RevokeDeviceAsync(selected);
+            _devices.ItemsSource = await _api.DevicesAsync();
+        });
         _listDocuments.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var path = _folderPath.Text ?? "";
@@ -176,6 +190,9 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_openLink);
         layout.Children.Add(_tenantRefresh);
         layout.Children.Add(_tenantState);
+        layout.Children.Add(_refreshDevices);
+        layout.Children.Add(_devices);
+        layout.Children.Add(_revokeDevice);
         if (_sync is not null)
         {
             layout.Children.Add(new TextBlock { Text = "Syncthing E2EE",
@@ -223,6 +240,10 @@ public sealed class AccountView : UserControl
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
         _refresh.Content = T("Odśwież stan abonamentu", "Refresh subscription status");
         _tenantRefresh.Content = T("Sprawdź stan serwera", "Check tenant server");
+        _refreshDevices.Content = T("Wyświetl sparowane urządzenia", "List paired devices");
+        _revokeDevice.Content = T("Cofnij dostęp wybranemu urządzeniu", "Revoke selected device");
+        _refreshDevices.IsEnabled = _current is not null;
+        _revokeDevice.IsEnabled = _current is not null;
         _browse.Content = T("Wybierz folder", "Choose folder");
         _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
         _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
