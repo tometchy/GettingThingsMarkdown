@@ -33,14 +33,14 @@ for ns in "$ns_a" "$ns_b"; do
   }
 done
 
-for i in $(seq 1 45); do
+for i in $(seq 1 30); do
   a_status="$(curl -fsS -H "Authorization: Bearer $(jq -r '.accessToken' <<< "$a")" \
     "$api/api/tenant" | jq -r '.status')"
   b_status="$(curl -fsS -H "Authorization: Bearer $(jq -r '.accessToken' <<< "$b")" \
     "$api/api/tenant" | jq -r '.status')"
-  echo "Attempt $i/45: alpha=$a_status beta=$b_status"
+  echo "Attempt $i/30: alpha=$a_status beta=$b_status"
   if [ "$a_status" = Ready ] && [ "$b_status" = Ready ]; then break; fi
-  sleep 10
+  sleep 5
 done
 [ "$a_status" = Ready ] && [ "$b_status" = Ready ] || {
   kubectl -n gtm-system logs deploy/controlplane --tail=120 || true
