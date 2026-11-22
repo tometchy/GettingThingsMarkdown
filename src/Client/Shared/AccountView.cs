@@ -22,6 +22,8 @@ public sealed class AccountView : UserControl
     private readonly Button _checkout = new();
     private readonly Button _portal = new();
     private readonly Button _language = new();
+    private readonly Button _openLink = new();
+    private Uri? _pendingUrl;
     private AccountInfo? _current;
     private bool _polish = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "en";
 
@@ -42,15 +44,19 @@ public sealed class AccountView : UserControl
         });
         _checkout.Click += async (_, _) => await ExecuteAsync(async () =>
         {
-            var link = await _api.CheckoutAsync(Plan);
-            await OpenAsync(link);
+            _pendingUrl = await _api.CheckoutAsync(Plan);
+            Render();
         });
         _portal.Click += async (_, _) => await ExecuteAsync(async () =>
         {
-            var link = await _api.PortalAsync();
-            await OpenAsync(link);
+            _pendingUrl = await _api.PortalAsync();
+            Render();
         });
         _language.Click += (_, _) => { _polish = !_polish; Render(); };
+        _openLink.Click += async (_, _) =>
+        {
+            if (_pendingUrl is not null) await OpenAsync(_pendingUrl);
+        };
 
         var layout = new StackPanel { Spacing = 14 };
         layout.Children.Add(_language);
@@ -64,6 +70,7 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_account);
         layout.Children.Add(_checkout);
         layout.Children.Add(_portal);
+        layout.Children.Add(_openLink);
         layout.Children.Add(_status);
 
         Content = new Border
@@ -88,6 +95,8 @@ public sealed class AccountView : UserControl
         _login.Content = T("Zaloguj się", "Sign in");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
+        _openLink.Content = T("Otwórz bezpieczną stronę Stripe", "Open secure Stripe page");
+        _openLink.IsVisible = _pendingUrl is not null;
         _checkout.IsEnabled = _current is not null;
         _portal.IsEnabled = _current is not null;
         _account.Text = _current is null
@@ -116,6 +125,6 @@ public sealed class AccountView : UserControl
     {
         var top = TopLevel.GetTopLevel(this);
         if (top is null || !await top.Launcher.LaunchUriAsync(url))
-            _status.Text = url.AbsoluteUri;
+            _status.Text = T("Otwórz ręcznie: ", "Open manually: ") + url.AbsoluteUri;
     }
 }
