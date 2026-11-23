@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controlplane
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gtm-controlplane
+  template:
+    metadata:
+      labels:
+        app: gtm-controlplane
+    spec:
+      serviceAccountName: gtm-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: controlplane
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ ternary "Development" "Production" .Values.development.enabled | quote }}
+            - name: GTM_KUBE_ENABLED
+              value: "true"
+            - name: GTM_DEV_LONG_TRIAL
+              value: {{ and .Values.development.enabled .Values.development.longTrial | quote }}
+            - name: GTM_DEV_VOLUME_GI
+              value: {{ .Values.development.tenantVolumeGi | quote }}
+            - name: GTM_SYNC_IMAGE
+              value: {{ .Values.syncImage | quote }}
+            - name: GTM_HISTORY_IMAGE
+              value: {{ .Values.historyImage | quote }}
+            - name: GTM_DB
+              value: "Data Source=/app/data/accounts.sqlite"
+            - name: GTM_PROVISIONING_DB
+              value: "Data Source=/app/data/tenants.sqlite"
+            - name: GTM_PUBLIC_URL
+              value: {{ printf "https://%s" .Values.api.host | quote }}
+            - name: GTM_WEB_ORIGIN
+              value: {{ printf "https://%s" .Values.api.host | quote }}
+            - name: GTM_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | quote }}
+                  key: jwt
+            - name: GTM_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | quote }}
+                  key: admin
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gtm-control-plane-data

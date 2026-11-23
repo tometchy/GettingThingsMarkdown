@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gtm-controlplane
+description: Shared account control plane and reconciler for GettingThingsMarkdown SaaS
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

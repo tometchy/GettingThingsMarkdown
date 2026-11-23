@@ -13,6 +13,9 @@ public record CheckoutUrl(string Url);
 public record RegisterPayload(string Email, string Password, string Plan);
 public record LoginPayload(string Email, string Password);
 public record CheckoutPayload(string Plan);
+public record PairDevicePayload(string DeviceId, string Name);
+public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
+    string FolderId, string? LocalSyncAddress);
 
 // WASM trimming and future iOS AOT: all API JSON shapes must be source-generated.
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -22,6 +25,10 @@ public record CheckoutPayload(string Plan);
 [JsonSerializable(typeof(RegisterPayload))]
 [JsonSerializable(typeof(LoginPayload))]
 [JsonSerializable(typeof(CheckoutPayload))]
+[JsonSerializable(typeof(PairDevicePayload))]
+[JsonSerializable(typeof(TenantStatusInfo))]
+[JsonSerializable(typeof(ServerPairing))]
+[JsonSerializable(typeof(string[]))]
 public partial class AccountJsonContext : JsonSerializerContext { }
 
 public sealed class AccountApi : IDisposable
@@ -79,6 +86,26 @@ public sealed class AccountApi : IDisposable
         var result = await RequestAsync(HttpMethod.Post, "api/billing/portal",
             null, AccountJsonContext.Default.CheckoutUrl);
         return new Uri(result.Url);
+    }
+
+    public Task<TenantStatusInfo> TenantAsync() =>
+        RequestAsync(HttpMethod.Get, "api/tenant", null, AccountJsonContext.Default.TenantStatusInfo);
+
+    public async Task<ServerPairing> PairDeviceAsync(string deviceId, string name)
+    {
+        using var payload = JsonContent.Create(new PairDevicePayload(deviceId, name),
+            AccountJsonContext.Default.PairDevicePayload);
+        return await RequestAsync(HttpMethod.Post, "api/devices",
+            payload, AccountJsonContext.Default.ServerPairing);
+    }
+
+    public Task<string[]> DevicesAsync() =>
+        RequestAsync(HttpMethod.Get, "api/devices", null, AccountJsonContext.Default.StringArray);
+
+    public async Task RevokeDeviceAsync(string deviceId)
+    {
+        using var result = await _http.DeleteAsync("api/devices/" + Uri.EscapeDataString(deviceId));
+        result.EnsureSuccessStatusCode();
     }
 
     public void Dispose() => _http.Dispose();

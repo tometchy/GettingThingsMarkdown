@@ -1,0 +1,11 @@
+GettingThingsMarkdown Control Plane chart installed in {{ .Values.namespace }}.
+The chart does NOT create credentials; pre-create Kubernetes Secret
+{{ .Values.existingSecret }} with jwt and admin keys (>=32 random bytes).
+{{- if .Values.api.ingressEnabled }}
+Public HTTPS: https://{{ .Values.api.host }}
+{{- else }}
+No public ingress was enabled. Set api.ingressEnabled and an existing
+cert-manager ClusterIssuer only after reviewing network + TLS policies.
+{{- end }}
+Tenant image pulls require an appropriate image registry and imagePullSecrets.
+Do not accept production users until E2EE, quotas and backups are verified.

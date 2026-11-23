@@ -7,6 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Shared/GettingThingsMarkdown.Client.Shared.csproj" />
+    <ProjectReference Include="../../Automations/GettingThingsMarkdown.Automations.csproj" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <Content Include="native/**/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
