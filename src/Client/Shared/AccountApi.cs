@@ -108,5 +108,17 @@ public sealed class AccountApi : IDisposable
         result.EnsureSuccessStatusCode();
     }
 
+    public async Task<string> EncryptedHistoryJsonAsync(string path, CancellationToken ct = default)
+    {
+        if (path != "commits" && !(path.StartsWith("tree/", StringComparison.Ordinal) ||
+                                   path.StartsWith("blob/", StringComparison.Ordinal)))
+            throw new ArgumentException("Invalid history resource.");
+        using var response = await _http.GetAsync("api/history/" + path, ct);
+        response.EnsureSuccessStatusCode();
+        // Deliberately return raw encrypted JSON; don't deserialize arbitrary remote
+        // Git payloads into runtime-reflection-bound object graphs (iOS/WASM AOT).
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
     public void Dispose() => _http.Dispose();
 }

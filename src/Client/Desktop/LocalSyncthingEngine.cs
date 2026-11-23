@@ -248,6 +248,108 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
                 : UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
+    /// <summary>Restore a bounded encrypted Git snapshot entirely on a trusted
+    /// desktop. The API returns ciphertext and no decryption secret.</summary>
+    public async Task<string> RestoreSnapshotAsync(AccountApi api, string revisionSha,
+        string destinationParent, CancellationToken ct = default)
+    {
+        if (!(revisionSha.Length is 40 or 64) ||
+            revisionSha.Any(ch => !Uri.IsHexDigit(ch) || char.IsUpper(ch)))
+            throw new ArgumentException("Invalid Git revision.");
+        if (!Directory.Exists(destinationParent))
+            throw new DirectoryNotFoundException(destinationParent);
+        var secret = await ExportRecoverySecretAsync("notes", ct);
+        if (string.IsNullOrWhiteSpace(secret))
+            throw new InvalidOperationException("Import the local E2EE recovery secret before restoring.");
+
+        var root = Path.Combine(Path.GetTempPath(), "gtm-encrypted-" + Guid.NewGuid().ToString("N"));
+        var outDir = Path.Combine(Path.GetFullPath(destinationParent),
+            "GTMD-restored-" + revisionSha[..8] + "-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        RestrictPermissions(root, true);
+        bool complete = false;
+        try
+        {
+            using var tree = JsonDocument.Parse(await api.EncryptedHistoryJsonAsync(
+                "tree/" + revisionSha, ct));
+            var json = tree.RootElement;
+            if (json.TryGetProperty("truncated", out var truncated) &&
+                truncated.ValueKind == JsonValueKind.True)
+                throw new InvalidOperationException("Historical tree is truncated.");
+            var entries = json.GetProperty("tree").EnumerateArray()
+                .Where(x => x.GetProperty("type").GetString() == "blob").ToArray();
+            if (entries.Length == 0 || entries.Length > 4096)
+                throw new InvalidOperationException("Unsupported history size (file count).");
+            long transferred = 0;
+            foreach (var entry in entries)
+            {
+                ct.ThrowIfCancellationRequested();
+                string relative = entry.GetProperty("path").GetString() ??
+                    throw new InvalidOperationException("Missing encrypted filename.");
+                if (!ValidEncryptedRelativePath(relative))
+                    throw new InvalidOperationException("Unsafe filename in encrypted Git history.");
+                string blobSha = entry.GetProperty("sha").GetString() ??
+                    throw new InvalidOperationException("Missing Git object ID.");
+                if (!(blobSha.Length is 40 or 64) || blobSha.Any(ch => !Uri.IsHexDigit(ch)))
+                    throw new InvalidOperationException("Invalid Git blob SHA.");
+                using var data = JsonDocument.Parse(await api.EncryptedHistoryJsonAsync(
+                    "blob/" + blobSha, ct));
+                string content = data.RootElement.GetProperty("content").GetString() ??
+                    throw new InvalidOperationException("Missing encrypted blob content.");
+                var bytes = Convert.FromBase64String(content);
+                transferred += bytes.Length;
+                if (transferred > 128L * 1024 * 1024)
+                    throw new InvalidOperationException("History restore is limited to 128 MiB of ciphertext.");
+                string path = Path.GetFullPath(Path.Combine(root, relative));
+                if (!path.StartsWith(root + Path.DirectorySeparatorChar,
+                    StringComparison.Ordinal))
+                    throw new InvalidOperationException("Encrypted history path traversal.");
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllBytesAsync(path, bytes, ct);
+            }
+
+            Directory.CreateDirectory(outDir);
+            RestrictPermissions(outDir, true);
+            var psi = new ProcessStartInfo(GetBinary())
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            // Avoid exposing the secret in process arguments, logs, Git or URLs.
+            psi.Environment["FOLDER_PASSWORD"] = secret.Trim();
+            psi.ArgumentList.Add("decrypt");
+            psi.ArgumentList.Add("--folder-id=notes");
+            psi.ArgumentList.Add("--to=" + outDir);
+            psi.ArgumentList.Add(root);
+            using var process = Process.Start(psi) ??
+                throw new InvalidOperationException("Cannot start bundled Syncthing decrypt.");
+            var stderr = process.StandardError.ReadToEndAsync(ct);
+            var stdout = process.StandardOutput.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            await Task.WhenAll(stderr, stdout);
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException("Encrypted history decryption failed: " +
+                    (await stderr)[..Math.Min((await stderr).Length, 500)]);
+            complete = true;
+            return outDir;
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            if (!complete && Directory.Exists(outDir))
+                Directory.Delete(outDir, recursive: true);
+        }
+    }
+
+    private static bool ValidEncryptedRelativePath(string path) =>
+        !string.IsNullOrWhiteSpace(path) &&
+        !Path.IsPathRooted(path) &&
+        !path.Contains('\\') &&
+        !path.Any(char.IsControl) &&
+        path.Split('/').All(part => part.Length > 0 && part is not "." and not ".." and not ".git");
+
     public async ValueTask DisposeAsync()
     {
         _watcher?.Dispose();

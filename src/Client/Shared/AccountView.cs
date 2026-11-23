@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -45,6 +46,10 @@ public sealed class AccountView : UserControl
     private readonly Button _revokeDevice = new();
     private readonly TextBox _newDocument = new() { PlaceholderText = "Notes/new.md" };
     private readonly ListBox _documents = new() { MaxHeight = 240 };
+    private readonly ListBox _historyItems = new() { MaxHeight = 160 };
+    private readonly TextBlock _historyStatus = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _loadHistory = new();
+    private readonly Button _restoreHistory = new();
     private readonly TextBox _editor = new() { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
         MinHeight = 180, MaxHeight = 500 };
     private readonly Button _listDocuments = new();
@@ -154,6 +159,38 @@ public sealed class AccountView : UserControl
             await _api.RevokeDeviceAsync(selected);
             _devices.ItemsSource = await _api.DevicesAsync();
         });
+        _loadHistory.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            using var history = JsonDocument.Parse(await _api.EncryptedHistoryJsonAsync("commits"));
+            var items = new List<string>();
+            foreach (var item in history.RootElement.EnumerateArray().Take(20))
+            {
+                string sha = item.GetProperty("sha").GetString() ?? "";
+                if (sha.Length is not (40 or 64)) continue;
+                var message = item.GetProperty("commit").GetProperty("message").GetString() ?? "";
+                items.Add(sha + " | " + message.Replace("\n", " ", StringComparison.Ordinal)[..Math.Min(message.Length, 80)]);
+            }
+            _historyItems.ItemsSource = items;
+        });
+        _restoreHistory.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_sync is null) return;
+            string value = _historyItems.SelectedItem as string ??
+                throw new InvalidOperationException("Select a historical Git revision.");
+            string sha = value.Split(" | ", 2, StringSplitOptions.None)[0];
+            var top = TopLevel.GetTopLevel(this) ??
+                throw new InvalidOperationException("No desktop window.");
+            var selection = await top.StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions {
+                    Title = T("Folder do odzyskania historii", "Choose restoration directory"),
+                    AllowMultiple = false
+                });
+            string dir = selection.FirstOrDefault()?.TryGetLocalPath() ?? "";
+            if (string.IsNullOrWhiteSpace(dir)) return;
+            string restored = await _sync.RestoreSnapshotAsync(_api, sha, dir);
+            _historyStatus.Text = T("Odzyskano zaszyfrowaną historię do: ",
+                "History decrypted locally into: ") + restored;
+        });
         _listDocuments.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var path = _folderPath.Text ?? "";
@@ -216,6 +253,12 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_recoveryImport);
             layout.Children.Add(_importRecovery);
             layout.Children.Add(_syncState);
+            layout.Children.Add(new TextBlock { Text = "Git / E2EE history",
+                FontSize = 20, FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            layout.Children.Add(_loadHistory);
+            layout.Children.Add(_historyItems);
+            layout.Children.Add(_restoreHistory);
+            layout.Children.Add(_historyStatus);
             layout.Children.Add(new TextBlock { Text = "Markdown",
                 FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
             layout.Children.Add(_listDocuments);
@@ -261,6 +304,10 @@ public sealed class AccountView : UserControl
         _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
         _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
         _importRecovery.Content = T("Importuj klucz z zaufanego urządzenia", "Import key from trusted device");
+        _loadHistory.Content = T("Pokaż zapisane wersje Git", "List historical revisions");
+        _restoreHistory.Content = T("Odszyfruj wybraną wersję lokalnie", "Restore selected version locally");
+        _loadHistory.IsEnabled = _current is not null;
+        _restoreHistory.IsEnabled = _current is not null;
         _listDocuments.Content = T("Wyświetl pliki Markdown", "List Markdown files");
         _openDocument.Content = T("Otwórz zaznaczony plik", "Open selected file");
         _saveDocument.Content = T("Zapisz plik", "Save Markdown file");
