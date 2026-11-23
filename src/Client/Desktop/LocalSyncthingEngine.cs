@@ -23,6 +23,7 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
     private FileSystemWatcher? _watcher;
     private string? _workspaceRoot;
     private readonly SemaphoreSlim _automationGate = new(1, 1);
+    private readonly SemaphoreSlim _mailImportGate = new(1, 1);
 
     public LocalSyncthingEngine()
     {
@@ -357,11 +358,26 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
 
     public Task<int> ImportMailTasksAsync(AccountApi api, Guid accountId,
         string workspaceRoot, CancellationToken ct = default) =>
-        TrustedMailImporter.ImportAsync(_keys, accountId, api, workspaceRoot, ct);
+        ImportMailSeriallyAsync(api, accountId, workspaceRoot, archive: false, ct);
 
     public Task<int> RestoreArchivedMailTasksAsync(AccountApi api, Guid accountId,
         string workspaceRoot, CancellationToken ct = default) =>
-        TrustedMailImporter.RestoreArchiveAsync(_keys, accountId, api, workspaceRoot, ct);
+        ImportMailSeriallyAsync(api, accountId, workspaceRoot, archive: true, ct);
+
+    private async Task<int> ImportMailSeriallyAsync(AccountApi api, Guid accountId,
+        string workspaceRoot, bool archive, CancellationToken ct)
+    {
+        await _mailImportGate.WaitAsync(ct);
+        try
+        {
+            return archive
+                ? await TrustedMailImporter.RestoreArchiveAsync(_keys, accountId,
+                    api, workspaceRoot, ct)
+                : await TrustedMailImporter.ImportAsync(_keys, accountId,
+                    api, workspaceRoot, ct);
+        }
+        finally { _mailImportGate.Release(); }
+    }
 
     public Task<string?> ExportMailPrivateKeyAsync(Guid accountId,
         CancellationToken ct = default) =>
