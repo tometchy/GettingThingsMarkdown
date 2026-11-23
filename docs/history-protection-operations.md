@@ -1,0 +1,36 @@
+# History protection and administrator observability (engineering preview)
+
+Updated: 2026-11-23. **Do not enable physical history deletion in a paid production service.** This change introduces durable deletion *intents*, user-initiated undo and non-decreasing tenant-wide incident holds, not an irreversible erasure pipeline.
+
+## Invariants
+
+- New tenant layout has exactly two long-lived data containers and **two complete, encrypted Git repositories** (no Git LFS and no S3): Sync/Git on provider A, Gitea/SQLite/bare Git on provider B.
+- An encrypted 1 GiB film typically takes roughly 1 GiB current working copy plus 1 GiB Git A plus 1 GiB Git B = **about 3 GiB**, excluding Git packing/overhead and old versions. Remove only the *working* file: the two previous Git copies still occupy **about 2 GiB**. No guaranteed deduplication or exact 1 GiB physical savings is implied.
+- An ordinary deletion from the synced working directory **never** implies permission to rewrite Git history. Old commits remain reachable unless a separate, explicit, freshly authenticated erasure workflow completes.
+- POST history deletion intent verifies the user's account password again, independent of a valid JWT. The server stores only the encrypted relative Git path, request timestamps, account ID and an audit path fingerprint; never the account password, a decrypted filename or an E2EE folder password.
+- A request has **7 days minimum** before an erasure worker is ever allowed to act. A pending intent can be undone while the bytes remain. An admin can extend (but never shorten) an account-wide hold by up to 365 days from the time of the extension and must supply an auditable reason.
+- The hold is *tenant-wide*, so it also stops any future deletion requests from qualifying for purge during a ransomware investigation. Hold expiry does **not** authorize automatic erasure of other history.
+- No admin API gives access to the user's Git objects, shells, Kubernetes pods or file contents. `/api/admin/observability` reports only aggregate provision state, counts of holds and pending requests, and explicit flags for nonoperational safety features.
+
+## API surface (the account uses its normal bearer JWT)
+
+- `POST /api/history/deletion-requests`: JSON `{"opaquePath":"encrypted/subpath","password":"fresh account password"}`; returns HTTP 202 and `physicalPurgeAvailable:false`. Only canonical Git-relative ciphertext paths are allowed. A repeated active request is idempotent; a canceled request may be restarted with a new 7-day window.
+- `GET /api/history/deletion-requests`: up to 100 most recent intents for the authenticated user, with effective deadlines and any incident hold.
+- `DELETE /api/history/deletion-requests/{id}`: undo a pending request. Tenant ownership enforced.
+- `POST /api/admin/accounts/{id}/history-hold`: admin token plus `{"days":30,"reason":"Customer reports ransomware"}`. Extends the whole tenant's minimum retention; audited; does not provide a way to shorten it.
+- `GET /api/admin/accounts/{id}/history-protection`: dates/IDs only, no encrypted paths.
+- `GET /api/admin/observability`: aggregate read-only health/capacity status. The explicitly false fields `physicalPurgeEnabled`, `immutableRetentionVerified`, `automaticCrossCloudFailoverEnabled`, and `controlPlaneCrossCloudReplicationVerified` are intentional; do not change to true without provider-backed end-to-end tests.
+- `GET /healthz` for liveness; `GET /readyz` requires both SQLite databases to connect and is used by the Kubernetes readiness probe.
+
+The administrator dashboard is at `/admin/`. The admin credential is currently a shared `X-Admin-Token` and must be accessible **only through a private operator gateway with SSO/MFA**, not published unauthenticated on a production ingress. This token is separate from tenant identities and gives no CLI/Kubernetes or Git write access, but compromise of the control plane's Kubernetes service account would still allow access to tenant secrets.
+
+## **Non-negotiable blockers before enabling actual purges**
+
+1. **Independent immutable retention:** Ordinary Git/Gitea receive protections, Linux filesystem permissions and an admin password cannot prevent a host-root administrator from deleting all data. Choose append-only retention enforced outside the administrator's write credentials, or independent immutable versions in each of the **two** data domains. Do not silently add a third resident data store or an S3/LFS dependency. The seven-day lock must be anchored to the explicit deletion intent, and all affected bytes must remain recoverable. For some infrastructure combinations, this guarantee may be impossible without changing the trust model.
+2. **Durable cross-cloud control metadata:** Both account/payment SQLite databases, JWT signing secret, Stripe idempotency state and history hold/intent states are presently on **one control-plane PVC**. The deletion protocol cannot safely run if this record disappears or rolls back. Move to a tested, independent, authenticated cross-cloud replicated persistence layer with a consistent write quorum and rollback protection.
+3. **Correct two-phase Git purge:** A privileged worker (not reachable from users or ordinary Git writers) must halt concurrent Sync commits, verify no incident hold exists, prepare a file-path rewrite on an isolated copy, verify both full repositories including encrypted metadata branches, verify each new ref on two nodes, flip only with an independently witnessed commit, then perform complete reflog/hidden-ref/GC cleanup *after* the protected seven-day bytes have expired. Failure at any phase must preserve a recoverable complete copy. Test race conditions, client reconnects, forced power loss, ref mismatch and restore.
+4. **Accurate accounting and capacity enforcement:** Track bytes from current Syncthing ciphertext plus all reachable and grace-retained Git objects on both clouds; physical usage differs from logical history size (packfiles, compression, transient rewrite copies). Provisioned PVC size is **not** a customer quota. On capacity exhaustion fail closed without deleting protected history.
+5. **Independent failover:** A provider outage requires automated fencing using an independent control/witness before another Sync writer is promoted, recovery keys accessible without the failed cloud, new survivor-local PVCs, validated encrypted identity and Git history, restored control-plane/Stripe state, routing changes and chaos tests. Kubernetes pod restart / node affinity is not sufficient, and automatic failover is **not** implemented yet.
+6. **Security review:** Add an authenticated admin identity provider/SSO/MFA, tamper-resistant external audit logs, least-privilege split between the publicly reachable account API and cloud-provisioning controller, and reconcile existing LFS tenants before promising that all prior bytes exist in native Git.
+
+These conditions are release gates, not optional operational advice. The current implementation intentionally **never purges** on expiry. An elapsed deadline means “eligible for future independently verified purge”, not “already erased”; it cannot safely promise that 2 GiB will automatically be freed after seven days until the above work is completed.

@@ -3,22 +3,29 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>GettingThingsMarkdown — administracja limitami</title>
+<title>GettingThingsMarkdown — obsługa i obserwowalność</title>
 <style>
-:root{font:16px system-ui,sans-serif;color-scheme:light dark}body{max-width:720px;margin:2rem auto;padding:0 1rem}form{display:grid;gap:.8rem}
+:root{font:16px system-ui,sans-serif;color-scheme:light dark}body{max-width:900px;margin:2rem auto;padding:0 1rem}form{display:grid;gap:.8rem}
 label{display:grid;gap:.3rem}input,button{font:inherit;padding:.65rem;border-radius:.4rem}input{width:100%;box-sizing:border-box}
 button{cursor:pointer}fieldset{border-radius:.5rem;padding:1rem}table{width:100%}td{padding:.4rem}small{opacity:.7}
 #message{white-space:pre-wrap;overflow-wrap:anywhere}code{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
-<h1>Panel administratora — limity</h1>
+<h1>Panel administratora — obsługa i obserwowalność</h1>
+<p>Panel nie przyznaje dostępu do powłoki, kontenerów, Kubernetes ani odszyfrowanych danych klientów. Wymaga osobnego uwierzytelnienia operatora przed publicznym udostępnieniem.</p>
 <p>Możesz czasowo przyznać bezpłatny bonus przestrzeni, np. 1 GiB na 7 dni, gdy usunięty plik nadal zajmuje historię. <strong>To nie usuwa pliku ani nie zmienia abonamentu Stripe.</strong></p>
 <form id="search">
 <label>Token administratora <input id="token" type="password" autocomplete="off" required></label>
 <label>Adres e-mail użytkownika <input id="email" type="email" autocomplete="off" required></label>
 <button type="submit">Znajdź konto</button>
 </form>
+<section aria-labelledby="metrics-title">
+<h2 id="metrics-title">Obserwowalność usług</h2>
+<p>Metryki zbiorcze, bez treści plików i indywidualnych danych klientów.</p>
+<button type="button" id="refresh">Odśwież stan infrastruktury</button>
+<pre id="metrics" aria-live="polite"></pre>
+</section>
 <section id="selected" hidden>
 <h2 id="user"></h2>
 <p id="info"></p>
@@ -32,9 +39,20 @@ button{cursor:pointer}fieldset{border-radius:.5rem;padding:1rem}table{width:100%
 <button type="button" id="revoke">Cofnij dodatkowy limit</button>
 </form>
 </fieldset>
+<fieldset>
+<legend>Ochrona historii po incydencie</legend>
+<p>Wydłuż najwcześniejszy dopuszczalny termin usunięcia historii dla całego konta. Operacja jest audytowana i nie może skrócić istniejącej ochrony.</p>
+<p id="historyStatus">Status ochrony: nieodczytany</p>
+<form id="hold">
+<label>Ochrona przez co najmniej (dni od dziś) <input id="holdDays" type="number" min="1" max="365" value="30" required></label>
+<label>Powód (wymagany do audytu) <input id="holdReason" maxlength="200" minlength="5" required placeholder="Zgłoszenie incydentu bezpieczeństwa"></label>
+<button type="submit">Wydłuż ochronę historii</button>
+</form>
+<p><small>Uwaga: fizyczne usuwanie obiektów Git i automatyczny failover nie zostały jeszcze wdrożone. Ta funkcja zapisuje zakaz wcześniejszego usunięcia; nie stanowi sama w sobie niezmienialnego WORM.</small></p>
+</fieldset>
 </section>
 <p id="message" role="status"></p>
-<small>Token pozostaje tylko w pamięci tej strony — nie zapisujemy go w cookies ani localStorage. Korzystaj wyłącznie przez HTTPS lub lokalny port-forward. Dostęp administratora powinien dodatkowo wymagać MFA na warstwie ingress/VPN.</small>
+<small>Token pozostaje tylko w pamięci tej strony — nie zapisujemy go w cookies ani localStorage. Korzystaj wyłącznie przez HTTPS za bramą operatora z MFA, bez publicznego wystawiania strony administracyjnej. Token nie daje bezpośredniego dostępu do serwerów.</small>
 <script>
 "use strict";
 let accountId=null;
@@ -59,6 +77,7 @@ el("search").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
   const result=await api("/api/admin/accounts?email="+encodeURIComponent(el("email").value.trim()));
   if(result.length!==1)throw Error("Nie znaleziono jednego konta.");
   show(result[0]);
+  await refreshProtection();
 })});
 el("gift").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
   if(!accountId)throw Error("Najpierw wyszukaj konto.");
@@ -66,6 +85,26 @@ el("gift").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
     method:"POST",body:JSON.stringify({extraGiB:Number(el("extraGiB").value),days:Number(el("days").value),reason:el("reason").value})});
   show(data);el("message").textContent="Dodatkowy limit zapisany i zaudytowany.";
 })});
+const refreshProtection=async()=>{
+  if(!accountId)return;
+  const protection=await api("/api/admin/accounts/"+encodeURIComponent(accountId)+"/history-protection");
+  el("historyStatus").textContent="Ochrona do: "+(protection.holdUntilUtc?
+    new Date(protection.holdUntilUtc).toLocaleString("pl-PL"):"brak dodatkowej ochrony")+
+    " | aktywne wnioski o usunięcie: "+protection.pendingRequests.length+
+    " | fizyczne czyszczenie Git: WYŁĄCZONE";
+};
+el("hold").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
+  if(!accountId)throw Error("Najpierw wyszukaj konto.");
+  await api("/api/admin/accounts/"+encodeURIComponent(accountId)+"/history-hold",{
+    method:"POST",body:JSON.stringify({
+      days:Number(el("holdDays").value),reason:el("holdReason").value.trim()})});
+  await refreshProtection();
+  el("message").textContent="Przedłużenie ochrony zapisane w audycie.";
+})});
+el("refresh").addEventListener("click",()=>act(async()=>{
+  const snapshot=await api("/api/admin/observability");
+  el("metrics").textContent=JSON.stringify(snapshot,null,2);
+}));
 el("revoke").addEventListener("click",()=>act(async()=>{
   if(!accountId)throw Error("Najpierw wyszukaj konto.");
   const data=await api("/api/admin/accounts/"+encodeURIComponent(accountId)+"/temporary-quota",{method:"DELETE"});
