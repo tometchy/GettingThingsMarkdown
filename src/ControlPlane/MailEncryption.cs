@@ -91,7 +91,8 @@ public static class MailEncryption
         {
             using var aes = new AesGcm(aesKey, 16);
             aes.Decrypt(message.Nonce, message.Ciphertext, message.Tag, plaintext, DomainSeparator);
-            return JsonSerializer.Deserialize<InboundMailPayload>(plaintext)!;
+            return JsonSerializer.Deserialize<InboundMailPayload>(plaintext,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         }
         finally
         {
