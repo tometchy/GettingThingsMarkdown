@@ -7,7 +7,8 @@ namespace GettingThingsMarkdown.Client.Shared;
 
 public record AccountInfo(Guid Id, string Email, string Plan, long QuotaBytes,
     DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
-    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified);
+    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified,
+    long BaseQuotaBytes, long GiftQuotaBytes, DateTimeOffset? GiftQuotaExpiresUtc);
 public record LoginResult(string AccessToken, AccountInfo Account);
 public record CheckoutUrl(string Url);
 public record RegisterPayload(string Email, string Password, string Plan);

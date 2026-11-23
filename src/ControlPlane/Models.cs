@@ -10,6 +10,9 @@ public sealed class Account
     public string Plan { get; set; } = "basic";
     // Persist old subscriber allowances when introducing a smaller plan catalog.
     public long? QuotaOverrideBytes { get; set; }
+    // Temporary administrator-granted relief; no payment or plan change.
+    public int GiftQuotaGiB { get; set; }
+    public DateTimeOffset? GiftQuotaExpiresUtc { get; set; }
     public DateTimeOffset? EmailVerifiedUtc { get; set; }
     public string? VerificationTokenHash { get; set; }
     public DateTimeOffset? VerificationExpiresUtc { get; set; }
@@ -58,13 +61,15 @@ public record RegisterRequest(string Email, string Password, string Plan);
 public record ResendVerificationRequest(string Email);
 public record LoginRequest(string Email, string Password);
 public record ExtendTrialRequest(int Days, string? Reason);
+public record TemporaryQuotaRequest(int ExtraGiB, int Days, string? Reason);
 public record CheckoutRequest(string Plan, string BillingInterval = "month");
 public record SessionUrl(string Url);
 
 public record AccountView(
     Guid Id, string Email, string Plan, long QuotaBytes,
     DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
-    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified);
+    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified,
+    long BaseQuotaBytes, long GiftQuotaBytes, DateTimeOffset? GiftQuotaExpiresUtc);
 public record AuthResponse(string AccessToken, AccountView Account);
 
 public sealed record PlanTier(string Id, string Name, long QuotaBytes, int MonthlyUsdCents,
@@ -94,6 +99,14 @@ public static class PlanCatalog
         Tiers.ToDictionary(p => p.Key, p => p.Value.QuotaBytes);
     public static bool IsValid(string? plan) => plan is not null && Tiers.ContainsKey(plan);
     public static bool ValidInterval(string? interval) => interval is "month" or "year";
+    public const long GiB = 1024L * 1024 * 1024;
+    public static long BaseQuotaBytes(Account a) => a.QuotaOverrideBytes ?? Quotas[a.Plan];
+    public static long GiftQuotaBytes(Account a, DateTimeOffset now) =>
+        a.GiftQuotaExpiresUtc > now && a.GiftQuotaGiB > 0 ? checked(a.GiftQuotaGiB * GiB) : 0;
+    public static long EffectiveQuotaBytes(Account a, DateTimeOffset now) =>
+        checked(BaseQuotaBytes(a) + GiftQuotaBytes(a, now));
+    public static int EffectiveQuotaGiB(Account a, DateTimeOffset now) =>
+        checked((int)((EffectiveQuotaBytes(a, now) + GiB - 1) / GiB));
 
     public static AccountView View(Account a, DateTimeOffset now)
     {
@@ -102,8 +115,9 @@ public static class PlanCatalog
         bool trial = a.TrialUntilUtc > now;
         bool verified = a.EmailVerifiedUtc is not null;
         string state = !verified ? "email_unverified" : paid ? "paid" : trial ? "trial" : "expired";
-        return new(a.Id, a.Email, a.Plan, a.QuotaOverrideBytes ?? Quotas[a.Plan],
-            a.TrialUntilUtc, a.PaidUntilUtc, a.StripeStatus, verified && (trial || paid), state, verified);
+        return new(a.Id, a.Email, a.Plan, EffectiveQuotaBytes(a, now),
+            a.TrialUntilUtc, a.PaidUntilUtc, a.StripeStatus, verified && (trial || paid), state, verified,
+            BaseQuotaBytes(a), GiftQuotaBytes(a, now), a.GiftQuotaExpiresUtc > now ? a.GiftQuotaExpiresUtc : null);
     }
 }
 
@@ -117,5 +131,25 @@ public static class TrialPolicy
         if (days is < 1 or > 36500)
             throw new ArgumentOutOfRangeException(nameof(days), "Days must be between 1 and 36500.");
         return (currentEnd > now ? currentEnd : now).AddDays(days);
+    }
+}
+
+public static class TemporaryQuotaPolicy
+{
+    public const int MaxGiftGiB = 1024;
+    public const int MaxDays = 30;
+    public static void Grant(Account account, int extraGiB, int days, DateTimeOffset now)
+    {
+        if (extraGiB is < 1 or > MaxGiftGiB || days is < 1 or > MaxDays)
+            throw new ArgumentOutOfRangeException(nameof(extraGiB), "Gift quota must be 1..1024 GiB and last 1..30 days.");
+        if (PlanCatalog.BaseQuotaBytes(account) + extraGiB * PlanCatalog.GiB > 10240L * PlanCatalog.GiB)
+            throw new ArgumentOutOfRangeException(nameof(extraGiB), "Maximum total quota is 10 TiB.");
+        account.GiftQuotaGiB = extraGiB; // Replace previous grant, never silently stack.
+        account.GiftQuotaExpiresUtc = now.AddDays(days);
+    }
+    public static void Revoke(Account account)
+    {
+        account.GiftQuotaGiB = 0;
+        account.GiftQuotaExpiresUtc = null;
     }
 }

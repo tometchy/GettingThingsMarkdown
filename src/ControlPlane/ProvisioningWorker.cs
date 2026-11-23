@@ -125,10 +125,10 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-            account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
-            config["GTM_RECOVERY_AGE_RECIPIENT"])
+            config["GTM_RECOVERY_AGE_RECIPIENT"],
+            config["GTM_FAILOVER_TARGET_CLOUD"])
             .Where(x => x.Kind == "PersistentVolumeClaim");
         foreach (var claim in claims)
         {
@@ -140,10 +140,13 @@ public sealed class ProvisioningWorker(
     private async Task EnsureTenantAsync(KubeApi kube, string ns, Account account,
         CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(config["GTM_FAILOVER_TARGET_CLOUD"]) &&
+            !config.GetValue<bool>("GTM_FENCE_ACKNOWLEDGED"))
+            throw new InvalidOperationException("Failover placement requires manual fencing acknowledgement.");
         if (!string.IsNullOrWhiteSpace(config["GTM_SYNC_CLOUD"]) &&
-            string.IsNullOrWhiteSpace(config["GTM_RECOVERY_AGE_RECIPIENT"]))
+            !TenantManifests.ValidRecoveryRecipients(config["GTM_RECOVERY_AGE_RECIPIENT"]))
             throw new InvalidOperationException(
-                "Cross-cloud placement requires an offline-held age recovery public key.");
+                "Cross-cloud placement requires >=2 distinct public age recovery recipients; private keys must be securely held by separate clouds.");
         if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
             !config.GetValue<bool>("GTM_ALLOW_UNTESTED_LOCAL_STORAGE") &&
             string.IsNullOrWhiteSpace(config["GTM_SYNC_STORAGE_CLASS"]))
@@ -157,10 +160,10 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-            account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
-            config["GTM_RECOVERY_AGE_RECIPIENT"]).ToList();
+            config["GTM_RECOVERY_AGE_RECIPIENT"],
+            config["GTM_FAILOVER_TARGET_CLOUD"]).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -172,10 +175,10 @@ public sealed class ProvisioningWorker(
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-                account.QuotaOverrideBytes is long initialQuota
-                    ? checked((int)(initialQuota / (1024L * 1024 * 1024))) : null,
+                PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
                 config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
-            config["GTM_RECOVERY_AGE_RECIPIENT"]);
+            config["GTM_RECOVERY_AGE_RECIPIENT"],
+            config["GTM_FAILOVER_TARGET_CLOUD"]);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         // Migrate pre-existing tenants: do not regenerate any established password.
@@ -191,10 +194,10 @@ public sealed class ProvisioningWorker(
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-                account.QuotaOverrideBytes is long previous
-                    ? checked((int)(previous / (1024L * 1024 * 1024))) : null,
+                PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
                 config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
-            config["GTM_RECOVERY_AGE_RECIPIENT"]);
+            config["GTM_RECOVERY_AGE_RECIPIENT"],
+            config["GTM_FAILOVER_TARGET_CLOUD"]);
             await kube.ApplyAsync(migration.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))

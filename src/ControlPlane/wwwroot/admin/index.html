@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>GettingThingsMarkdown — administracja limitami</title>
+<style>
+:root{font:16px system-ui,sans-serif;color-scheme:light dark}body{max-width:720px;margin:2rem auto;padding:0 1rem}form{display:grid;gap:.8rem}
+label{display:grid;gap:.3rem}input,button{font:inherit;padding:.65rem;border-radius:.4rem}input{width:100%;box-sizing:border-box}
+button{cursor:pointer}fieldset{border-radius:.5rem;padding:1rem}table{width:100%}td{padding:.4rem}small{opacity:.7}
+#message{white-space:pre-wrap;overflow-wrap:anywhere}code{overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<h1>Panel administratora — limity</h1>
+<p>Możesz czasowo przyznać bezpłatny bonus przestrzeni, np. 1 GiB na 7 dni, gdy usunięty plik nadal zajmuje historię. <strong>To nie usuwa pliku ani nie zmienia abonamentu Stripe.</strong></p>
+<form id="search">
+<label>Token administratora <input id="token" type="password" autocomplete="off" required></label>
+<label>Adres e-mail użytkownika <input id="email" type="email" autocomplete="off" required></label>
+<button type="submit">Znajdź konto</button>
+</form>
+<section id="selected" hidden>
+<h2 id="user"></h2>
+<p id="info"></p>
+<fieldset>
+<legend>Czasowe dodatkowe miejsce</legend>
+<form id="gift">
+<label>Dodatkowy limit (GiB) <input id="extraGiB" type="number" min="1" max="1024" value="1" required></label>
+<label>Na ile dni <input id="days" type="number" min="1" max="30" value="7" required></label>
+<label>Powód (wymagany do audytu) <input id="reason" maxlength="200" required value="Pomoc po przypadkowym przesłaniu dużego pliku"></label>
+<button type="submit">Przyznaj bezpłatny limit</button>
+<button type="button" id="revoke">Cofnij dodatkowy limit</button>
+</form>
+</fieldset>
+</section>
+<p id="message" role="status"></p>
+<small>Token pozostaje tylko w pamięci tej strony — nie zapisujemy go w cookies ani localStorage. Korzystaj wyłącznie przez HTTPS lub lokalny port-forward. Dostęp administratora powinien dodatkowo wymagać MFA na warstwie ingress/VPN.</small>
+<script>
+"use strict";
+let accountId=null;
+const el=id=>document.getElementById(id);
+const GiB=1024**3;
+const api=async(path,opts={})=>{
+  const token=el("token").value;
+  const response=await fetch(path,{...opts,headers:{"X-Admin-Token":token,"Content-Type":"application/json",...(opts.headers||{})},cache:"no-store"});
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(body.error||body.title||"HTTP "+response.status);
+  return body;
+};
+const show=a=>{
+  accountId=a.id;
+  el("selected").hidden=false;
+  el("user").textContent=a.email;
+  el("info").textContent="Plan: "+a.plan+" | limit bazowy: "+(a.baseQuotaBytes/GiB)+" GiB | bonus: "+(a.giftQuotaBytes/GiB)+" GiB | łącznie: "+(a.quotaBytes/GiB)+" GiB"+
+    (a.giftQuotaExpiresUtc?" | ważny do: "+new Date(a.giftQuotaExpiresUtc).toLocaleString("pl-PL"):"");
+};
+const act=async fn=>{try{el("message").textContent="";await fn()}catch(e){el("message").textContent=e.message}};
+el("search").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
+  const result=await api("/api/admin/accounts?email="+encodeURIComponent(el("email").value.trim()));
+  if(result.length!==1)throw Error("Nie znaleziono jednego konta.");
+  show(result[0]);
+})});
+el("gift").addEventListener("submit",ev=>{ev.preventDefault();act(async()=>{
+  if(!accountId)throw Error("Najpierw wyszukaj konto.");
+  const data=await api("/api/admin/accounts/"+encodeURIComponent(accountId)+"/temporary-quota",{
+    method:"POST",body:JSON.stringify({extraGiB:Number(el("extraGiB").value),days:Number(el("days").value),reason:el("reason").value})});
+  show(data);el("message").textContent="Dodatkowy limit zapisany i zaudytowany.";
+})});
+el("revoke").addEventListener("click",()=>act(async()=>{
+  if(!accountId)throw Error("Najpierw wyszukaj konto.");
+  const data=await api("/api/admin/accounts/"+encodeURIComponent(accountId)+"/temporary-quota",{method:"DELETE"});
+  show(data);el("message").textContent="Dodatkowy limit cofnięty.";
+}));
+</script>
+</body>
+</html>

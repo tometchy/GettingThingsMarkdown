@@ -13,13 +13,17 @@ public static class TenantManifests
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
         string? syncStorageClass = null, string? historyStorageClass = null,
         int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null,
-        string? recoveryRecipient = null)
+        string? recoveryRecipient = null, string? failoverCloud = null)
     {
         if (string.IsNullOrWhiteSpace(syncCloud) != string.IsNullOrWhiteSpace(historyCloud))
             throw new ArgumentException("Cloud placement requires both providers.");
         if (!string.IsNullOrWhiteSpace(syncCloud) &&
             (!ValidCloud(syncCloud) || !ValidCloud(historyCloud!) || syncCloud == historyCloud))
             throw new ArgumentException("Two distinct DNS-safe cloud labels are required.");
+        if (!string.IsNullOrWhiteSpace(failoverCloud) &&
+            (string.IsNullOrEmpty(syncCloud) || string.IsNullOrEmpty(historyCloud) ||
+             (failoverCloud != syncCloud && failoverCloud != historyCloud)))
+            throw new ArgumentException("Failover must use one of the configured surviving providers.");
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
         if (!PlanCatalog.IsValid(plan)) throw new ArgumentException("Unsupported plan.", nameof(plan));
@@ -27,11 +31,13 @@ public static class TenantManifests
             throw new ArgumentOutOfRangeException(nameof(quotaGiBOverride));
         int baseGiB = devVolumeGi > 0 ? devVolumeGi :
             quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)));
-        // Retain the *complete encrypted LFS cache* on A even after successful
-        // push to B/S3. This is a capacity reservation, NOT history quota
-        // enforcement: an unbounded version log can still exceed 2x.
-        string size = baseGiB + "Gi";
-        string syncHistorySize = checked(baseGiB * 2) + "Gi";
+        // Full encrypted Git (no LFS): A keeps current Syncthing ciphertext
+        // PLUS Git archive; B keeps the entire bare Git archive. Storage must
+        // be provisioned for both and measured. Unbounded history remains a
+        // separate *unimplemented* byte quota/garbage-collection challenge.
+        string syncSize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 3)) + "Gi";
+        string historySize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 2)) + "Gi";
+        string legacyLfsSyncSize = checked(baseGiB * 2) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
             apiVersion = "v1", kind = "Namespace",
@@ -57,7 +63,7 @@ public static class TenantManifests
                 ["resources"] = new { requests = new Dictionary<string, string> {
                     ["storage"] = lfsEnabled && role == "history"
                         ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
-                        : lfsEnabled && role == "sync" ? syncHistorySize : size
+                        : lfsEnabled ? legacyLfsSyncSize : role == "sync" ? syncSize : historySize
                 } }
             };
             if (!string.IsNullOrWhiteSpace(storageClass))
@@ -112,7 +118,8 @@ public static class TenantManifests
                 }}
             };
             string historyHost = $"history.{ns}.svc.cluster.local";
-            string? cloud = role == "sync" ? syncCloud : historyCloud;
+            string? cloud = !string.IsNullOrWhiteSpace(failoverCloud) ? failoverCloud :
+                role == "sync" ? syncCloud : historyCloud;
             object affinity = string.IsNullOrWhiteSpace(cloud) ? new { podAntiAffinity = podAnti } :
                 new { podAntiAffinity = podAnti, nodeAffinity = new {
                     requiredDuringSchedulingIgnoredDuringExecution = new {
@@ -313,6 +320,16 @@ public static class TenantManifests
                 }
             }
         });
+    }
+
+    public static bool ValidRecoveryRecipients(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return false;
+        var keys = csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return keys.Length >= 2 && keys.Distinct(StringComparer.Ordinal).Count() == keys.Length &&
+            keys.All(key => System.Text.RegularExpressions.Regex.IsMatch(key,
+                "^age1[a-z0-9]{50,70}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100)));
     }
 
     private static bool ValidCloud(string value) =>

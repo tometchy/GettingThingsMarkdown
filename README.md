@@ -1,8 +1,10 @@
+> **Current design:** New tenants use complete encrypted local Git on BOTH Sync and History; no LFS/S3 required. A 7-day history erasure UI, strict history quota and actually automated cross-cloud failover remain **NOT IMPLEMENTED**. See [full-Git recovery](docs/full-git-dual-cloud-recovery.md). The privileged admin can grant expiring extra space at `/admin/` on a suitably protected management endpoint. Never launch production billing until actual storage economics and HA tests pass.
+
 # GettingThingsMarkdown
 
 A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history and Markdown task automation. **Unreleased engineering preview. Not production-ready.**
 
-## Implemented foundation (main); affordable-storage work in PR #3
+## Implemented foundation; full-Git dual-cloud recovery proposal in draft PR #5
 
 - Backend: ASP.NET Core 10 identity, SQLite account/subscription metadata, JWT, password hashing, rate limiting, PL/EN Avalonia shared subscription UI for desktop and WebAssembly.
 - Billing: month trial, admin trial extension with audit, Stripe Checkout/Portal and signed webhooks. Server-only 100-year trial when **Development** and explicitly enabled.

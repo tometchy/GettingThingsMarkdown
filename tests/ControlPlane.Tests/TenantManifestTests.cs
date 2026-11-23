@@ -73,6 +73,24 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void FailoverPlacementCanUseTheSurvivingCloudButKeepsTwoPodsSeparated()
+    {
+        var id = Guid.NewGuid();
+        var manifests = TenantManifests.Build(id, "basic", 0, null, "sync", "history",
+            syncCloud: "hetzner", historyCloud: "ovh", failoverCloud: "ovh").ToList();
+        var sets = manifests.Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name);
+        foreach (var set in sets.Values)
+        {
+            Assert.Contains("ovh", set.Json);
+            Assert.DoesNotContain("hetzner", set.Json);
+            Assert.Contains("requiredDuringSchedulingIgnoredDuringExecution", set.Json);
+        }
+        Assert.Throws<ArgumentException>(() => TenantManifests.Build(id, "basic", 0,
+            null, "sync", "history", syncCloud: "hetzner", historyCloud: "ovh",
+            failoverCloud: "third-cloud").ToList());
+    }
+
+    [Fact]
     public void LocalPVCIsIndependentOfSubscriptionQuota()
     {
         var id = Guid.NewGuid();
@@ -81,7 +99,37 @@ public class TenantManifestTests
         var production = TenantManifests.Build(id, "pro", 0, null, "sync", "history")
             .First(x => x.Kind == "PersistentVolumeClaim");
         Assert.Contains("2Gi", local.Json);
-        Assert.Contains("500Gi", production.Json);
+        Assert.Contains("1500Gi", production.Json);
+    }
+
+    [Fact]
+    public void CrossCloudKeyConfigurationMustHaveTwoDistinctRecipients()
+    {
+        var a = "age1" + new string('a', 55);
+        var b = "age1" + new string('b', 55);
+        Assert.True(TenantManifests.ValidRecoveryRecipients(a + "," + b));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a + "," + a));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a + ",not-age"));
+    }
+
+    [Fact]
+    public void FullGitReservesIndependentCompleteHistoryVolumes()
+    {
+        var id = Guid.NewGuid();
+        var manifests = TenantManifests.Build(id, "plus", 0, null, "sync", "history");
+        var pvcs = manifests.Where(m => m.Kind == "PersistentVolumeClaim").ToDictionary(m => m.Name);
+        Assert.Contains("225Gi", pvcs["sync-data"].Json);
+        Assert.Contains("150Gi", pvcs["history-data"].Json);
+        var sets = TenantManifests.Build(id, "basic", 0, null, "sync", "history")
+            .Where(m => m.Kind == "StatefulSet").ToDictionary(m => m.Name);
+        Assert.Contains("GTM_GIT_LFS_ENABLED", sets["sync"].Json);
+        using var json = JsonDocument.Parse(sets["sync"].Json);
+        var env = json.RootElement.GetProperty("spec").GetProperty("template")
+            .GetProperty("spec").GetProperty("containers")[0].GetProperty("env");
+        Assert.Equal("false", env.EnumerateArray()
+            .Single(e => e.GetProperty("name").GetString() == "GTM_GIT_LFS_ENABLED")
+            .GetProperty("value").GetString());
     }
 
     [Fact]
@@ -97,7 +145,7 @@ public class TenantManifestTests
         Assert.Contains("150Gi", pvcs["sync-data"].Json);
         var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
             .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
-        Assert.Contains("75Gi", noLfs.Json);
+        Assert.Contains("150Gi", noLfs.Json);
     }
 
     [Fact]

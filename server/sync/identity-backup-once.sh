@@ -2,12 +2,29 @@
 # No plaintext server identity is pushed to the second cloud.
 # Runs inside the existing Syncthing+Git container, never as an extra pod.
 set -eu
+# This script runs as a subprocess of the Sync entrypoint, whose GIT_DIR and
+# GIT_WORK_TREE refer to customer ciphertext. NEVER commit recovery secrets
+# to that Git tree; this must be an independent local recovery branch.
+unset GIT_DIR GIT_WORK_TREE
 : "${GTM_RECOVERY_AGE_RECIPIENT:?Missing public recipient}"
 : "${GTM_GIT_URL:?Missing recovery Git remote}"
-case "$GTM_RECOVERY_AGE_RECIPIENT" in
-  age1*) ;;
-  *) echo "Invalid age recipient" >&2; exit 1 ;;
-esac
+# Accept a comma-separated set of independently controlled recipients. In
+# production use one recipient per cloud plus an offline recovery recipient.
+# The ciphertext stays in Git; none of the corresponding private identities
+# is ever injected into a long-lived tenant workload.
+recipients="$GTM_RECOVERY_AGE_RECIPIENT"
+oldIFS="$IFS"
+IFS=,
+set --
+seen=","
+for recipient in $recipients; do
+  case "$recipient" in age1*) ;; *) echo "Invalid age recipient" >&2; exit 1 ;; esac
+  case "$seen" in *,"$recipient",*) echo "Duplicate age recipient" >&2; exit 1 ;; esac
+  seen="$seen$recipient,"
+  set -- "$@" -r "$recipient"
+done
+IFS="$oldIFS"
+[ "$#" -ge 2 ] || { echo "Two recovery recipients required (one per cloud)." >&2; exit 1; }
 home=/data/syncthing
 for file in config.xml cert.pem key.pem; do
   [ -s "$home/$file" ] || { echo "Identity $file missing; cannot back up" >&2; exit 1; }
@@ -26,7 +43,9 @@ if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
 else
   git -C "$repo" remote add origin "$GTM_GIT_URL"
 fi
-fingerprint="$(cd "$home" && sha256sum config.xml cert.pem key.pem | sha256sum | awk '{print $1}')"
+# Rotating recipients must re-encrypt the same Syncthing identity, even if
+# the config/certificate/key bytes themselves did not change.
+fingerprint="$( (cd "$home" && sha256sum config.xml cert.pem key.pem; printf '%s\\n' "$recipients") | sha256sum | awk '{print $1}')"
 previous="$(cat "$repo/fingerprint.sha256" 2>/dev/null || true)"
 if [ "$fingerprint" != "$previous" ] || [ ! -s "$repo/identity.tar.gz.age" ]; then
   tmp="$(mktemp -d)"
@@ -34,7 +53,7 @@ if [ "$fingerprint" != "$previous" ] || [ ! -s "$repo/identity.tar.gz.age" ]; th
   chmod 0700 "$tmp"
   tar -czf "$tmp/identity.tar.gz" -C "$home" config.xml cert.pem key.pem
   tar -tzf "$tmp/identity.tar.gz" >/dev/null
-  age -r "$GTM_RECOVERY_AGE_RECIPIENT" -o "$tmp/identity.tar.gz.age" "$tmp/identity.tar.gz"
+  age "$@" -o "$tmp/identity.tar.gz.age" "$tmp/identity.tar.gz"
   mv "$tmp/identity.tar.gz.age" "$repo/identity.tar.gz.age"
   printf '%s\n' "$fingerprint" > "$repo/fingerprint.sha256"
   git -C "$repo" add identity.tar.gz.age fingerprint.sha256
