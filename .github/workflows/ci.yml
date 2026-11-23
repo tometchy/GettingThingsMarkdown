@@ -51,6 +51,8 @@ jobs:
         run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
       - name: Build Gitea History image
         run: docker build -f server/history/Dockerfile -t gtm/history:ci .
+      - name: Verify tenant-prefixed Git LFS in local S3 emulator
+        run: bash tests/integration/lfs-s3-moto.sh
       - name: Start disposable kind cluster for integration
         uses: helm/kind-action@v1.14.0
         with:
