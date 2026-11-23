@@ -141,4 +141,14 @@ restored_sha="$(docker exec "$sync" sha256sum /data/git/ci-restore/opaque.bin | 
   docker logs "$sync" --tail=70 >&2
   exit 1
 }
+# The Sync node is a separate failure domain. Verify the full historical
+# encrypted object remains locally available even after a second commit cycle.
+sleep 15
+if ! docker exec "$sync" sh -ec '
+    export GIT_DIR=/data/git
+    [ -s "/data/git/lfs/objects/$(echo "$1" | cut -c1-2)/$(echo "$1" | cut -c3-4)/$1" ]
+  ' sh "$source_sha"; then
+  echo "FAIL: Sync did not retain the full historical LFS object independently of S3" >&2
+  exit 1
+fi
 echo "PASS: Git LFS pushed to emulated S3 tenant prefix and restored identical bytes via Gitea HTTPS."

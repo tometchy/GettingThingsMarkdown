@@ -16,6 +16,9 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   kind default networking alone is NOT proof.
 - [ ] Real, fenced automatic failover; cross-cloud network, independent storage
   recovery, active quorum/witness and separate cloud bootstrap credentials.
+- [x] Sync retains encrypted Git LFS source objects after push; allocated
+  Sync PVC nominally 2× plan quota in LFS mode. This still needs actual history
+  byte quota, capacity enforcement and fault-injection recovery.
 - [x] Optional, age-encrypted Syncthing identity/config snapshot pushed to
   Gitea on a separate Git branch, retained in local Sync Git too. CI must
   prove a cold decrypt + exact key/cert recovery. Offline key is operator-held.

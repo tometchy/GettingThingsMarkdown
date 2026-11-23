@@ -25,8 +25,13 @@ public static class TenantManifests
         if (!PlanCatalog.IsValid(plan)) throw new ArgumentException("Unsupported plan.", nameof(plan));
         if (quotaGiBOverride is <= 0 or > 10240)
             throw new ArgumentOutOfRangeException(nameof(quotaGiBOverride));
-        string size = (devVolumeGi > 0 ? devVolumeGi :
-            quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)))) + "Gi";
+        int baseGiB = devVolumeGi > 0 ? devVolumeGi :
+            quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)));
+        // Retain the *complete encrypted LFS cache* on A even after successful
+        // push to B/S3. This is a capacity reservation, NOT history quota
+        // enforcement: an unbounded version log can still exceed 2x.
+        string size = baseGiB + "Gi";
+        string syncHistorySize = checked(baseGiB * 2) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
             apiVersion = "v1", kind = "Namespace",
@@ -52,7 +57,7 @@ public static class TenantManifests
                 ["resources"] = new { requests = new Dictionary<string, string> {
                     ["storage"] = lfsEnabled && role == "history"
                         ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
-                        : size
+                        : lfsEnabled && role == "sync" ? syncHistorySize : size
                 } }
             };
             if (!string.IsNullOrWhiteSpace(storageClass))

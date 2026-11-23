@@ -90,8 +90,11 @@ public class TenantManifestTests
         var id = Guid.NewGuid();
         var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
             .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
-        Assert.Contains("75Gi", pvcs["sync-data"].Json);
+        Assert.Contains("150Gi", pvcs["sync-data"].Json);
         Assert.Contains("8Gi", pvcs["history-data"].Json);
+        // The Sync worker must keep encrypted historical LFS objects in its
+        // independent local cache even after the History/S3 push succeeds.
+        Assert.Contains("150Gi", pvcs["sync-data"].Json);
         var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
             .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
         Assert.Contains("75Gi", noLfs.Json);

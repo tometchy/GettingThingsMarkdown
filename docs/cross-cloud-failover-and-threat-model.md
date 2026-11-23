@@ -78,7 +78,9 @@ including ordinary Git objects *and* offloaded Git LFS. Current implementation
 does not: `git lfs prune --verify-remote` removes local A cache after the B
 remote accepted it, and B's LFS lives in a third object storage service.
 The plaintext-free live Syncthing ciphertext on A is **not** a substitute
-for all old LFS snapshots. No automatic recovery can be safe until this is fixed.
+for all old LFS snapshots. The newly retained A Git LFS cache helps, but
+is not yet replicated transactionally against B. Snapshot race and cache
+corruption must still be handled. No automatic recovery can be safe until this is fixed.
 
 A. If **Hetzner/A fails**, freeze the shared control-plane write entitlement.
    Verify OVH/B has a complete cryptographically checked snapshot: Git refs,
