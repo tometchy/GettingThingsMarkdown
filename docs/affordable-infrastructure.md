@@ -136,3 +136,31 @@ Sources:
 
 Do not mix per-tenant keys with a global S3 key as a fallback. On a shared
 bucket, a separate bucket-scoped key is insufficient to enforce isolation.
+
+## CPU, node-count and minimum customer scale (critical correction)
+
+The first per-user storage-only cost model was **too optimistic for a SaaS**
+that permanently keeps two Kubernetes pods per tenant. It amortized HDD
+capacity at 75% utilization but ignored the node count required by Kubernetes
+CPU requests. A second, more conservative, full-fleet scenario is implemented
+in `StorageEconomics.fleet()`. It considers:
+
+- One Sync and one History pod per user; **100m CPU and 256MiB RAM requests each**.
+- Illustrative 8-core, 64GiB RAM, €132/month dedicated HDD worker with 70%
+  schedulable CPU/RAM and 32TB usable HDD (RAID); minimum two workers.
+- At most 75% of usable HDD capacity consumed by live files; history stored
+  separately at 1.5× live bytes; backup Boxes rounded up to full units.
+- Additional €30 shared Control Plane monthly, support/ops €0.80 per user,
+  payment processing, VAT and S3 history costs; no live price guarantee.
+
+At **150 full Plus (200GiB) customers** approximately six 8-core HDD nodes
+are required by the CPU requests alone, even though disk space could fit on
+fewer. Under these assumptions **€9.99 gross is no longer profitable**, while
+€15.99 gross approaches a 25% contribution margin. At **10 customers** even
+€15.99 loses money because two dedicated servers are required. Run the tool
+for scenarios at 10/50/100/150 tenants; the outcome changes substantially
+with node CPU capacity and real utilization. It is **not correct to sell
+200GiB for €9.99 on the strength of the original per-TB model**.
+
+No prices have been changed in Stripe. Only an actual load test, hardware
+quote and provider invoice can establish a defensible commercial price.

@@ -7,6 +7,7 @@ fees and utilization are sensitivity assumptions that must be verified.
 """
 from __future__ import annotations
 import argparse
+import math
 from dataclasses import dataclass
 
 GIB_IN_GB = 1024**3 / 10**9
@@ -27,6 +28,58 @@ class StorageEconomics:
     payment_fixed_eur: float = 0.25
     vat: float = 0.23
     minimum_margin: float = 0.25
+    hdd_node_cpu_cores: float = 8.0
+    hdd_node_ram_gib: float = 64.0
+    schedulable_cpu_fraction: float = 0.70
+    schedulable_ram_fraction: float = 0.70
+    cpu_request_per_pod_cores: float = 0.10
+    ram_request_per_pod_gib: float = 0.25
+    controlplane_cost_eur: float = 30.0
+
+    def fleet(self, customers: int, storage_gib: int, gross_eur: float) -> dict[str, float]:
+        """Finite fleet, *two* pods per tenant and a minimum of two physical hosts.
+        Assumes all customers use their full disk allowance and archive grows
+        with history_multiplier. This is a stress scenario, not provider SLA.
+        """
+        if customers < 1 or storage_gib < 1 or gross_eur <= 0:
+            raise ValueError("Positive customer count, quota, gross price required")
+        if not 0 < self.utilization <= 1 or self.history_multiplier < 1:
+            raise ValueError("Invalid utilization/history parameters")
+        if not 0 < self.schedulable_cpu_fraction <= 1 or not 0 < self.schedulable_ram_fraction <= 1:
+            raise ValueError("Invalid worker scheduling fractions")
+        gigabytes = storage_gib * GIB_IN_GB
+        live_tb = gigabytes * customers / 1000
+        stored_history_tb = live_tb * self.history_multiplier
+        workers_cpu = math.ceil(
+            customers * 2 * self.cpu_request_per_pod_cores /
+            (self.hdd_node_cpu_cores * self.schedulable_cpu_fraction))
+        workers_ram = math.ceil(
+            customers * 2 * self.ram_request_per_pod_gib /
+            (self.hdd_node_ram_gib * self.schedulable_ram_fraction))
+        workers_disk = math.ceil(
+            live_tb / (self.hdd_usable_tb_before_reserve * self.utilization))
+        worker_count = max(2, workers_cpu, workers_ram, workers_disk)
+        backup_boxes = max(1, math.ceil(stored_history_tb / 10))
+        # One shared S3 billing minimum; over-1TB usage is modeled at a
+        # constant marginal rate in this scenario, not a provider quote.
+        s3_eur = max(1.0, stored_history_tb) * self.archive_eur_per_tb
+        backup_eur = backup_boxes * self.backup_box_eur_per_10tb
+        workers_eur = worker_count * self.hdd_node_eur
+        support_eur = customers * self.monitoring_support_eur_per_tenant
+        payment_eur = customers * (gross_eur * self.payment_variable + self.payment_fixed_eur)
+        monthly_cost = workers_eur + s3_eur + backup_eur + support_eur + payment_eur + self.controlplane_cost_eur
+        net_revenue = customers * gross_eur / (1 + self.vat)
+        return {
+            "customers": customers,
+            "quota_gib": storage_gib,
+            "workers": worker_count,
+            "history_tb": round(stored_history_tb, 2),
+            "backup_boxes": backup_boxes,
+            "net_revenue_eur": round(net_revenue, 2),
+            "total_cost_eur": round(monthly_cost, 2),
+            "monthly_profit_eur": round(net_revenue - monthly_cost, 2),
+            "margin": round((net_revenue - monthly_cost) / net_revenue, 3),
+        }
 
     def model(self, storage_gib: int, gross_eur: float) -> dict[str, float]:
         if storage_gib <= 0 or gross_eur <= 0:
@@ -93,6 +146,17 @@ def main() -> None:
               f"{v['profit_eur']:>11.2f} | "
               f"{100*v['margin_on_net_revenue']:>9.1f}% | "
               f"{economy.minimum_gross_price(quota):>10.2f}")
+    print("\nMore conservative fleet-level scenario for ONLY 200GiB Plus users:")
+    print("Two pods/user each request 100m CPU + 256MiB RAM; 8-core/64GiB")
+    print("HDD servers with 70% allocatable CPU+RAM, at least two workers,")
+    print("one 30 EUR/month shared control-plane. No real CPU benchmarks.")
+    for count in (10, 50, 100, 150):
+        for price in (9.99, 15.99, 17.99):
+            result = economy.fleet(count, 200, price)
+            print(f"{count:3} accounts at gross EUR {price:5.2f}: "
+                  f"{result['workers']} workers, "
+                  f"EUR {result['monthly_profit_eur']:8.2f} profit/mo, "
+                  f"{100*result['margin']:5.1f}% margin")
     print("IMPORTANT: not validated against real provider invoices, subscriptions,")
     print("backup versions retained >30 days, refunds, heavy churn or load tests.")
 

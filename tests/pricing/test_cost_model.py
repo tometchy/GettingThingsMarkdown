@@ -33,6 +33,25 @@ class TestUnitEconomics(unittest.TestCase):
         self.assertLessEqual(price, 9.99)
         self.assertLess(e.model(200, 4)["profit_eur"], 0)
 
+    def test_cpu_capacity_makes_low_price_unprofitable(self):
+        e = model.StorageEconomics()
+        fleet = e.fleet(150, 200, 9.99)
+        self.assertGreaterEqual(fleet["workers"], 6)
+        self.assertLess(fleet["margin"], 0)
+
+    def test_candidate_price_requires_sufficient_customer_scale(self):
+        e = model.StorageEconomics()
+        self.assertGreaterEqual(e.fleet(150, 200, 15.99)["margin"], .25)
+        self.assertLess(e.fleet(10, 200, 15.99)["margin"], 0)
+
+    def test_more_cpu_reduces_density_and_margin(self):
+        baseline = model.StorageEconomics()
+        heavy = model.StorageEconomics(cpu_request_per_pod_cores=.20)
+        self.assertGreater(heavy.fleet(150, 200, 15.99)["workers"],
+                           baseline.fleet(150, 200, 15.99)["workers"])
+        self.assertLess(heavy.fleet(150, 200, 15.99)["margin"],
+                        baseline.fleet(150, 200, 15.99)["margin"])
+
     def test_invalid_assumptions_fail(self):
         with self.assertRaises(ValueError):
             model.StorageEconomics(utilization=0).model(200, 9.99)
