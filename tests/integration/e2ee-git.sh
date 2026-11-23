@@ -109,7 +109,7 @@ status="$(kubectl -n "$ns" exec sync-0 -- \
 status="$(kubectl -n "$ns" exec sync-0 -- \
   env "GT_TEST_READER=$reader_password" "GT_TEST_URL=$repo_url" sh -ec \
   'curl -s -o /dev/null -w "%{http_code}" --cacert /tls/tls.crt --user "reader:$GT_TEST_READER" \
-  -X PATCH -H "Content-Type: application/json" -d \'{"description":"MUTATION_MUST_FAIL"}\' "$GT_TEST_URL"')" 
+  -X PATCH -H "Content-Type: application/json" -d "{\\"description\\":\\"MUTATION_MUST_FAIL\\"}" "$GT_TEST_URL"')" 
 case "$status" in 401|403|404|405) ;; *) echo "SECURITY: reader could mutate repository! HTTP $status" >&2; exit 1 ;; esac
 # Restore from the encrypted Git archive in B, not from A's local working copy.
 # The native Syncthing decrypt implementation must recover the exact plaintext
