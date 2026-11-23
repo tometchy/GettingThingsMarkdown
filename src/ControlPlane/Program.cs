@@ -534,7 +534,9 @@ app.MapGet("/api/admin/accounts/{id:guid}/audit", async (Guid id, HttpContext co
 {
     if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
     var entries = await db.Audit.AsNoTracking()
-        .Where(x => x.AccountId == id).OrderByDescending(x => x.OccurredUtc)
+        // SQLite EF cannot translate ORDER BY DateTimeOffset. Audit IDs are
+        // monotonically increasing insert order and are indexed by the PK.
+        .Where(x => x.AccountId == id).OrderByDescending(x => x.Id)
         .Take(50).ToListAsync(ct);
     return Results.Ok(entries);
 });
