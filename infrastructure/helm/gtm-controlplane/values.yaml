@@ -13,6 +13,18 @@ mail:
 encryptedArchive:
   lfsEnabled: false
   wormBackupEnabled: false
+# One shared SMTP gateway for the entire installation; not per tenant.
+# Must have a real MX/A record, public port 25, STARTTLS cert and a private
+# ingress token shared only with the internal Control Plane.
+mailIngress:
+  enabled: false
+  domain: "" # e.g. inbox.gettingthingsmarkdown.example
+  image: gtm/mail-ingress:dev
+  tlsSecret: "" # existing Kubernetes TLS secret (tls.crt, tls.key)
+  tokenSecret: "" # existing Secret (mail-ingress-token, >=32 chars)
+  serviceType: LoadBalancer
+  externalPort: 25
+  containerPort: 2525
 recovery:
   failoverTargetCloud: "" # operator-only, empty in normal operation
   fenceAcknowledged: false # manually fence lost provider BEFORE switching
