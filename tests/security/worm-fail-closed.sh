@@ -18,6 +18,7 @@ AWS
 chmod +x "$tmp/bin/aws"
 export PATH="$tmp/bin:$PATH"
 export GTM_TENANT_NAMESPACE=gtm-example
+export GTM_LFS_PREFIX=tenants/gtm-example/lfs
 export GTM_WORM_ENDPOINT=https://invalid.example.com
 export GTM_WORM_BUCKET=example-test
 export GTM_WORM_REGION=fsn1
