@@ -139,6 +139,36 @@ using (var scope = app.Services.CreateScope())
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_HistoryDeletionIntents_AccountId_OpaquePath"
         ON "HistoryDeletionIntents" ("AccountId", "OpaquePath")
         """);
+    // Old customer SQLite databases predate encrypted SMTP mailboxes.
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "MailInboxes" (
+            "AccountId" TEXT NOT NULL CONSTRAINT "PK_MailInboxes" PRIMARY KEY,
+            "LocalPart" TEXT NOT NULL,
+            "PublicKeyBase64" TEXT NOT NULL,
+            "Enabled" INTEGER NOT NULL,
+            "CreatedUtc" TEXT NOT NULL
+        )
+        """);
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MailInboxes_LocalPart"
+        ON "MailInboxes" ("LocalPart")
+        """);
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "EncryptedInboundMails" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_EncryptedInboundMails" PRIMARY KEY,
+            "AccountId" TEXT NOT NULL,
+            "DedupSha256" TEXT NOT NULL,
+            "WrappedKey" BLOB NOT NULL,
+            "Nonce" BLOB NOT NULL,
+            "Tag" BLOB NOT NULL,
+            "Ciphertext" BLOB NOT NULL,
+            "ReceivedUtc" TEXT NOT NULL
+        )
+        """);
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_EncryptedInboundMails_AccountId_DedupSha256"
+        ON "EncryptedInboundMails" ("AccountId", "DedupSha256")
+        """);
     await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
@@ -482,6 +512,195 @@ authenticated.MapDelete("/history/deletion-requests/{requestId:guid}", async (
         OccurredUtc = now, Details = $"intent={intent.Id}" });
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
+});
+
+
+// NEW: The SMTP gateway encrypts at ingest, without the Syncthing E2EE
+// secret or any tenant private key. A local trusted client imports the
+// decrypted task into its ordinary Syncthing Send/Receive workspace.
+authenticated.MapGet("/mail/inbox", async (ClaimsPrincipal user, AppDb db,
+    CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.StatusCode(403);
+    var domain = builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"];
+    if (string.IsNullOrWhiteSpace(domain))
+        return Results.Problem("Inbound mail is not configured.", statusCode: 503);
+    var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
+    if (inbox is null)
+        return Results.Ok(new MailInboxView(false, "", 0, false));
+    var pending = await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct);
+    return Results.Ok(new MailInboxView(inbox.Enabled,
+        inbox.LocalPart + "@" + domain, pending, true));
+});
+
+authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPrincipal user,
+    AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.StatusCode(403);
+    var domain = builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"];
+    if (string.IsNullOrWhiteSpace(domain))
+        return Results.Problem("Inbound mail domain is not configured.", statusCode: 503);
+    if (!MailEncryption.ValidatePublicKey(request.PublicKeyBase64 ?? ""))
+        return Results.BadRequest(new { error = "Expected 3072/4096-bit RSA SPKI public key." });
+    var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
+    if (inbox is not null && inbox.PublicKeyBase64 != request.PublicKeyBase64)
+        return Results.Conflict(new { error = "Inbox has another public key; import the original private key on this device." });
+    if (inbox is null)
+    {
+        inbox = new MailInbox {
+            AccountId = account.Id, PublicKeyBase64 = request.PublicKeyBase64,
+            LocalPart = MailInboxPolicy.NewLocalPart(), Enabled = true,
+            CreatedUtc = clock.GetUtcNow()
+        };
+        db.MailInboxes.Add(inbox);
+        await db.SaveChangesAsync(ct);
+        db.Audit.Add(new AuditEntry { AccountId = account.Id,
+            Action = "mail-inbox-created", Actor = "account",
+            OccurredUtc = clock.GetUtcNow(), Details = "rsa3072-public-key" });
+        await db.SaveChangesAsync(ct);
+    }
+    return Results.Ok(new MailInboxView(inbox.Enabled,
+        inbox.LocalPart + "@" + domain,
+        await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct),
+        true));
+}).RequireRateLimiting("auth");
+
+authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress request,
+    ClaimsPrincipal user, AppDb db, IPasswordHasher<Account> hasher, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.StatusCode(403);
+    if (string.IsNullOrEmpty(request.Password) ||
+        hasher.VerifyHashedPassword(account, account.PasswordHash, request.Password) ==
+            PasswordVerificationResult.Failed)
+        return Results.Unauthorized();
+    var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
+    if (inbox is null) return Results.NotFound();
+    inbox.LocalPart = MailInboxPolicy.NewLocalPart();
+    inbox.Enabled = true;
+    db.Audit.Add(new AuditEntry { AccountId = account.Id, Action = "mail-alias-rotated",
+        Actor = "account-password", OccurredUtc = clock.GetUtcNow(),
+        Details = "Old alias disabled; no private key change." });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new MailInboxView(true,
+        inbox.LocalPart + "@" + builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"],
+        await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct), true));
+}).RequireRateLimiting("auth");
+
+authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
+    CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.StatusCode(403);
+    var messages = await db.EncryptedInboundMails.AsNoTracking()
+        .Where(x => x.AccountId == account.Id).Take(50).ToListAsync(ct);
+    return Results.Ok(messages.Select(MailEncryption.View).ToArray());
+});
+
+authenticated.MapDelete("/mail/messages/{messageId:guid}", async (Guid messageId,
+    ClaimsPrincipal user, AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var message = await db.EncryptedInboundMails.SingleOrDefaultAsync(x =>
+        x.Id == messageId && x.AccountId == id.Value, ct);
+    if (message is null) return Results.NoContent(); // Retry after ACK is safe.
+    db.EncryptedInboundMails.Remove(message);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+});
+
+// Internal endpoints must be reachable only from the SMTP gateway network
+// identity. The dedicated ingress token is NOT an administrator or account key.
+bool MailGatewayAuthorized(HttpContext context)
+{
+    var expected = builder.Configuration["GTM_MAIL_INGRESS_TOKEN"];
+    var supplied = context.Request.Headers["X-GTM-Mail-Token"].ToString();
+    if (string.IsNullOrWhiteSpace(expected) || expected.Length < 32 ||
+        string.IsNullOrWhiteSpace(supplied)) return false;
+    return CryptographicOperations.FixedTimeEquals(
+        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(expected)),
+        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(supplied)));
+}
+
+app.MapGet("/internal/mail/recipient", async (
+    string recipient, HttpContext context, AppDb db, CancellationToken ct) =>
+{
+    if (!MailGatewayAuthorized(context)) return Results.Unauthorized();
+    if (!MailInboxPolicy.ValidRecipient(recipient,
+            builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"], out var localPart))
+        return Results.NotFound();
+    var inbox = await db.MailInboxes.AsNoTracking()
+        .SingleOrDefaultAsync(x => x.LocalPart == localPart && x.Enabled, ct);
+    var account = inbox is null ? null : await db.Accounts.FindAsync([inbox.AccountId], ct);
+    if (account is null || !MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.NotFound();
+    return Results.Ok(new { accepted = true });
+});
+
+app.MapPost("/internal/mail/receive", async (
+    string recipient, HttpContext context, AppDb db, CancellationToken ct) =>
+{
+    if (!MailGatewayAuthorized(context)) return Results.Unauthorized();
+    if (!MailInboxPolicy.ValidRecipient(recipient,
+            builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"], out var localPart))
+        return Results.NotFound();
+    var inbox = await db.MailInboxes.AsNoTracking()
+        .SingleOrDefaultAsync(x => x.LocalPart == localPart && x.Enabled, ct);
+    var account = inbox is null ? null : await db.Accounts.FindAsync([inbox.AccountId], ct);
+    if (account is null || !MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
+        return Results.NotFound();
+    if (context.Request.ContentLength is > MailInboxPolicy.MaxRawMailBytes)
+        return Results.StatusCode(413);
+    await using var raw = new MemoryStream();
+    var buffer = new byte[16384];
+    int received;
+    while ((received = await context.Request.Body.ReadAsync(buffer.AsMemory(), ct)) > 0)
+    {
+        if (raw.Length + received > MailInboxPolicy.MaxRawMailBytes)
+            return Results.StatusCode(413);
+        raw.Write(buffer, 0, received);
+    }
+    if (raw.Length == 0) return Results.BadRequest();
+    byte[] bytes = raw.ToArray();
+    var digest = Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(bytes));
+    if (await db.EncryptedInboundMails.AnyAsync(x =>
+            x.AccountId == account.Id && x.DedupSha256 == digest, ct))
+        return Results.Ok(new { duplicate = true });
+    var now = clock.GetUtcNow();
+    var messages = await db.EncryptedInboundMails.AsNoTracking()
+        .Where(x => x.AccountId == account.Id)
+        .Select(x => x.ReceivedUtc).ToListAsync(ct);
+    if (messages.Count >= MailInboxPolicy.MaxPendingMessages ||
+        messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
+        return Results.StatusCode(429);
+    EncryptedInboundMail encrypted;
+    try { encrypted = await MailEncryption.EncryptAsync(account.Id,
+        inbox!.PublicKeyBase64, bytes, now, ct); }
+    catch (Exception ex) when (ex is ArgumentException or MimeKit.ParseException)
+    {
+        return Results.BadRequest(new { error = "Invalid MIME message." });
+    }
+    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+    db.EncryptedInboundMails.Add(encrypted);
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException) { return Results.Conflict(new { error = "Retry mail delivery." }); }
+    return Results.Ok(new { queued = true });
 });
 
 authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
