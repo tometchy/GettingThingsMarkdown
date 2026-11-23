@@ -350,6 +350,23 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
         !path.Any(char.IsControl) &&
         path.Split('/').All(part => part.Length > 0 && part is not "." and not ".." and not ".git");
 
+    // The mailbox RSA secret is separate from the Syncthing symmetric folder
+    // secret. No server can derive one from the other.
+    public Task<string> EnsureMailPublicKeyAsync(Guid accountId, CancellationToken ct = default) =>
+        TrustedMailImporter.EnsurePublicKeyAsync(_keys, accountId, ct);
+
+    public Task<int> ImportMailTasksAsync(AccountApi api, Guid accountId,
+        string workspaceRoot, CancellationToken ct = default) =>
+        TrustedMailImporter.ImportAsync(_keys, accountId, api, workspaceRoot, ct);
+
+    public Task<string?> ExportMailPrivateKeyAsync(Guid accountId,
+        CancellationToken ct = default) =>
+        TrustedMailImporter.ExportPrivateKeyAsync(_keys, accountId, ct);
+
+    public Task ImportMailPrivateKeyAsync(Guid accountId, string privateKeyPem,
+        CancellationToken ct = default) =>
+        TrustedMailImporter.ImportPrivateKeyAsync(_keys, accountId, privateKeyPem, ct);
+
     public async ValueTask DisposeAsync()
     {
         _watcher?.Dispose();
