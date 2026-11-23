@@ -40,6 +40,8 @@ spec:
               value: {{ .Values.storage.syncClassName | quote }}
             - name: GTM_HISTORY_STORAGE_CLASS
               value: {{ .Values.storage.historyClassName | quote }}
+            - name: GTM_RECOVERY_AGE_RECIPIENT
+              value: {{ .Values.recovery.ageRecipient | quote }}
             - name: GTM_SYNC_CLOUD
               value: {{ .Values.placement.syncCloud | quote }}
             - name: GTM_HISTORY_CLOUD

@@ -12,7 +12,8 @@ public static class TenantManifests
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
         string? syncStorageClass = null, string? historyStorageClass = null,
-        int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null)
+        int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null,
+        string? recoveryRecipient = null)
     {
         if (string.IsNullOrWhiteSpace(syncCloud) != string.IsNullOrWhiteSpace(historyCloud))
             throw new ArgumentException("Cloud placement requires both providers.");
@@ -122,7 +123,8 @@ public static class TenantManifests
                     FromSecret("GTM_GIT_PASSWORD", "sync-pass"),
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
                     new { name = "GTM_GIT_USERNAME", value = "sync" },
-                    new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" }
+                    new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" },
+                    new { name = "GTM_RECOVERY_AGE_RECIPIENT", value = recoveryRecipient ?? "" }
                 }
                 : new object[]
                 {

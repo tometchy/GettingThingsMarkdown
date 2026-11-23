@@ -127,7 +127,8 @@ public sealed class ProvisioningWorker(
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
             account.QuotaOverrideBytes is long oldQuota
                 ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
-            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"])
+            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"])
             .Where(x => x.Kind == "PersistentVolumeClaim");
         foreach (var claim in claims)
         {
@@ -139,6 +140,10 @@ public sealed class ProvisioningWorker(
     private async Task EnsureTenantAsync(KubeApi kube, string ns, Account account,
         CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(config["GTM_SYNC_CLOUD"]) &&
+            string.IsNullOrWhiteSpace(config["GTM_RECOVERY_AGE_RECIPIENT"]))
+            throw new InvalidOperationException(
+                "Cross-cloud placement requires an offline-held age recovery public key.");
         if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
             !config.GetValue<bool>("GTM_ALLOW_UNTESTED_LOCAL_STORAGE") &&
             string.IsNullOrWhiteSpace(config["GTM_SYNC_STORAGE_CLASS"]))
@@ -154,7 +159,8 @@ public sealed class ProvisioningWorker(
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
             account.QuotaOverrideBytes is long oldQuota
                 ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
-            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"]).ToList();
+            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -168,7 +174,8 @@ public sealed class ProvisioningWorker(
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
                 account.QuotaOverrideBytes is long initialQuota
                     ? checked((int)(initialQuota / (1024L * 1024 * 1024))) : null,
-                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"]);
+                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         // Migrate pre-existing tenants: do not regenerate any established password.
@@ -186,7 +193,8 @@ public sealed class ProvisioningWorker(
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
                 account.QuotaOverrideBytes is long previous
                     ? checked((int)(previous / (1024L * 1024 * 1024))) : null,
-                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"]);
+                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]);
             await kube.ApplyAsync(migration.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))

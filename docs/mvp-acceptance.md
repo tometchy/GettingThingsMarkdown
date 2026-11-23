@@ -16,6 +16,9 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   kind default networking alone is NOT proof.
 - [ ] Real, fenced automatic failover; cross-cloud network, independent storage
   recovery, active quorum/witness and separate cloud bootstrap credentials.
+- [x] Optional, age-encrypted Syncthing identity/config snapshot pushed to
+  Gitea on a separate Git branch, retained in local Sync Git too. CI must
+  prove a cold decrypt + exact key/cert recovery. Offline key is operator-held.
 - [ ] Redundant signed/encrypted user settings + stable Syncthing identities
   stored on both clouds, not merely the control-plane SQLite PVC.
 - [ ] Both provider copies contain all needed historical LFS bytes. Currently

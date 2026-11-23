@@ -37,6 +37,11 @@ else
   git remote add origin "$GTM_GIT_URL"
 fi
 /usr/local/bin/commit-loop.sh &
+if [ -n "${GTM_RECOVERY_AGE_RECIPIENT:-}" ]; then
+  # Identical encrypted Syncthing device identity in local Git and remote Gitea.
+  # Only the public age recipient is available inside the SaaS data pods.
+  /usr/local/bin/identity-backup-loop.sh &
+fi
 # The administrative REST API is reachable only over a private cluster Service
 # restricted by NetworkPolicy. It is not exposed through public ingress.
 exec syncthing serve --home=/data/syncthing --no-browser \
