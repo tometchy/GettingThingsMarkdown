@@ -134,6 +134,7 @@ public class TenantManifestTests
         Assert.Contains("gtm-lfs-credentials", sets["history"]);
         Assert.Contains("MINIO_ENDPOINT", sets["history"]);
         Assert.Contains("LFS_START_SERVER", sets["history"]);
+        Assert.Contains($"tenants/{TenantNames.Namespace(id)}/lfs/", sets["history"]);
         Assert.DoesNotContain("gtm-lfs-credentials", sets["sync"]);
         Assert.Contains("prepare-volume", sets["sync"]);
         Assert.DoesNotContain("prepare-volume", sets["history"]);

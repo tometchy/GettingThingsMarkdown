@@ -151,7 +151,10 @@ public static class TenantManifests
                     FromLfsSecret("GITEA__storage__MINIO_LOCATION", "location"),
                     new { name = "GITEA__storage__MINIO_USE_SSL", value = "true" },
                     new { name = "GITEA__storage__MINIO_INSECURE_SKIP_VERIFY", value = "false" },
-                    new { name = "GITEA__storage__MINIO_BUCKET_LOOKUP_TYPE", value = "path" }
+                    new { name = "GITEA__storage__MINIO_BUCKET_LOOKUP_TYPE", value = "path" },
+                    new { name = "GITEA__storage__MINIO_BASE_PATH", value = $"tenants/{ns}/" },
+                    new { name = "GITEA__lfs__MINIO_BASE_PATH", value = $"tenants/{ns}/lfs/" },
+                    new { name = "GTM_LFS_PREFIX", value = $"tenants/{ns}/lfs" }
                 }).ToArray();
             }
             if (wormEnabled && lfsEnabled && role == "history")

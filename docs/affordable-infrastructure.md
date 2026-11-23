@@ -114,3 +114,25 @@ blobs**. It does not yet contain the Syncthing server's unique device identity
 or a transactionally consistent backup of the Control Plane account database.
 Both are release blockers; no SLA should be offered until disaster recovery
 can recreate the tenant's identity with a tested point-in-time restore.
+
+## Shared buckets at scale
+
+Gitea 1.27 supports `[lfs] MINIO_BASE_PATH` independently of its
+`[storage]` settings. The manifest explicitly prefixes LFS objects under
+`tenants/gtm-<account-guid>/lfs/` and configures the backup worker with the
+same prefix. **A prefix alone does not enforce security**: the provider must
+issue application keys restricted to that prefix and tenant. Hetzner allows
+bucket-scoped access controls, but its bucket limit makes one bucket per user
+non-scalable beyond the configured account allowance. Backblaze B2 supports
+S3-compatible keys scoped to *bucket and file-name prefix* and can be used
+for the active S3 backend with similar unit economics if that key isolation is
+needed at scale. A tenant's Git LFS credentials must not be able to read other
+tenants' object prefixes.
+
+Sources:
+- https://docs.gitea.com/1.27/administration/config-cheat-sheet/
+- https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys
+- https://docs.hetzner.com/storage/object-storage/faq/s3-credentials/
+
+Do not mix per-tenant keys with a global S3 key as a fallback. On a shared
+bucket, a separate bucket-scoped key is insufficient to enforce isolation.

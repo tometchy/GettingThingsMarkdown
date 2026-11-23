@@ -9,6 +9,7 @@ set -eu
 : "${GTM_WORM_ACCESS_KEY_ID:?}"
 : "${GTM_WORM_SECRET_ACCESS_KEY:?}"
 : "${GTM_WORM_BACKUP_PASSPHRASE:?}"
+: "${GTM_LFS_PREFIX:?}"
 : "${GITEA__storage__MINIO_ENDPOINT:?}"
 : "${GITEA__storage__MINIO_BUCKET:?}"
 : "${GITEA__storage__MINIO_ACCESS_KEY_ID:?}"
@@ -88,7 +89,7 @@ export RCLONE_CONFIG_WORM_ENV_AUTH=false
 export RCLONE_CONFIG_WORM_ACCESS_KEY_ID="$GTM_WORM_ACCESS_KEY_ID"
 export RCLONE_CONFIG_WORM_SECRET_ACCESS_KEY="$GTM_WORM_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_WORM_ENDPOINT="$GTM_WORM_ENDPOINT"
-rclone copy "lfs:${GITEA__storage__MINIO_BUCKET}/lfs" \
+rclone copy "lfs:${GITEA__storage__MINIO_BUCKET}/${GTM_LFS_PREFIX}" \
   "worm:${GTM_WORM_BUCKET}/${GTM_TENANT_NAMESPACE}/lfs" \
   --immutable --transfers 2 --checkers 4
 echo "WORM backup verified for tenant ${GTM_TENANT_NAMESPACE} at $key"
