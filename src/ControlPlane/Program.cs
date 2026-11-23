@@ -24,6 +24,7 @@ builder.Services.AddDbContext<AppDb>(o => o.UseSqlite(
 builder.Services.AddDbContext<ProvisioningDb>(o => o.UseSqlite(
     builder.Configuration["GTM_PROVISIONING_DB"] ?? "Data Source=gtm-provisioning.sqlite"));
 builder.Services.AddHostedService<ProvisioningWorker>();
+builder.Services.AddHostedService<MailArchiveRetentionWorker>();
 builder.Services.AddHttpClient<StripeGateway>(client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<EmailVerificationService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
