@@ -83,8 +83,16 @@ public static class TrustedMailImporter
         RestrictPermissions(path);
     }
 
-    public static async Task<int> ImportAsync(string keyDir, Guid accountId, AccountApi api,
-        string workspaceRoot, CancellationToken ct = default)
+    public static Task<int> ImportAsync(string keyDir, Guid accountId, AccountApi api,
+        string workspaceRoot, CancellationToken ct = default) =>
+        ImportCoreAsync(keyDir, accountId, api, workspaceRoot, false, ct);
+
+    public static Task<int> RestoreArchiveAsync(string keyDir, Guid accountId,
+        AccountApi api, string workspaceRoot, CancellationToken ct = default) =>
+        ImportCoreAsync(keyDir, accountId, api, workspaceRoot, true, ct);
+
+    private static async Task<int> ImportCoreAsync(string keyDir, Guid accountId,
+        AccountApi api, string workspaceRoot, bool archive, CancellationToken ct)
     {
         var key = KeyPath(keyDir, accountId);
         if (!File.Exists(key))
@@ -94,22 +102,29 @@ public static class TrustedMailImporter
         privateKey.ImportFromPem(await File.ReadAllTextAsync(key, ct));
         var workspace = new MarkdownWorkspace(workspaceRoot);
         int imported = 0;
-        foreach (var mail in await api.MailMessagesAsync(ct))
+        // Page through the archive without downloading all ciphertext at once.
+        // A deterministic mail ID makes retries and multi-device imports safe.
+        for (int skip = 0; skip < 3000; skip += 50)
         {
-            ct.ThrowIfCancellationRequested();
-            string relative = MailTaskFormatter.FileName(mail.Id);
-            var path = workspace.Resolve(relative);
-            // If HTTP ACK previously failed after atomic write, retry without
-            // overwriting the user's edits to an imported task.
-            if (!File.Exists(path))
+            var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
+                : await api.MailMessagesAsync(ct);
+            foreach (var mail in messages)
             {
-                var message = Decrypt(mail, privateKey);
-                await workspace.SaveAsync(relative, MailTaskFormatter.Render(
-                    message.Subject, message.From, message.Body, message.ReceivedUtc), ct);
-                imported++;
+                ct.ThrowIfCancellationRequested();
+                string relative = MailTaskFormatter.FileName(mail.Id);
+                var path = workspace.Resolve(relative);
+                if (!File.Exists(path))
+                {
+                    var message = Decrypt(mail, privateKey);
+                    await workspace.SaveAsync(relative, MailTaskFormatter.Render(
+                        message.Subject, message.From, message.Body, message.ReceivedUtc), ct);
+                    imported++;
+                }
+                // ACK is never issued on archived recoveries, and on pending
+                // deliveries happens only after the atomic local write.
+                if (!archive) await api.AckMailAsync(mail.Id, ct);
             }
-            // Never ACK before the local atomic write has succeeded.
-            await api.AckMailAsync(mail.Id, ct);
+            if (!archive || messages.Length < 50) break;
         }
         return imported;
     }
