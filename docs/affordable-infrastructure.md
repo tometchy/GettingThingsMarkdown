@@ -7,9 +7,10 @@ second large block volume to an S3-compatible object store. B keeps only Git
 references/pointers, SQLite and local metadata. A keeps a real filesystem.
 Object storage is not mounted as a POSIX filesystem.
 
-**Provider direction:** Hetzner affordable HDD-backed workers (auction servers
-or suitable self-hosted K3s nodes; dynamically available) plus Hetzner S3
-Object Storage for LFS and separately budgeted immutable backups. Rootless
+**Provider direction:** Hetzner low-cost HDD Sync workers and independently
+controlled OVHcloud worker(s) for Gitea/History; Backblaze B2 as potential
+third-provider Git LFS bucket. Cross-cloud networking, cluster and fencing
+are not deployed, and the old Hetzner-only setup is not redundant. Rootless
 Podman + kind remains the local POC. Existing Scaleway Terraform is kept as
 an alternative but is not the chosen paid production target.
 
@@ -59,8 +60,10 @@ accounts/bucket sharding is required.
 - Use a real HDD-backed Kubernetes CSI provisioner with enforceable quotas
   and anti-affinity across *independent physical hosts*, not kind local-path
   for paid accounts.
-- Configure object locking **COMPLIANCE mode, 30 days** on backup buckets
-  created with Object Lock enabled; governance can be bypassed.
+- **Leave optional 30-day WORM disabled when implementing the requested 7-day
+  deletion/undo policy**: long retention conflicts with the purge promise.
+  Future protection must apply to fresh quarantine objects with a bounded
+  expiry rather than depend on a lock set a year ago.
 - Keep metadata backup independently of LFS objects and Syncthing identity.
 - Restore-test against node failure, object store outage, and a revoked key.
 - Preserve two isolated long-running containers per tenant; helper init
@@ -78,8 +81,9 @@ storage credentials. Enabling both in real production also requires
 an S3 bucket created with default 30-day COMPLIANCE Object Lock.
 
 When Git LFS is enabled the independent History PVC is 8 GiB rather than a
-second 200 GiB block disk for Plus. The Sync PVC remains 200 GiB (or the
-development size) and must use a cost-efficient enforceable HDD-backed storage
+second 200 GiB block disk for Plus. The Sync PVC now reserves 2× the customer live quota (e.g. 400 GiB
+for a legacy 200 GiB Plus account, 150 GiB for a new 75 GiB Plus account,
+or 2× the development size) and must use a cost-efficient enforceable HDD-backed storage
 class. This does not imply history metadata will never exceed 8 GiB; reserve
 space, monitor and resize when needed.
 

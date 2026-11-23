@@ -15,11 +15,11 @@ class TestUnitEconomics(unittest.TestCase):
         economics = model.StorageEconomics()
         self.assertLess(economics.model(200, 4.00)["profit_eur"], 0)
 
-    def test_recommended_prices_have_positive_margin_in_baseline(self):
-        economics = model.StorageEconomics()
-        for gb, price in [(15, 3.99), (200, 9.99), (1024, 39.99)]:
-            self.assertGreaterEqual(
-                economics.model(gb, price)["margin_on_net_revenue"], .25)
+    def test_pricing_floor_rises_with_local_history(self):
+        old = model.StorageEconomics(sync_history_multiplier=1.0)
+        retained = model.StorageEconomics()
+        self.assertGreater(retained.minimum_gross_price(200),
+                           old.minimum_gross_price(200))
 
     def test_lower_disk_utilization_and_history_churn_reduce_margin(self):
         good = model.StorageEconomics().model(200, 9.99)
@@ -30,7 +30,7 @@ class TestUnitEconomics(unittest.TestCase):
     def test_floor_rejects_unprofitable_prices(self):
         e = model.StorageEconomics()
         price = e.minimum_gross_price(200)
-        self.assertLessEqual(price, 9.99)
+        self.assertGreater(price, 9.99)
         self.assertLess(e.model(200, 4)["profit_eur"], 0)
 
     def test_cpu_capacity_makes_low_price_unprofitable(self):
@@ -51,6 +51,13 @@ class TestUnitEconomics(unittest.TestCase):
                            baseline.fleet(150, 200, 15.99)["workers"])
         self.assertLess(heavy.fleet(150, 200, 15.99)["margin"],
                         baseline.fleet(150, 200, 15.99)["margin"])
+
+    def test_lfs_local_retention_uses_extra_reserved_disk(self):
+        e = model.StorageEconomics()
+        result = e.mixed_fleet(100, 300, 100)
+        self.assertGreater(result["sync_reserved_tb"], result["history_tb"])
+        self.assertGreater(e.model(200, 9.99)["live_hdd_eur"],
+                           model.StorageEconomics(sync_history_multiplier=1.0).model(200, 9.99)["live_hdd_eur"])
 
     def test_three_tier_blend_not_profitable_at_tiny_scale(self):
         e = model.StorageEconomics()

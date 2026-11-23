@@ -320,7 +320,7 @@ async Task<IResult> GetHistoryAsync(ClaimsPrincipal user, string? sha, string ki
     if (cert is null || secrets is null)
         return Results.Problem("Missing tenant history credentials.", statusCode: 503);
     using var history = new GitHistoryProxy(tenant.Namespace,
-        cert["tls.crt"], secrets["admin-pass"]);
+        cert["tls.crt"], secrets["reader-pass"]);
     try
     {
         string body = kind switch

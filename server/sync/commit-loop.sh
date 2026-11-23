@@ -18,11 +18,11 @@ while :; do
       if ! git push origin HEAD:refs/heads/main; then
         echo "Git HTTPS push pending; retry on next cycle" >&2
       else
-        # Keep the local encrypted working tree intact. LFS cache cleanup is
-        # conservative: never remove LFS objects whose push was not confirmed.
-        if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
-          git lfs prune --verify-remote || true
-        fi
+        : # Intentionally retain every local encrypted Git LFS object.
+        # DO NOT prune the local Git LFS objects. The second cloud's
+        # Gitea stores pointers while opaque LFS bytes live in S3. Local
+        # retained objects form the independent encrypted historical copy.
+        # A durable 7-day purge/undo/refcount workflow must safely GC later.
       fi
     fi
   else

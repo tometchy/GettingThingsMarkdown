@@ -13,6 +13,11 @@ mail:
 encryptedArchive:
   lfsEnabled: false
   wormBackupEnabled: false
+recovery:
+  ageRecipient: "" # public key only; keep age private key outside BOTH clouds
+placement:
+  syncCloud: "" # e.g. hetzner (set both or neither)
+  historyCloud: "" # e.g. ovh
 storage:
   controlPlaneGi: 2
   className: ""

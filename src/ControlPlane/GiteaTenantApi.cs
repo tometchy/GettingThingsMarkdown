@@ -21,7 +21,7 @@ public static class GiteaTenantApi
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         if (string.IsNullOrWhiteSpace(archivePassword)) return false;
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes("archive:" + archivePassword)));
+            "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes("reader:" + archivePassword)));
         try
         {
             using var r = await client.GetAsync(

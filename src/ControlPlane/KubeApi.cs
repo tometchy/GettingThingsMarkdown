@@ -106,7 +106,13 @@ public sealed class KubeApi : IDisposable
             .GetProperty("resources").GetProperty("requests").GetProperty("storage").GetString()!;
         if (QuantityGiB(newQuantity) <= QuantityGiB(oldQuantity))
             return false; // Never shrink persistent encrypted filesystem: Kubernetes forbids it.
-        await ApplyAsync(desired, ct);
+        // Do not reapply immutable PVC fields defaulted by Kubernetes/CSI.
+        using var patch = new HttpRequestMessage(HttpMethod.Patch, desired.Url);
+        patch.Content = new StringContent(JsonSerializer.Serialize(new {
+            spec = new { resources = new { requests = new { storage = newQuantity } } }
+        }), Encoding.UTF8, "application/merge-patch+json");
+        using var response = await _http.SendAsync(patch, ct);
+        response.EnsureSuccessStatusCode();
         return true;
     }
 

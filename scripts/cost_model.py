@@ -22,6 +22,8 @@ class StorageEconomics:
     hdd_usable_tb_before_reserve: float = 32.0
     utilization: float = 0.75
     history_multiplier: float = 1.5
+    # Sync must independently cache all historical encrypted Git LFS bytes.
+    sync_history_multiplier: float = 2.0
     compute_eur_per_tenant: float = 0.50
     monitoring_support_eur_per_tenant: float = 0.80
     payment_variable: float = 0.015
@@ -44,12 +46,13 @@ class StorageEconomics:
         """
         if customers < 1 or storage_gib < 1 or gross_eur <= 0:
             raise ValueError("Positive customer count, quota, gross price required")
-        if not 0 < self.utilization <= 1 or self.history_multiplier < 1:
+        if not 0 < self.utilization <= 1 or self.history_multiplier < 1 or self.sync_history_multiplier < 1:
             raise ValueError("Invalid utilization/history parameters")
         if not 0 < self.schedulable_cpu_fraction <= 1 or not 0 < self.schedulable_ram_fraction <= 1:
             raise ValueError("Invalid worker scheduling fractions")
         gigabytes = storage_gib * GIB_IN_GB
         live_tb = gigabytes * customers / 1000
+        local_sync_tb = live_tb * self.sync_history_multiplier
         stored_history_tb = live_tb * self.history_multiplier
         workers_cpu = math.ceil(
             customers * 2 * self.cpu_request_per_pod_cores /
@@ -58,7 +61,7 @@ class StorageEconomics:
             customers * 2 * self.ram_request_per_pod_gib /
             (self.hdd_node_ram_gib * self.schedulable_ram_fraction))
         workers_disk = math.ceil(
-            live_tb / (self.hdd_usable_tb_before_reserve * self.utilization))
+            local_sync_tb / (self.hdd_usable_tb_before_reserve * self.utilization))
         worker_count = max(2, workers_cpu, workers_ram, workers_disk)
         backup_boxes = max(1, math.ceil(stored_history_tb / 10))
         # One shared S3 billing minimum; over-1TB usage is modeled at a
@@ -73,6 +76,7 @@ class StorageEconomics:
         return {
             "customers": customers,
             "quota_gib": storage_gib,
+            "sync_reserved_tb": round(local_sync_tb, 2),
             "workers": worker_count,
             "history_tb": round(stored_history_tb, 2),
             "backup_boxes": backup_boxes,
@@ -108,7 +112,7 @@ class StorageEconomics:
             2,
             math.ceil(cpu / (self.hdd_node_cpu_cores * self.schedulable_cpu_fraction)),
             math.ceil(ram / (self.hdd_node_ram_gib * self.schedulable_ram_fraction)),
-            math.ceil(gib * GIB_IN_GB / 1000 /
+            math.ceil(gib * self.sync_history_multiplier * GIB_IN_GB / 1000 /
                 (self.hdd_usable_tb_before_reserve * self.utilization))
         )
         net_revenue = 0.0
@@ -135,6 +139,7 @@ class StorageEconomics:
             "pro": pro,
             "nodes": nodes,
             "history_tb": round(history_tb, 2),
+            "sync_reserved_tb": round(gib * self.sync_history_multiplier * GIB_IN_GB / 1000, 2),
             "gross_sales_usd_equivalent": round(
                 sum(n * (monthly * (1 - annual_share) +
                          annually_equivalent * annual_share)
@@ -148,11 +153,11 @@ class StorageEconomics:
     def model(self, storage_gib: int, gross_eur: float) -> dict[str, float]:
         if storage_gib <= 0 or gross_eur <= 0:
             raise ValueError("Storage and gross price must be positive.")
-        if not 0 < self.utilization <= 1 or self.history_multiplier < 1:
+        if not 0 < self.utilization <= 1 or self.history_multiplier < 1 or self.sync_history_multiplier < 1:
             raise ValueError("Utilization must be (0,1] and archive >= live data.")
         gb = storage_gib * GIB_IN_GB
         tb = gb / 1000
-        hot_eur = self.hdd_node_eur * tb / (
+        hot_eur = self.hdd_node_eur * tb * self.sync_history_multiplier / (
             self.hdd_usable_tb_before_reserve * self.utilization)
         archive_eur = self.archive_eur_per_tb * tb * self.history_multiplier
         backup_eur = self.backup_box_eur_per_10tb * (tb * self.history_multiplier / 10)

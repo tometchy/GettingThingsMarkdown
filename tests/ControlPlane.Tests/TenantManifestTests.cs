@@ -35,6 +35,41 @@ public class TenantManifestTests
         Assert.DoesNotContain("encryptionPassword", string.Join("", manifests.Select(m => m.Json)),
             StringComparison.OrdinalIgnoreCase);
         Assert.NotEqual(secret["admin-pass"], secret["sync-pass"]);
+        Assert.NotEqual(secret["reader-pass"], secret["sync-pass"]);
+    }
+
+    [Fact]
+    public void ReadOnlyArchiveIdentityAndNetworkPoliciesAreRoleScoped()
+    {
+        var id = Guid.NewGuid();
+        var declarations = TenantManifests.Build(id, "basic", 2, null, "sync", "history").ToList();
+        var history = declarations.Single(d => d.Kind == "StatefulSet" && d.Name == "history").Json;
+        Assert.Contains("GTM_GITEA_READER_PASSWORD", history);
+        Assert.Contains("reader-pass", history);
+        Assert.Contains("DISABLE_GIT_HOOKS", history);
+        var policies = declarations.Where(d => d.Kind == "NetworkPolicy").ToDictionary(d => d.Name);
+        Assert.Equal(2, policies.Count);
+        Assert.Contains("gtm-controlplane", policies["history-ingress"].Json);
+        Assert.DoesNotContain("8384", policies["history-ingress"].Json);
+        Assert.Contains("8384", policies["sync-ingress"].Json);
+        Assert.DoesNotContain("3000", policies["sync-ingress"].Json);
+    }
+
+    [Fact]
+    public void RequiresTwoDifferentCloudsWhenPlacementIsEnabled()
+    {
+        var id = Guid.NewGuid();
+        Assert.Throws<ArgumentException>(() => TenantManifests.Build(id, "basic", 2, null,
+            "sync", "history", syncCloud: "hetzner").ToList());
+        Assert.Throws<ArgumentException>(() => TenantManifests.Build(id, "basic", 2, null,
+            "sync", "history", syncCloud: "hetzner", historyCloud: "hetzner").ToList());
+        var sets = TenantManifests.Build(id, "basic", 2, null, "sync", "history",
+            syncCloud: "hetzner", historyCloud: "ovh")
+            .Where(o => o.Kind == "StatefulSet").ToDictionary(o => o.Name);
+        Assert.Contains("nodeAffinity", sets["sync"].Json);
+        Assert.Contains("hetzner", sets["sync"].Json);
+        Assert.Contains("ovh", sets["history"].Json);
+        Assert.DoesNotContain("ovh", sets["sync"].Json);
     }
 
     [Fact]
@@ -55,8 +90,11 @@ public class TenantManifestTests
         var id = Guid.NewGuid();
         var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
             .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
-        Assert.Contains("75Gi", pvcs["sync-data"].Json);
+        Assert.Contains("150Gi", pvcs["sync-data"].Json);
         Assert.Contains("8Gi", pvcs["history-data"].Json);
+        // The Sync worker must keep encrypted historical LFS objects in its
+        // independent local cache even after the History/S3 push succeeds.
+        Assert.Contains("150Gi", pvcs["sync-data"].Json);
         var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
             .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
         Assert.Contains("75Gi", noLfs.Json);

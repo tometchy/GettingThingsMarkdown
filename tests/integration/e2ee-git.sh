@@ -96,6 +96,21 @@ remote_head="$(kubectl -n "$ns" exec history-0 -- \
 [ "$local_head" = "$remote_head" ] || {
   echo "Encrypted history divergence between A and B" >&2; exit 1
 }
+# The Control Plane must never need the Gitea administrator password.
+# A dedicated read-only collaborator is allowed to list, but cannot change
+# repository settings (or push). This checks actual Gitea authorization.
+reader_password="$(kubectl -n "$ns" get secret gtm-credentials \
+  -o jsonpath='{.data.reader-pass}' | base64 -d)"
+repo_url="https://history.$ns.svc.cluster.local:3000/api/v1/repos/archive/history"
+status="$(kubectl -n "$ns" exec sync-0 -- \
+  env "GT_TEST_READER=$reader_password" "GT_TEST_URL=$repo_url" sh -ec \
+  'curl -s -o /dev/null -w "%{http_code}" --cacert /tls/tls.crt --user "reader:$GT_TEST_READER" "$GT_TEST_URL"')" 
+[ "$status" = 200 ] || { echo "Read-only Gitea account cannot read: $status" >&2; exit 1; }
+status="$(kubectl -n "$ns" exec sync-0 -- \
+  env "GT_TEST_READER=$reader_password" "GT_TEST_URL=$repo_url" sh -ec \
+  'curl -s -o /dev/null -w "%{http_code}" --cacert /tls/tls.crt --user "reader:$GT_TEST_READER" \
+  -X PATCH -H "Content-Type: application/json" -d "{}" "$GT_TEST_URL"')" 
+case "$status" in 401|403|404|405) ;; *) echo "SECURITY: reader could mutate repository! HTTP $status" >&2; exit 1 ;; esac
 # Restore from the encrypted Git archive in B, not from A's local working copy.
 # The native Syncthing decrypt implementation must recover the exact plaintext
 # without any secret being sent to either SaaS container.

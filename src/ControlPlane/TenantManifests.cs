@@ -12,15 +12,26 @@ public static class TenantManifests
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
         string? syncStorageClass = null, string? historyStorageClass = null,
-        int? quotaGiBOverride = null)
+        int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null,
+        string? recoveryRecipient = null)
     {
+        if (string.IsNullOrWhiteSpace(syncCloud) != string.IsNullOrWhiteSpace(historyCloud))
+            throw new ArgumentException("Cloud placement requires both providers.");
+        if (!string.IsNullOrWhiteSpace(syncCloud) &&
+            (!ValidCloud(syncCloud) || !ValidCloud(historyCloud!) || syncCloud == historyCloud))
+            throw new ArgumentException("Two distinct DNS-safe cloud labels are required.");
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
         if (!PlanCatalog.IsValid(plan)) throw new ArgumentException("Unsupported plan.", nameof(plan));
         if (quotaGiBOverride is <= 0 or > 10240)
             throw new ArgumentOutOfRangeException(nameof(quotaGiBOverride));
-        string size = (devVolumeGi > 0 ? devVolumeGi :
-            quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)))) + "Gi";
+        int baseGiB = devVolumeGi > 0 ? devVolumeGi :
+            quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)));
+        // Retain the *complete encrypted LFS cache* on A even after successful
+        // push to B/S3. This is a capacity reservation, NOT history quota
+        // enforcement: an unbounded version log can still exceed 2x.
+        string size = baseGiB + "Gi";
+        string syncHistorySize = checked(baseGiB * 2) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
             apiVersion = "v1", kind = "Namespace",
@@ -46,7 +57,7 @@ public static class TenantManifests
                 ["resources"] = new { requests = new Dictionary<string, string> {
                     ["storage"] = lfsEnabled && role == "history"
                         ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
-                        : size
+                        : lfsEnabled && role == "sync" ? syncHistorySize : size
                 } }
             };
             if (!string.IsNullOrWhiteSpace(storageClass))
@@ -101,6 +112,15 @@ public static class TenantManifests
                 }}
             };
             string historyHost = $"history.{ns}.svc.cluster.local";
+            string? cloud = role == "sync" ? syncCloud : historyCloud;
+            object affinity = string.IsNullOrWhiteSpace(cloud) ? new { podAntiAffinity = podAnti } :
+                new { podAntiAffinity = podAnti, nodeAffinity = new {
+                    requiredDuringSchedulingIgnoredDuringExecution = new {
+                        nodeSelectorTerms = new[] { new { matchExpressions = new[] { new {
+                            key = "gtm.io/cloud", @operator = "In", values = new[] { cloud }
+                        } } } }
+                    }
+                } };
             object[] env = role == "sync"
                 ? new object[]
                 {
@@ -108,12 +128,14 @@ public static class TenantManifests
                     FromSecret("GTM_GIT_PASSWORD", "sync-pass"),
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
                     new { name = "GTM_GIT_USERNAME", value = "sync" },
-                    new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" }
+                    new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" },
+                    new { name = "GTM_RECOVERY_AGE_RECIPIENT", value = recoveryRecipient ?? "" }
                 }
                 : new object[]
                 {
                     FromSecret("GTM_GITEA_ADMIN_PASSWORD", "admin-pass"),
                     FromSecret("GTM_GITEA_SYNC_PASSWORD", "sync-pass"),
+                    FromSecret("GTM_GITEA_READER_PASSWORD", "reader-pass"),
                     FromSecret("GITEA__security__SECRET_KEY", "gitea-secret-key"),
                     FromSecret("GITEA__security__INTERNAL_TOKEN", "gitea-internal-token"),
                     FromSecret("GITEA__oauth2__JWT_SECRET", "gitea-oauth-jwt"),
@@ -128,7 +150,9 @@ public static class TenantManifests
                     new { name = "GITEA__server__DISABLE_SSH", value = "true" },
                     new { name = "GITEA__repository__FORCE_PRIVATE", value = "true" },
                     new { name = "GITEA__database__DB_TYPE", value = "sqlite3" },
-                    new { name = "GITEA__actions__ENABLED", value = "false" }
+                    new { name = "GITEA__actions__ENABLED", value = "false" },
+                    new { name = "GITEA__repository__DISABLE_MIGRATIONS", value = "true" },
+                    new { name = "GITEA__repository__DISABLE_GIT_HOOKS", value = "true" }
                 };
             var initContainers = role == "sync" ? new object[] { new {
                 name = "prepare-volume", image = "busybox:1.37",
@@ -206,7 +230,7 @@ public static class TenantManifests
                         spec = new
                         {
                             securityContext = new { runAsNonRoot = true, runAsUser = 1000, runAsGroup = 1000, fsGroup = 1000 },
-                            affinity = new { podAntiAffinity = podAnti },
+                            affinity,
                             topologySpreadConstraints = new[] { new {
                                 maxSkew = 1,
                                 topologyKey = "topology.kubernetes.io/zone",
@@ -242,34 +266,60 @@ public static class TenantManifests
             });
         }
 
-        // Narrow the Syncthing administration API to the shared management namespace.
-        // P2P uses port 22000. Git history is reachable only from A and the control plane.
-        yield return KubeObject.From("networking.k8s.io/v1", "NetworkPolicy", "restrict-tenant", ns, new
+
+        // Default-deny ingress separately for Sync and History; public peers
+        // get only TCP/UDP 22000, never Syncthing's privileged REST endpoint.
+        var controlPlane = new { namespaceSelector = new { matchLabels =
+            new Dictionary<string,string> { ["kubernetes.io/metadata.name"] = "gtm-system" } },
+            podSelector = new { matchLabels = new Dictionary<string,string> {
+                ["app"] = "gtm-controlplane" } } };
+        yield return KubeObject.From("networking.k8s.io/v1", "NetworkPolicy", "sync-ingress", ns, new
         {
             apiVersion = "networking.k8s.io/v1", kind = "NetworkPolicy",
-            metadata = Meta("restrict-tenant", ns),
-            spec = new
-            {
-                podSelector = new { }, policyTypes = new[] { "Ingress" },
+            metadata = Meta("sync-ingress", ns),
+            spec = new {
+                podSelector = new { matchLabels = new Dictionary<string,string> {
+                    ["gtm.io/role"] = "sync" } },
+                policyTypes = new[] { "Ingress" },
                 ingress = new object[] {
-                    new {
-                        from = new object[] { new { namespaceSelector = new { matchLabels =
-                            new Dictionary<string, string> { ["kubernetes.io/metadata.name"] = "gtm-system" } } } },
-                        ports = new object[] { new { protocol = "TCP", port = 8384 }, new { protocol = "TCP", port = 3000 } }
-                    },
-                    new {
-                        from = new object[] { new { podSelector = new { matchLabels =
-                            new Dictionary<string,string> { ["gtm.io/role"] = "sync" } } } },
-                        ports = new object[] { new { protocol = "TCP", port = 3000 } }
-                    },
-                    new {
-                        // Omitted source selector admits external Syncthing peers on 22000.
-                        ports = new object[] { new { protocol = "TCP", port = 22000 } }
-                    }
+                    new { from = new object[] { controlPlane },
+                          ports = new object[] { new { protocol = "TCP", port = 8384 } } },
+                    new { ports = new object[] {
+                        new { protocol = "TCP", port = 22000 },
+                        new { protocol = "UDP", port = 22000 }
+                    } }
+                }
+            }
+        });
+        // Gitea is not public. Only this tenant's Sync pod can write Git;
+        // only the shared API can read it with separate read-only credentials.
+        yield return KubeObject.From("networking.k8s.io/v1", "NetworkPolicy", "history-ingress", ns, new
+        {
+            apiVersion = "networking.k8s.io/v1", kind = "NetworkPolicy",
+            metadata = Meta("history-ingress", ns),
+            spec = new {
+                podSelector = new { matchLabels = new Dictionary<string,string> {
+                    ["gtm.io/role"] = "history" } },
+                policyTypes = new[] { "Ingress" },
+                ingress = new object[] {
+                    new { from = new object[] { controlPlane },
+                          ports = new object[] { new { protocol = "TCP", port = 3000 } } },
+                    new { from = new object[] { new { podSelector = new {
+                          matchLabels = new Dictionary<string,string> {
+                              ["gtm.io/role"] = "sync",
+                              ["gtm.io/tenant"] = ns
+                          } } } },
+                          ports = new object[] { new { protocol = "TCP", port = 3000 } } }
                 }
             }
         });
     }
+
+    private static bool ValidCloud(string value) =>
+        value.Length <= 63 && System.Text.RegularExpressions.Regex.IsMatch(value,
+            "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
 
     private static object FromSecret(string name, string key) => new
     {
@@ -291,6 +341,7 @@ public static class TenantManifests
         {
             ["admin-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
             ["sync-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
+            ["reader-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
             ["sync-api-key"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)),
             ["gitea-secret-key"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
             ["gitea-internal-token"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),

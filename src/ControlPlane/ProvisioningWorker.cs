@@ -74,6 +74,7 @@ public sealed class ProvisioningWorker(
                     if (!_lastCapacityCheck.TryGetValue(account.Id, out var checkedAt) ||
                         now - checkedAt > TimeSpan.FromMinutes(10))
                     {
+                        await EnsureTenantAsync(kube, state.Namespace, account, ct);
                         await ExpandExistingVolumesAsync(kube, account, ct);
                         _lastCapacityCheck[account.Id] = now;
                     }
@@ -92,7 +93,7 @@ public sealed class ProvisioningWorker(
                     if (resuming) await sync.SetFolderPausedAsync(false, ct);
                     var serverId = await sync.DeviceIdAsync(ct);
                     if (await GiteaTenantApi.RepositoryReadyAsync(state.Namespace,
-                        await kube.SecretAsync(state.Namespace, "history-ca", ct), secret["admin-pass"], ct))
+                        await kube.SecretAsync(state.Namespace, "history-ca", ct), secret["reader-pass"], ct))
                     {
                         state.ServerDeviceId = serverId;
                         state.Status = "Ready";
@@ -125,7 +126,9 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
             account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null)
+                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"])
             .Where(x => x.Kind == "PersistentVolumeClaim");
         foreach (var claim in claims)
         {
@@ -137,6 +140,10 @@ public sealed class ProvisioningWorker(
     private async Task EnsureTenantAsync(KubeApi kube, string ns, Account account,
         CancellationToken ct)
     {
+        if (!string.IsNullOrWhiteSpace(config["GTM_SYNC_CLOUD"]) &&
+            string.IsNullOrWhiteSpace(config["GTM_RECOVERY_AGE_RECIPIENT"]))
+            throw new InvalidOperationException(
+                "Cross-cloud placement requires an offline-held age recovery public key.");
         if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
             !config.GetValue<bool>("GTM_ALLOW_UNTESTED_LOCAL_STORAGE") &&
             string.IsNullOrWhiteSpace(config["GTM_SYNC_STORAGE_CLASS"]))
@@ -151,7 +158,9 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
             account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null).ToList();
+                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -164,8 +173,29 @@ public sealed class ProvisioningWorker(
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
                 account.QuotaOverrideBytes is long initialQuota
-                    ? checked((int)(initialQuota / (1024L * 1024 * 1024))) : null);
+                    ? checked((int)(initialQuota / (1024L * 1024 * 1024))) : null,
+                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
+        }
+        // Migrate pre-existing tenants: do not regenerate any established password.
+        var credentials = await kube.SecretAsync(ns, "gtm-credentials", ct)
+            ?? throw new InvalidOperationException("Missing tenant credentials.");
+        if (!credentials.ContainsKey("reader-pass"))
+        {
+            credentials["reader-pass"] = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+            var migration = TenantManifests.Build(account.Id, account.Plan,
+                config.GetValue<int>("GTM_DEV_VOLUME_GI"), credentials,
+                config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
+                config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
+                config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
+                config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
+                config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
+                account.QuotaOverrideBytes is long previous
+                    ? checked((int)(previous / (1024L * 1024 * 1024))) : null,
+                config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
+            config["GTM_RECOVERY_AGE_RECIPIENT"]);
+            await kube.ApplyAsync(migration.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))
         {

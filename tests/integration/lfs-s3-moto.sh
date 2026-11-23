@@ -44,6 +44,7 @@ docker run -d --name "$history" --network "$network" --network-alias history \
   -v "$root/tls:/tls:ro" \
   -e GTM_GITEA_ADMIN_PASSWORD="ci-test-history-admin-$(openssl rand -hex 16)" \
   -e GTM_GITEA_SYNC_PASSWORD="CI-SYNC-$(openssl rand -hex 16)" \
+  -e GTM_GITEA_READER_PASSWORD="CI-READER-$(openssl rand -hex 16)" \
   -e GITEA__server__DOMAIN=history \
   -e GITEA__server__PROTOCOL=https \
   -e GITEA__server__ROOT_URL=https://history:3000/ \
@@ -140,4 +141,23 @@ restored_sha="$(docker exec "$sync" sha256sum /data/git/ci-restore/opaque.bin | 
   docker logs "$sync" --tail=70 >&2
   exit 1
 }
-echo "PASS: Git LFS pushed to emulated S3 tenant prefix and restored identical bytes via Gitea HTTPS."
+# The Sync node is a separate failure domain. Verify the full historical
+# encrypted object remains locally available even after a second commit cycle.
+sleep 15
+if ! docker exec "$sync" sh -ec '
+    export GIT_DIR=/data/git
+    [ -s "/data/git/lfs/objects/$(echo "$1" | cut -c1-2)/$(echo "$1" | cut -c3-4)/$1" ]
+  ' sh "$source_sha"; then
+  echo "FAIL: Sync did not retain the full historical LFS object independently of S3" >&2
+  exit 1
+fi
+# Simulate a tenant created by an older release that pruned LFS from A.
+# On startup, rehydrate A from B using opaque Git LFS pointers.
+docker exec "$sync" sh -ec '
+  p="/data/git/lfs/objects/$(echo "$1" | cut -c1-2)/$(echo "$1" | cut -c3-4)/$1"
+  rm "$p"
+  [ ! -f "$p" ] || exit 1
+  /usr/local/bin/lfs-backfill-once.sh
+  [ -s "$p" ]
+' sh "$source_sha"
+echo "PASS: independent Sync local LFS history retained and rehydrated after simulated legacy prune."

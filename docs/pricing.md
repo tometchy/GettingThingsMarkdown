@@ -31,6 +31,14 @@ Syncthing E2EE together with retained independent encrypted Git history and
 WORM snapshots (when that feature passes full S3 production testing).
 Sources: https://filen.io/pricing and https://syncthing-cloud.com/.
 
+**Not yet a verified profitable offer.** The two-cloud LFS path now keeps all
+historical encrypted LFS bytes locally on Sync *and* via the remote Gitea/S3.
+Sync therefore reserves a **2× plan quota PVC** (Mini 20 GiB, Plus 150 GiB,
+Pro 1000 GiB), with a separate 8 GiB History metadata PVC. This is a
+reservation, not a hard history limit: unbounded Git history may exceed it.
+Previous 1× Sync HDD margin estimates were optimistic; a new history-quota,
+7-day deletion/undo and measured costs are still mandatory.
+
 **Not yet a verified profitable offer.** Two always-resident containers per
 customer consume CPU/RAM. 10/75/500 GiB pricing is an initial *scenario*,
 not a guarantee of profit at small scale. The server pod requests are

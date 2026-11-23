@@ -37,6 +37,16 @@ else
   git remote add origin "$GTM_GIT_URL"
 fi
 /usr/local/bin/commit-loop.sh &
+if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
+  # Existing tenants may have lost historical A-side LFS blobs from the
+  # legacy automatic-prune behavior. Rehydrate from History/S3 on startup.
+  /usr/local/bin/lfs-backfill-loop.sh &
+fi
+if [ -n "${GTM_RECOVERY_AGE_RECIPIENT:-}" ]; then
+  # Identical encrypted Syncthing device identity in local Git and remote Gitea.
+  # Only the public age recipient is available inside the SaaS data pods.
+  /usr/local/bin/identity-backup-loop.sh &
+fi
 # The administrative REST API is reachable only over a private cluster Service
 # restricted by NetworkPolicy. It is not exposed through public ingress.
 exec syncthing serve --home=/data/syncthing --no-browser \
