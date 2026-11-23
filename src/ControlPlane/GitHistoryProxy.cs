@@ -28,7 +28,7 @@ public sealed class GitHistoryProxy : IDisposable
             BaseAddress = new Uri($"https://history.{tenantNamespace}.svc.cluster.local:3000/"),
             Timeout = TimeSpan.FromSeconds(20)
         };
-        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes("archive:" + archivePassword));
+        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes("reader:" + archivePassword));
         _http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", basic);
     }

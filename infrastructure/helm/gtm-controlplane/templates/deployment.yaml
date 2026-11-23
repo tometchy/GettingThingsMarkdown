@@ -40,6 +40,10 @@ spec:
               value: {{ .Values.storage.syncClassName | quote }}
             - name: GTM_HISTORY_STORAGE_CLASS
               value: {{ .Values.storage.historyClassName | quote }}
+            - name: GTM_SYNC_CLOUD
+              value: {{ .Values.placement.syncCloud | quote }}
+            - name: GTM_HISTORY_CLOUD
+              value: {{ .Values.placement.historyCloud | quote }}
             - name: GTM_GIT_LFS_ENABLED
               value: {{ .Values.encryptedArchive.lfsEnabled | quote }}
             - name: GTM_WORM_BACKUP_ENABLED
