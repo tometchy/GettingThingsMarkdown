@@ -40,7 +40,13 @@ public static class MailEncryption
         var email = await MimeMessage.LoadAsync(input, ct);
         // TextBody handles plain-text alternatives, quoted-printable and UTF-8
         // without accepting HTML or attachment contents into tasks.
-        var text = email.TextBody ?? "[HTML-only email: body omitted]";
+        var text = email.TextBody ??
+            (email.HtmlBody is { } html
+                ? new MimeKit.Text.HtmlToText { OutputLinkUrls = true,
+                    OutputImageAltText = true }.Convert(html)
+                : "[Message has no text body]");
+        // No HTML is stored or executed. Verification URLs remain as plain text.
+
         var normalized = new InboundMailPayload(
             Limit(email.Subject ?? "(no subject)", 400),
             Limit(email.From.ToString(), 254),
