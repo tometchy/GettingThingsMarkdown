@@ -40,6 +40,8 @@ with smtplib.SMTP(os.environ.get('GTM_SMTP_HOST', '127.0.0.1'),
     smtp.mail('sender@example.test')
     code, _ = smtp.rcpt('ordinary@evil.test')
     assert code == 550, (code, 'Open relay risk')
+    code, _ = smtp.rcpt('r' + '0' * 48 + '@inbox.test.invalid')
+    assert code == 550, (code, 'Unknown random alias accepted')
 PY
 
 messages="$(curl --fail-with-body -fsS "$GTM_API_URL/api/mail/messages"   -H "Authorization: Bearer $bearer")"
