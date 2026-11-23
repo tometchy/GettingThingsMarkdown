@@ -2,7 +2,7 @@
 
 A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history and Markdown task automation. **Unreleased engineering preview. Not production-ready.**
 
-## Implemented on feature/cluster-syncthing-git-mvp
+## Implemented foundation (main); affordable-storage work in PR #3
 
 - Backend: ASP.NET Core 10 identity, SQLite account/subscription metadata, JWT, password hashing, rate limiting, PL/EN Avalonia shared subscription UI for desktop and WebAssembly.
 - Billing: month trial, admin trial extension with audit, Stripe Checkout/Portal and signed webhooks. Server-only 100-year trial when **Development** and explicitly enabled.
@@ -13,7 +13,7 @@ A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history
 - Shell: rootless Podman + kind with two worker nodes, local image build/load and safe cluster lifecycle.
 - Tests: policy/registration/signature tests, tenant-manifest invariants, local archive automation tests, CI builds of all three containers, experimental real-kind two-account and ciphertext/Git end-to-end scripts.
 
-**Only claim a test passed after the associated GitHub Actions job actually succeeds.** The codebase is currently *in development*, and not every operation described here has passed end-to-end integration.
+**The affordable-storage extension is experimental and has not been deployed to a paid cloud.** Only claim a test passed after the associated GitHub Actions job actually succeeds. The codebase is currently *in development*, and not every operation described here has passed end-to-end integration.
 
 ## Local first run — Linux Mint
 
@@ -22,7 +22,7 @@ Prerequisites: .NET 10 SDK, Podman rootless, cgroups v2, kind, kubectl, curl, jq
 ```bash
 git clone https://github.com/tometchy/GettingThingsMarkdown.git
 cd GettingThingsMarkdown
-git switch feature/cluster-syncthing-git-mvp
+git switch feature/affordable-object-storage-mvp-hardening
 chmod +x dev.sh
 ./dev.sh setup
 ./dev.sh up
@@ -66,7 +66,7 @@ dotnet workload install wasm-tools
 
 The development backend applies a **100-year trial only when both** `ASPNETCORE_ENVIRONMENT=Development` and `GTM_DEV_LONG_TRIAL=true`. Production accounts must use normal one-month trial; disabling this env flag does not retroactively shorten existing development accounts.
 
-Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, and `docs/architecture-and-gaps.md` for limitations.
+Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, `docs/affordable-infrastructure.md`, `docs/storage-economics.md`, and `docs/architecture-and-gaps.md` for limitations.
 
 ## Runtime commands
 

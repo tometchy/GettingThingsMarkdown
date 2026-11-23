@@ -43,6 +43,8 @@ jobs:
         run: |
           bash -n dev.sh tests/integration/kind-smoke.sh packaging/linux/bundle-syncthing.sh
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
+      - name: Verify immutable backup rejects weak retention
+        run: bash tests/security/worm-fail-closed.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build encrypted Sync/Git image

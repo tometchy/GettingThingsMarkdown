@@ -82,3 +82,35 @@ second 200 GiB block disk for Plus. The Sync PVC remains 200 GiB (or the
 development size) and must use a cost-efficient enforceable HDD-backed storage
 class. This does not imply history metadata will never exceed 8 GiB; reserve
 space, monitor and resize when needed.
+
+## Backup operational policy
+
+When `encryptedArchive.wormBackupEnabled=true`, the tenant History process
+runs `backup-loop.sh` inside the **existing History container**. Every 6 hours
+it snapshots a consistent SQLite DB and a Git bundle of the encrypted history,
+symmetrically encrypts the snapshot using an operator-held recovery passphrase,
+uploads it with explicit 31-day COMPLIANCE retention and verifies the resulting
+object's lock. It then incrementally `rclone copy --immutable` copies opaque
+Git LFS blobs into the same WORM destination. It never deletes any WORM object.
+
+The operator must pre-create an **Object Lock-enabled** bucket with default
+COMPLIANCE >=30 days, and a distinct backup access key with the narrowest
+possible permissions for that tenant. Create Kubernetes Secret
+`gtm-worm-credentials` in that tenant namespace with keys
+`endpoint-url`, `bucket`, `region`, `access-key-id`,
+`secret-access-key`, `backup-passphrase`. Keep the passphrase separately,
+offline: losing it makes Gitea metadata snapshots unusable. The API never
+returns backup credentials or plaintext.
+
+The backup worker stops rather than silently downgrade COMPLIANCE to
+GOVERNANCE. Alert on repeated failures, storage class outages, or a bucket
+with incorrect retention. Hourly/6h snapshots can grow rapidly under the
+30-day minimum retention and must be included in cost testing. No real S3
+bucket has been provisioned or encrypted restore performed against a paid
+provider yet.
+
+The WORM snapshot contains **only History metadata and encrypted Git LFS
+blobs**. It does not yet contain the Syncthing server's unique device identity
+or a transactionally consistent backup of the Control Plane account database.
+Both are release blockers; no SLA should be offered until disaster recovery
+can recreate the tenant's identity with a tested point-in-time restore.
