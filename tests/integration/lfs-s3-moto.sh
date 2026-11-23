@@ -151,4 +151,13 @@ if ! docker exec "$sync" sh -ec '
   echo "FAIL: Sync did not retain the full historical LFS object independently of S3" >&2
   exit 1
 fi
-echo "PASS: Git LFS pushed to emulated S3 tenant prefix and restored identical bytes via Gitea HTTPS."
+# Simulate a tenant created by an older release that pruned LFS from A.
+# On startup, rehydrate A from B using opaque Git LFS pointers.
+docker exec "$sync" sh -ec '
+  p="/data/git/lfs/objects/$(echo "$1" | cut -c1-2)/$(echo "$1" | cut -c3-4)/$1"
+  rm "$p"
+  [ ! -f "$p" ] || exit 1
+  /usr/local/bin/lfs-backfill-once.sh
+  [ -s "$p" ]
+' sh "$source_sha"
+echo "PASS: independent Sync local LFS history retained and rehydrated after simulated legacy prune."

@@ -16,6 +16,9 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   kind default networking alone is NOT proof.
 - [ ] Real, fenced automatic failover; cross-cloud network, independent storage
   recovery, active quorum/witness and separate cloud bootstrap credentials.
+- [x] On Sync start, a background recovery job backfills historical LFS objects
+  from remote Gitea/S3 (including tenants whose old versions were pruned);
+  CI exercises delete-local-object + rehydrate. No full quota guarantee.
 - [x] Sync retains encrypted Git LFS source objects after push; allocated
   Sync PVC nominally 2× plan quota in LFS mode. This still needs actual history
   byte quota, capacity enforcement and fault-injection recovery.
