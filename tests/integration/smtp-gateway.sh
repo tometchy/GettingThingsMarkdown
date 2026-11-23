@@ -37,6 +37,7 @@ with smtplib.SMTP(os.environ.get('GTM_SMTP_HOST', '127.0.0.1'),
     smtp.starttls(context=ssl._create_unverified_context())
     smtp.ehlo()
     smtp.send_message(msg)
+    smtp.mail('sender@example.test')
     code, _ = smtp.rcpt('ordinary@evil.test')
     assert code == 550, (code, 'Open relay risk')
 PY
