@@ -41,6 +41,7 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 - [x] Read-only admin observability summary (aggregate tenant/provisioning health, pending intents, holds and explicit disabled safety flags) plus database-backed readiness probe.
 - [ ] No automatic purge after the seven-day period. An intent records a requested operation; it neither rewrites Git nor frees disk. Requires independently enforced immutable retention, separately privileged double-replica rewrite, verified GC, concurrency control and reproducible chaos tests.
 - [ ] Incident-hold/intent state plus account/Stripe state must survive losing either provider without rollback; the single SQLite control-plane PVC is not redundant.
+- [x] Production administrator API is disabled by default, even if an administrator token is configured; local Development remains authenticated.
 - [ ] Operator SSO/MFA, non-public admin ingress, separate read-only admin identity, independent security audit ledger and verified root-resistant retention in both physical sites.
 - [ ] Full automatic A↔B failover with real fencing/quorum, new local volumes, restored secrets and routing; not safe to switch on automatically in this branch.
 
@@ -80,9 +81,11 @@ See [history-protection-operations.md](history-protection-operations.md).
 - [x] Hybrid RSA-3072/OAEP-SHA256 and AES-256-GCM ciphertext envelopes; trusted desktop keeps private key locally and produces native `ToDo/*.md` files for standard Syncthing E2EE.
 - [x] Alias registration/rotation, HTML forwarding verification URL handling, mailbox/queue endpoints, bounded message size/dedup and automatic import polling while trusted desktop is running.
 - [x] Optional shared SMTP service/deployment (not one SMTP container per tenant), encrypted queue ingress, localhost kind smoke script.
-- [ ] CI full SMTP STARTTLS pipeline passing for all images, client and tests, followed by external Gmail verification and DNS MX/TLS in a real provider.
+- [x] CI passed standalone SMTP/STARTTLS → encrypted inbox → ACK using disposable kind (run #45232220656). External Gmail verification and public DNS/MX/TLS are still untested.
 - [ ] Durable multi-cloud inbox/account persistence, independent recovery keys, strong spam/flood/throttle policy, production auth/network hardening and tested mobile import/background behavior.
-- [ ] Mail-to-task import on each trusted device must not cause duplicates after ACK race and multiple clients; current implementation limits by deterministic file name and server acknowledgement.
+- [x] Non-destructive ACK and 30-day encrypted mail recovery archive, with incident-hold extension, idempotent ACK and a trusted-client restore action. Retained ciphertext is capped and the cleanup worker never removes unacknowledged mail.
+- [x] Serialize manual and automatic imports on the same desktop engine.
+- [ ] Confirm mailbox sync/commit has reached **both** encrypted Git replicas before relying only on normal mail/archive retention; idempotent filenames alone cannot provide a distributed exactly-once guarantee.
 
 See [SMTP feature and security contract](smtp-encrypted-inbox.md).
 
