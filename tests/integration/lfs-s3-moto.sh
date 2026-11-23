@@ -125,10 +125,19 @@ docker exec "$sync" sh -ec '
   export GIT_ASKPASS=/usr/local/bin/askpass.sh
   export GIT_TERMINAL_PROMPT=0
   git clone -q "$GTM_GIT_URL" /data/git/ci-restore
+  # The server intentionally does not version a plaintext .gitattributes
+  # inside the encrypted folder. Restore must explicitly supply the LFS
+  # attributes and initialize the Git LFS checkout on the trusted host.
+  git -C /data/git/ci-restore config core.attributesfile /data/git/info/attributes
+  git -C /data/git/ci-restore lfs install --local
   git -C /data/git/ci-restore lfs pull
+  git -C /data/git/ci-restore lfs checkout
 '
 restored_sha="$(docker exec "$sync" sha256sum /data/git/ci-restore/opaque.bin | awk '{print $1}')"
 [ "$source_sha" = "$restored_sha" ] || {
-  echo "FAIL: Git LFS restore differed from encrypted source" >&2; exit 1
+  echo "FAIL: Git LFS restore differed from encrypted source" >&2
+  docker exec "$sync" sh -c 'git -C /data/git/ci-restore lfs ls-files && ls -lh /data/git/ci-restore/opaque.bin' || true
+  docker logs "$sync" --tail=70 >&2
+  exit 1
 }
 echo "PASS: Git LFS pushed to emulated S3 tenant prefix and restored identical bytes via Gitea HTTPS."
