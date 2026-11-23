@@ -880,6 +880,10 @@ app.MapGet("/api/admin/observability", async (
     var holds = await accounts.Accounts.AsNoTracking()
         .Where(a => a.HistoryHoldUntilUtc != null)
         .Select(a => a.HistoryHoldUntilUtc).ToListAsync(ct);
+    var mail = await accounts.EncryptedInboundMails.AsNoTracking()
+        .Select(m => new { m.AccountId, m.ReceivedUtc, m.AcknowledgedUtc })
+        .ToListAsync(ct);
+    var mailPending = mail.Where(m => m.AcknowledgedUtc is null).ToList();
     return Results.Ok(new {
         checkedUtc = now,
         accounts = await accounts.Accounts.CountAsync(ct),
@@ -890,6 +894,18 @@ app.MapGet("/api/admin/observability", async (
             provisioning = tenants.Count(t => t.Status is "Pending" or "Provisioning"),
             suspended = tenants.Count(t => t.Status == "Suspended"),
             staleReconciliation = tenants.Count(t => t.UpdatedUtc < now.AddMinutes(-5))
+        },
+        encryptedMail = new {
+            awaitingTrustedImport = mailPending.Count,
+            oldestPendingHours = mailPending.Count == 0 ? (double?)null :
+                mailPending.Max(m => Math.Max(0, (now - m.ReceivedUtc).TotalHours)),
+            recoverableAfterImport = mail.Count(m => m.AcknowledgedUtc is not null),
+            accountsApproachingArchiveLimit = mail.GroupBy(m => m.AccountId)
+                .Count(g => g.Count() >= MailInboxPolicy.MaxRetainedMessages * 9 / 10),
+            accountsAtPendingLimit = mailPending.GroupBy(m => m.AccountId)
+                .Count(g => g.Count() >= MailInboxPolicy.MaxPendingMessages),
+            recoveryWindowDays = MailInboxPolicy.RecoveryDays,
+            queueIndependentlyReplicated = false
         },
         historyProtection = new {
             pendingDeletionIntents = pendingTimes.Count,
