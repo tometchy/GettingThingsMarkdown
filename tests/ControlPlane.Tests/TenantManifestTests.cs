@@ -63,6 +63,18 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void ProductionPVCStorageClassesCanBeSelectedIndependently()
+    {
+        var id = Guid.NewGuid();
+        var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history",
+            true, true, "gtm-hdd-quota", "hcloud-fast-small")
+            .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
+        Assert.Contains("gtm-hdd-quota", pvcs["sync-data"].Json);
+        Assert.DoesNotContain("gtm-hdd-quota", pvcs["history-data"].Json);
+        Assert.Contains("hcloud-fast-small", pvcs["history-data"].Json);
+    }
+
+    [Fact]
     public void WormBackupRequiresDistinctTenantCredentials()
     {
         var id = Guid.NewGuid();

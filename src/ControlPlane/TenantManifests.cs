@@ -10,7 +10,8 @@ public static class TenantManifests
         => new { name, @namespace = ns, labels };
 
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
-        IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false)
+        IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
+        string? syncStorageClass = null, string? historyStorageClass = null)
     {
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
@@ -36,19 +37,23 @@ public static class TenantManifests
         }
         foreach (var role in new[] { "sync", "history" })
         {
+            var storageClass = role == "sync" ? syncStorageClass : historyStorageClass;
+            var volumeSpec = new Dictionary<string, object>
+            {
+                ["accessModes"] = new[] { "ReadWriteOnce" },
+                ["resources"] = new { requests = new Dictionary<string, string> {
+                    ["storage"] = lfsEnabled && role == "history"
+                        ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
+                        : size
+                } }
+            };
+            if (!string.IsNullOrWhiteSpace(storageClass))
+                volumeSpec["storageClassName"] = storageClass;
             yield return KubeObject.From("v1", "PersistentVolumeClaim", role + "-data", ns, new
             {
                 apiVersion = "v1", kind = "PersistentVolumeClaim",
                 metadata = Meta(role + "-data", ns),
-                spec = new
-                {
-                    accessModes = new[] { "ReadWriteOnce" },
-                    resources = new { requests = new Dictionary<string, string> {
-                        ["storage"] = lfsEnabled && role == "history"
-                            ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
-                            : size
-                    } }
-                }
+                spec = volumeSpec
             });
         }
 

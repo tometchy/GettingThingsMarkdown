@@ -12,6 +12,8 @@ encryptedArchive:
 storage:
   controlPlaneGi: 2
   className: ""
+  syncClassName: ""
+  historyClassName: ""
 api:
   host: api.example.invalid
   ingressEnabled: false

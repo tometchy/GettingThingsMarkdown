@@ -104,13 +104,19 @@ public sealed class ProvisioningWorker(
     private async Task EnsureTenantAsync(KubeApi kube, string ns, Account account,
         CancellationToken ct)
     {
+        if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
+            !config.GetValue<bool>("GTM_ALLOW_UNTESTED_LOCAL_STORAGE") &&
+            string.IsNullOrWhiteSpace(config["GTM_SYNC_STORAGE_CLASS"]))
+            throw new InvalidOperationException(
+                "No quota-capable HDD Sync StorageClass configured; do not fall back to pricey default SSD PVC.");
         // Create the namespace first; later objects live inside it.
         var declarations = TenantManifests.Build(account.Id, account.Plan,
             config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
             config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
             config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
-            config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED")).ToList();
+            config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
+            config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"]).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -120,7 +126,8 @@ public sealed class ProvisioningWorker(
                 TenantManifests.NewSecrets(), config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
                 config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
-                config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"));
+                config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
+                config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"]);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))
