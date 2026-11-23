@@ -348,18 +348,19 @@ public sealed class AccountView : UserControl
         _saveDocument.Content = T("Zapisz plik", "Save Markdown file");
         _previewDocument.Content = T("Podgląd Markdown", "Markdown preview");
         _tenantRefresh.IsEnabled = _current is not null;
-        _pair.IsEnabled = _current is not null;
+        _pair.IsEnabled = _current?.EmailVerified == true;
         _refresh.IsEnabled = _current is not null;
         _openLink.Content = T("Otwórz bezpieczną stronę Stripe", "Open secure Stripe page");
         _openLink.IsVisible = _pendingUrl is not null;
-        _checkout.IsEnabled = _current is not null;
+        _checkout.IsEnabled = _current?.EmailVerified == true;
         _portal.IsEnabled = _current is not null;
         _account.Text = _current is null
             ? T("Zaloguj się lub utwórz konto.", "Sign in or create an account.")
             : $"{_current.Email}\n{T("Plan", "Plan")}: {_current.Plan}\n" +
               $"{T("Uprawnienia", "Entitlement")}: {_current.Entitlement}\n" +
-              $"{T("Trial do", "Trial ends")}: {_current.TrialUntilUtc.ToLocalTime():yyyy-MM-dd}\n" +
-              $"{T("Dostęp do zapisu", "Write access")}: {_current.CanWrite}";
+              (_current.EmailVerified ? $"{T("Trial do", "Trial ends")}: {_current.TrialUntilUtc.ToLocalTime():yyyy-MM-dd}\n" : T("Potwierdź e-mail przed rozpoczęciem triala.\n", "Verify your email to start the trial.\n")) +
+              $"{T("Dostęp do zapisu", "Write access")}: {_current.CanWrite}\n" +
+              $"{T("E-mail potwierdzony", "Email verified")}: {_current.EmailVerified}";
     }
 
     private async Task ExecuteAsync(Func<Task> action)

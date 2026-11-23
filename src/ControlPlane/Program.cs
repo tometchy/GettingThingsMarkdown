@@ -358,6 +358,8 @@ authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     var id = AdminSecurity.UserId(user);
     var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
     if (account is null) return Results.NotFound();
+    if (account.EmailVerifiedUtc is null)
+        return Results.Conflict(new { error = "Confirm your email before checkout." });
     var plan = (request.Plan ?? "").ToLowerInvariant();
     if (!PlanCatalog.IsValid(plan) || !PlanCatalog.ValidInterval(request.BillingInterval))
         return Results.BadRequest(new { error = "Unknown plan or billing interval." });

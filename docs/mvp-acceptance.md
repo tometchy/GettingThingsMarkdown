@@ -31,7 +31,7 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 - [ ] Control-plane database, Syncthing identity, secrets and encrypted S3
   objects all backed up and restored in a documented outage drill.
 - [x] Production email verification is required before allocating tenant pods;
-  tokens are hashed, expire after 24h and are rate-limited. Existing users are
+  tokens are hashed, expire after 24h and are rate-limited. Paid checkout is blocked until verification. Existing users are
   migrated as verified; Development auto-verifies locally.
 - [ ] Provider SMTP deliverability and abuse controls, Stripe sandbox invoices,
   failed payments, cancellations, refunds and tax settings; no live charges.
