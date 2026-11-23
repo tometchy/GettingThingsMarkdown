@@ -1,3 +1,5 @@
+**UPDATE 2026-11-23: PR #5 proposes TWO COMPLETE LOCAL GIT COPIES, not S3/LFS. This older LFS price analysis is superseded for new accounts. Read [full-Git recovery](full-git-dual-cloud-recovery.md) and run `python3 scripts/full_git_cost_model.py` to model A (working tree + full Git) and B (full Git), including warm failover. The advertised 10/75/500 GiB amounts are not yet verified profitable in the full-Git architecture.**
+
 # Public pricing proposal (23 November 2026)
 
 Public prices in **USD**, monthly or prepaid 12 months; VAT treatment depends

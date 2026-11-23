@@ -41,7 +41,7 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 - [x] Operator-only encrypted secrets export to the `gtm-infra` branch
   in the same Git repo, under >=2 independent age public recipients.
   Each cloud must independently hold the matching private age key securely.
-- [x] Cold full-Git Sync restore script uses operator-supplied private age key,
+- [ ] Cold full-Git Sync restore script uses operator-supplied private age key,
   restores same Syncthing certificate and encrypted Git working directory;
   offline integration exercises A->B and B->A.
 

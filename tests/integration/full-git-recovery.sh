@@ -6,7 +6,7 @@ cd "$(dirname "$0")/../.."
 root="$(mktemp -d)"
 cleanup() { rm -rf "$root" 2>/dev/null || sudo rm -rf "$root" 2>/dev/null || true; }
 trap cleanup EXIT
-mkdir -p "$root"/{original,rebuilt,store}
+mkdir -p "$root"/{original/{files,git,syncthing,recovery},rebuilt/{files,git,syncthing,recovery},store}
 chmod -R 0777 "$root"
 uid="$(id -u):$(id -g)"
 run() {

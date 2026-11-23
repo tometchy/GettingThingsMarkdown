@@ -1,3 +1,5 @@
+**SUPERSEDED FOR NEW TENANTS by [full Git dual-cloud plan](full-git-dual-cloud-recovery.md).** The following LFS/S3 architecture is retained for historical migration only. Default new tenant configuration is full Git locally on both A and B. Do NOT apply the legacy 30-day WORM backup in a workflow promising 7-day final purge.
+
 # Revenue-safe storage architecture — November 2026
 
 **Decision:** Do not purchase two full-price Scaleway Block Storage PVCs per tenant.
