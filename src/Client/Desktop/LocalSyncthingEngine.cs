@@ -359,6 +359,10 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
         string workspaceRoot, CancellationToken ct = default) =>
         TrustedMailImporter.ImportAsync(_keys, accountId, api, workspaceRoot, ct);
 
+    public Task<int> RestoreArchivedMailTasksAsync(AccountApi api, Guid accountId,
+        string workspaceRoot, CancellationToken ct = default) =>
+        TrustedMailImporter.RestoreArchiveAsync(_keys, accountId, api, workspaceRoot, ct);
+
     public Task<string?> ExportMailPrivateKeyAsync(Guid accountId,
         CancellationToken ct = default) =>
         TrustedMailImporter.ExportPrivateKeyAsync(_keys, accountId, ct);
