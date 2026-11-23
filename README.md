@@ -2,7 +2,7 @@
 
 A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history and Markdown task automation. **Unreleased engineering preview. Not production-ready.**
 
-## Implemented on feature/cluster-syncthing-git-mvp
+## Implemented foundation (main); affordable-storage work in PR #3
 
 - Backend: ASP.NET Core 10 identity, SQLite account/subscription metadata, JWT, password hashing, rate limiting, PL/EN Avalonia shared subscription UI for desktop and WebAssembly.
 - Billing: month trial, admin trial extension with audit, Stripe Checkout/Portal and signed webhooks. Server-only 100-year trial when **Development** and explicitly enabled.
@@ -13,7 +13,7 @@ A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history
 - Shell: rootless Podman + kind with two worker nodes, local image build/load and safe cluster lifecycle.
 - Tests: policy/registration/signature tests, tenant-manifest invariants, local archive automation tests, CI builds of all three containers, experimental real-kind two-account and ciphertext/Git end-to-end scripts.
 
-**Only claim a test passed after the associated GitHub Actions job actually succeeds.** The codebase is currently *in development*, and not every operation described here has passed end-to-end integration.
+**The affordable-storage extension is experimental and has not been deployed to a paid cloud.** Only claim a test passed after the associated GitHub Actions job actually succeeds. The codebase is currently *in development*, and not every operation described here has passed end-to-end integration.
 
 ## Local first run — Linux Mint
 
@@ -22,7 +22,7 @@ Prerequisites: .NET 10 SDK, Podman rootless, cgroups v2, kind, kubectl, curl, jq
 ```bash
 git clone https://github.com/tometchy/GettingThingsMarkdown.git
 cd GettingThingsMarkdown
-git switch feature/cluster-syncthing-git-mvp
+git switch feature/affordable-object-storage-mvp-hardening
 chmod +x dev.sh
 ./dev.sh setup
 ./dev.sh up
@@ -66,7 +66,7 @@ dotnet workload install wasm-tools
 
 The development backend applies a **100-year trial only when both** `ASPNETCORE_ENVIRONMENT=Development` and `GTM_DEV_LONG_TRIAL=true`. Production accounts must use normal one-month trial; disabling this env flag does not retroactively shorten existing development accounts.
 
-Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, and `docs/architecture-and-gaps.md` for limitations.
+Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, `docs/affordable-infrastructure.md`, `docs/storage-economics.md`, and `docs/architecture-and-gaps.md` for limitations.
 
 ## Runtime commands
 
@@ -81,11 +81,30 @@ Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, and `docs
 
 `./dev.sh up` is intended to be re-runnable; `down` is non-destructive. Kind's storage is **not production-grade disaster recovery**.
 
+## Three consumer price tiers (USD, proposal, not active payments)
+
+| Tier | Live encrypted quota | Monthly | Yearly paid upfront | Effective monthly |
+|---|---:|---:|---:|---:|
+| Mini | 10 GiB | $1.99 | $17.88 | $1.49 |
+| Plus | 75 GiB | $5.99 | $59.88 | $4.99 |
+| Pro | 500 GiB | $24.99 | $239.88 | $19.99 |
+
+The original 15/200/1024 GiB allowances for **existing** accounts are
+preserved by an idempotent SQLite schema migration. Monthly/yearly checkout
+price IDs are validated server-side against Stripe's official USD amounts.
+More detail, operational caveats and actual profitability scenarios are in
+`docs/pricing.md` and `scripts/cost_model.py`. The reduced-volume plans
+cannot be sold as unlimited historical archive capacity; backup and Git
+retention costs scale with actual version history. No production Stripe
+prices have been activated.
+
 ## Payment configuration
 
 Stripe is **directly** integrated (not via EasyTools). To test real Stripe sandbox workflows, configure in the backend environment: `GTM_STRIPE_SECRET_KEY`, `GTM_STRIPE_WEBHOOK_SECRET`, `GTM_STRIPE_PRICE_BASIC`, `GTM_STRIPE_PRICE_PLUS`, `GTM_STRIPE_PRICE_PRO`, `GTM_PUBLIC_URL`. Never put production keys into repo, client, Docker image or CI logs. Webhook events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. Payment redirects alone never authorize access.
 
-Before charging users, complete Stripe reconciliation, pricing/VAT, email verification, storage enforcement, cancellation and grace periods, and app-store billing policy validation.
+Before charging users, complete Stripe reconciliation, pricing/VAT, email verification, storage enforcement, cancellation and grace periods, and app-store billing policy validation. Existing subscriber quota migration is tested in `tests/ControlPlane.Tests/LegacyQuotaMigrationTests.cs`.
+
+`/api/plans` is the canonical machine-readable public catalog; the one-calendar-month trial is represented as `trialMonths=1`. Annual Checkout reuses the same account and API as monthly billing. Stripe checkout verifies live Price objects against the configured USD totals before redirecting.
 
 ## Release blockers
 

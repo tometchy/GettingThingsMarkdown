@@ -26,3 +26,18 @@ The local client:
   remain untested.
 - Confirm two-way interoperability and ciphertext-only server content before
   using sensitive files.
+
+## Manual Git history restore (desktop only)
+
+The authenticated desktop can list up to 20 recent Git revisions, select one,
+choose a *new* output directory, download encrypted objects via the account
+API and run the bundled `syncthing decrypt` locally with the recovery secret
+in the process environment (`FOLDER_PASSWORD`, not command arguments).
+The backend cannot decrypt the blobs. Restore never overwrites a synchronized
+source folder; it creates `GTMD-restored-<sha>-<random>` under the chosen parent.
+The current implementation is intentionally capped at 4096 ciphertext blobs,
+128 MiB total transfer and 16 MiB JSON per individual blob. Large archives and
+LFS-backed revisions require a streaming-LFS restore path and are not yet
+supported. This is a bounded Markdown-history recovery path, not full 1TiB
+restore support. Integration test is limited to the `syncthing decrypt` core,
+not the Avalonia browse/restore UI.

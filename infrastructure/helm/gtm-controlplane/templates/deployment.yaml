@@ -36,6 +36,14 @@ spec:
               value: {{ and .Values.development.enabled .Values.development.longTrial | quote }}
             - name: GTM_DEV_VOLUME_GI
               value: {{ .Values.development.tenantVolumeGi | quote }}
+            - name: GTM_SYNC_STORAGE_CLASS
+              value: {{ .Values.storage.syncClassName | quote }}
+            - name: GTM_HISTORY_STORAGE_CLASS
+              value: {{ .Values.storage.historyClassName | quote }}
+            - name: GTM_GIT_LFS_ENABLED
+              value: {{ .Values.encryptedArchive.lfsEnabled | quote }}
+            - name: GTM_WORM_BACKUP_ENABLED
+              value: {{ .Values.encryptedArchive.wormBackupEnabled | quote }}
             - name: GTM_SYNC_IMAGE
               value: {{ .Values.syncImage | quote }}
             - name: GTM_HISTORY_IMAGE
@@ -58,6 +66,54 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.existingSecret | quote }}
                   key: admin
+            {{- if .Values.billing.existingSecret }}
+            - name: GTM_STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.billing.existingSecret | quote }}
+                  key: stripe-key
+            - name: GTM_STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.billing.existingSecret | quote }}
+                  key: stripe-webhook-secret
+            {{- range $plan := list "BASIC" "PLUS" "PRO" }}
+            {{- range $period := list "MONTH" "YEAR" }}
+            - name: GTM_STRIPE_PRICE_{{ $plan }}_{{ $period }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.billing.existingSecret | quote }}
+                  key: price-{{ $plan | lower }}-{{ $period | lower }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.mail.existingSecret }}
+            - name: GTM_SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret | quote }}
+                  key: smtp-host
+            - name: GTM_SMTP_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret | quote }}
+                  key: smtp-port
+            - name: GTM_SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret | quote }}
+                  key: smtp-username
+            - name: GTM_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret | quote }}
+                  key: smtp-password
+            - name: GTM_SMTP_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mail.existingSecret | quote }}
+                  key: smtp-from
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

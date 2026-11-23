@@ -6,9 +6,18 @@ image:
 syncImage: gtm/sync:dev
 historyImage: gtm/history:dev
 existingSecret: controlplane-secrets
+billing:
+  existingSecret: "" # manually created private Kubernetes Secret
+mail:
+  existingSecret: "" # manually created SMTP Secret; required for Production
+encryptedArchive:
+  lfsEnabled: false
+  wormBackupEnabled: false
 storage:
   controlPlaneGi: 2
   className: ""
+  syncClassName: ""
+  historyClassName: ""
 api:
   host: api.example.invalid
   ingressEnabled: false

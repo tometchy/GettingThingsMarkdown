@@ -24,6 +24,7 @@ builder.Services.AddDbContext<ProvisioningDb>(o => o.UseSqlite(
     builder.Configuration["GTM_PROVISIONING_DB"] ?? "Data Source=gtm-provisioning.sqlite"));
 builder.Services.AddHostedService<ProvisioningWorker>();
 builder.Services.AddHttpClient<StripeGateway>(client => client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddSingleton<EmailVerificationService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o => o.TokenValidationParameters = tokenService.Validation);
 builder.Services.AddAuthorization();
@@ -44,6 +45,11 @@ builder.Services.AddCors(o => o.AddPolicy("browser", policy =>
         policy.WithOrigins(allowed).AllowAnyHeader().AllowAnyMethod();
 }));
 
+if (!builder.Environment.IsDevelopment() &&
+    !EmailVerificationService.IsConfigured(builder.Configuration))
+    throw new InvalidOperationException(
+        "Production registration requires GTM_SMTP_HOST, GTM_SMTP_FROM, " +
+        "GTM_SMTP_USERNAME, GTM_SMTP_PASSWORD and an HTTPS GTM_PUBLIC_URL.");
 var app = builder.Build();
 if (!app.Environment.IsDevelopment()) app.UseHsts();
 app.UseHttpsRedirection();
@@ -56,17 +62,70 @@ app.UseStaticFiles();
 
 using (var scope = app.Services.CreateScope())
 {
-    await scope.ServiceProvider.GetRequiredService<AppDb>().Database.EnsureCreatedAsync();
+    var accountsDb = scope.ServiceProvider.GetRequiredService<AppDb>();
+    await accountsDb.Database.EnsureCreatedAsync();
+    // EnsureCreated does not migrate pre-existing SQLite schemas. On an old
+    // database, retain every existing subscriber's original quota before
+    // activating the new 10/75/500 GiB catalog. This operation is idempotent.
+    var connection = accountsDb.Database.GetDbConnection();
+    await accountsDb.Database.OpenConnectionAsync();
+    bool quotaColumnExists = false;
+    using (var inspect = connection.CreateCommand())
+    {
+        inspect.CommandText = "PRAGMA table_info('Accounts')";
+        using var reader = await inspect.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (string.Equals(reader.GetString(1), "QuotaOverrideBytes",
+                StringComparison.OrdinalIgnoreCase)) quotaColumnExists = true;
+        }
+    }
+    if (!quotaColumnExists)
+    {
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE Accounts ADD COLUMN QuotaOverrideBytes INTEGER NULL");
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "UPDATE Accounts SET QuotaOverrideBytes = CASE Plan " +
+            "WHEN 'basic' THEN 16106127360 WHEN 'plus' THEN 214748364800 " +
+            "WHEN 'pro' THEN 1099511627776 ELSE NULL END " +
+            "WHERE QuotaOverrideBytes IS NULL");
+    }
+    // Grandfather previously created accounts as email-verified. Only accounts
+    // registered *after* this migration require a new confirmation token.
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    using (var inspect = connection.CreateCommand())
+    {
+        inspect.CommandText = "PRAGMA table_info('Accounts')";
+        using var reader = await inspect.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+    }
+    if (!columns.Contains("EmailVerifiedUtc"))
+    {
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE Accounts ADD COLUMN EmailVerifiedUtc TEXT NULL");
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "UPDATE Accounts SET EmailVerifiedUtc = CreatedUtc WHERE EmailVerifiedUtc IS NULL");
+    }
+    foreach (var field in new[] {
+        ("VerificationTokenHash", "TEXT"), ("VerificationExpiresUtc", "TEXT"),
+        ("VerificationSentUtc", "TEXT") })
+        if (!columns.Contains(field.Item1))
+            await accountsDb.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE Accounts ADD COLUMN {field.Item1} {field.Item2} NULL");
+    await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
 
 var clock = TimeProvider.System;
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
-app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Quotas.Select(p =>
-    new { id = p.Key, quotaBytes = p.Value })));
+app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Tiers.Values.Select(p =>
+    new { id = p.Id, name = p.Name, quotaBytes = p.QuotaBytes,
+        currency = "usd", monthlyCents = p.MonthlyUsdCents,
+        annualCents = p.AnnualUsdCents, trialMonths = 1 })));
 
 app.MapPost("/api/auth/register", async (RegisterRequest input, AppDb db,
-    IPasswordHasher<Account> hasher, TokenService tokens, CancellationToken ct) =>
+    IPasswordHasher<Account> hasher, TokenService tokens,
+    EmailVerificationService emailer, CancellationToken ct) =>
 {
     var email = (input.Email ?? "").Trim().ToLowerInvariant();
     var plan = (input.Plan ?? "").Trim().ToLowerInvariant();
@@ -81,14 +140,73 @@ app.MapPost("/api/auth/register", async (RegisterRequest input, AppDb db,
     var account = new Account
     {
         Email = email, Plan = plan, CreatedUtc = now,
-        TrialUntilUtc = TrialPolicy.NewTrialEnd(now, app.Environment.IsDevelopment(), longTrial)
+        EmailVerifiedUtc = app.Environment.IsDevelopment() ? now : null,
+        TrialUntilUtc = app.Environment.IsDevelopment()
+            ? TrialPolicy.NewTrialEnd(now, true, longTrial)
+            : DateTimeOffset.MinValue
     };
+    string? verificationToken = null;
+    if (account.EmailVerifiedUtc is null)
+    {
+        verificationToken = EmailVerificationService.NewToken();
+        account.VerificationTokenHash = EmailVerificationService.Hash(verificationToken);
+        account.VerificationExpiresUtc = now.AddHours(24);
+        account.VerificationSentUtc = now;
+    }
     account.PasswordHash = hasher.HashPassword(account, input.Password);
     db.Accounts.Add(account);
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException) { return Results.Conflict(new { error = "Account already exists." }); }
+    if (verificationToken is not null)
+    {
+        try { await emailer.SendAsync(account.Email, verificationToken, ct); }
+        catch (Exception)
+        {
+            // Account is still unverified (and cannot provision a tenant);
+            // the customer can use resend once SMTP is healthy.
+            return Results.Problem("Verification email temporarily unavailable.", statusCode: 503);
+        }
+    }
     return Results.Created("/api/account", new AuthResponse(tokens.Issue(account),
         PlanCatalog.View(account, now)));
+}).RequireRateLimiting("auth");
+
+app.MapGet("/api/auth/verify-email", async (string email, string token,
+    AppDb db, CancellationToken ct) =>
+{
+    var normalized = email.Trim().ToLowerInvariant();
+    var account = await db.Accounts.SingleOrDefaultAsync(a => a.Email == normalized, ct);
+    var now = clock.GetUtcNow();
+    if (account is null || account.EmailVerifiedUtc is not null ||
+        account.VerificationTokenHash is null || account.VerificationExpiresUtc <= now ||
+        !EmailVerificationService.Matches(token, account.VerificationTokenHash))
+        return Results.BadRequest(new { error = "Link expired or invalid." });
+    account.EmailVerifiedUtc = now;
+    account.TrialUntilUtc = TrialPolicy.NewTrialEnd(now, false, false);
+    account.VerificationTokenHash = null;
+    account.VerificationExpiresUtc = null;
+    await db.SaveChangesAsync(ct);
+    return Results.Redirect("/app/?verified=1");
+}).RequireRateLimiting("auth");
+
+app.MapPost("/api/auth/resend-verification", async (ResendVerificationRequest request,
+    AppDb db, EmailVerificationService emailer, CancellationToken ct) =>
+{
+    var email = (request.Email ?? "").Trim().ToLowerInvariant();
+    var account = await db.Accounts.SingleOrDefaultAsync(a => a.Email == email, ct);
+    if (account is null || account.EmailVerifiedUtc is not null)
+        return Results.Ok(new { message = "Check your inbox if verification is needed." });
+    var now = clock.GetUtcNow();
+    if (account.VerificationSentUtc is { } last && now - last < TimeSpan.FromMinutes(10))
+        return Results.Ok(new { message = "Check your inbox if verification is needed." });
+    var token = EmailVerificationService.NewToken();
+    account.VerificationTokenHash = EmailVerificationService.Hash(token);
+    account.VerificationExpiresUtc = now.AddHours(24);
+    account.VerificationSentUtc = now;
+    await db.SaveChangesAsync(ct);
+    try { await emailer.SendAsync(account.Email, token, ct); }
+    catch (Exception) { return Results.Problem("Verification mail unavailable.", statusCode: 503); }
+    return Results.Ok(new { message = "Check your inbox if verification is needed." });
 }).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/login", async (LoginRequest input, AppDb db,
@@ -190,7 +308,7 @@ async Task<IResult> GetHistoryAsync(ClaimsPrincipal user, string? sha, string ki
     var id = AdminSecurity.UserId(user);
     if (id is null) return Results.Unauthorized();
     var tenant = await states.Tenants.FindAsync([id.Value], ct);
-    if (tenant is null || tenant.Status != "Ready")
+    if (tenant is null || tenant.Status is not ("Ready" or "Suspended"))
         return Results.Problem("History tenant not ready.", statusCode: 409);
     if (sha is not null && !GitHistoryProxy.ValidGitOid(sha))
         return Results.BadRequest(new { error = "Invalid Git SHA." });
@@ -240,12 +358,15 @@ authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     var id = AdminSecurity.UserId(user);
     var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
     if (account is null) return Results.NotFound();
+    if (account.EmailVerifiedUtc is null)
+        return Results.Conflict(new { error = "Confirm your email before checkout." });
     var plan = (request.Plan ?? "").ToLowerInvariant();
-    if (!PlanCatalog.IsValid(plan)) return Results.BadRequest(new { error = "Unknown plan." });
+    if (!PlanCatalog.IsValid(plan) || !PlanCatalog.ValidInterval(request.BillingInterval))
+        return Results.BadRequest(new { error = "Unknown plan or billing interval." });
     if (!stripe.Configured) return Results.Problem("Stripe is not configured.", statusCode: 503);
     if (account.StripeStatus == "active" && account.PaidUntilUtc > clock.GetUtcNow())
         return Results.Conflict(new { error = "Subscription is active. Use the billing portal to change plans." });
-    try { return Results.Ok(await stripe.CheckoutAsync(account, plan, ct)); }
+    try { return Results.Ok(await stripe.CheckoutAsync(account, plan, request.BillingInterval, ct)); }
     catch (InvalidOperationException) { return Results.Problem("Checkout unavailable.", statusCode: 503); }
 });
 
@@ -367,7 +488,9 @@ app.MapPost("/api/webhooks/stripe", async (HttpContext context,
                 {
                     var price = StripeGateway.String(StripeGateway.Nested(item, "price"), "id");
                     foreach (var plan in PlanCatalog.Quotas.Keys)
-                        if (price is not null && price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()])
+                        if (price is not null && (price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()] ||
+                            price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant() + "_MONTH"] ||
+                            price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant() + "_YEAR"]))
                             account.Plan = plan;
                 }
         }

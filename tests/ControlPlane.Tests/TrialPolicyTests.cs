@@ -31,9 +31,9 @@ public class TrialPolicyTests
     [Fact]
     public void EntitlementExpiresServerSide()
     {
-        var a = new Account { Plan = "plus", TrialUntilUtc = Now.AddDays(1) };
+        var a = new Account { Plan = "plus", TrialUntilUtc = Now.AddDays(1), EmailVerifiedUtc = Now };
         Assert.Equal("trial", PlanCatalog.View(a, Now).Entitlement);
         Assert.Equal("expired", PlanCatalog.View(a, Now.AddDays(2)).Entitlement);
-        Assert.Equal(200L * 1024 * 1024 * 1024, PlanCatalog.View(a, Now).QuotaBytes);
+        Assert.Equal(75L * 1024 * 1024 * 1024, PlanCatalog.View(a, Now).QuotaBytes);
     }
 }

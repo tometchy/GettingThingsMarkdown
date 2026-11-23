@@ -7,12 +7,13 @@ namespace GettingThingsMarkdown.Client.Shared;
 
 public record AccountInfo(Guid Id, string Email, string Plan, long QuotaBytes,
     DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
-    string PaymentStatus, bool CanWrite, string Entitlement);
+    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified);
 public record LoginResult(string AccessToken, AccountInfo Account);
 public record CheckoutUrl(string Url);
 public record RegisterPayload(string Email, string Password, string Plan);
+public record ResendVerificationPayload(string Email);
 public record LoginPayload(string Email, string Password);
-public record CheckoutPayload(string Plan);
+public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
@@ -23,6 +24,7 @@ public record TenantStatusInfo(string Status, string? ServerDeviceId, string? De
 [JsonSerializable(typeof(LoginResult))]
 [JsonSerializable(typeof(CheckoutUrl))]
 [JsonSerializable(typeof(RegisterPayload))]
+[JsonSerializable(typeof(ResendVerificationPayload))]
 [JsonSerializable(typeof(LoginPayload))]
 [JsonSerializable(typeof(CheckoutPayload))]
 [JsonSerializable(typeof(PairDevicePayload))]
@@ -69,12 +71,20 @@ public sealed class AccountApi : IDisposable
     private void SetToken(string token) =>
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
+    public async Task ResendVerificationAsync(string email)
+    {
+        using var payload = JsonContent.Create(
+            new ResendVerificationPayload(email), AccountJsonContext.Default.ResendVerificationPayload);
+        using var response = await _http.PostAsync("api/auth/resend-verification", payload);
+        response.EnsureSuccessStatusCode();
+    }
+
     public Task<AccountInfo> CurrentAsync() =>
         RequestAsync(HttpMethod.Get, "api/account", null, AccountJsonContext.Default.AccountInfo);
 
-    public async Task<Uri> CheckoutAsync(string plan)
+    public async Task<Uri> CheckoutAsync(string plan, string billingInterval = "month")
     {
-        using var payload = JsonContent.Create(new CheckoutPayload(plan),
+        using var payload = JsonContent.Create(new CheckoutPayload(plan, billingInterval),
             AccountJsonContext.Default.CheckoutPayload);
         var result = await RequestAsync(HttpMethod.Post, "api/billing/checkout",
             payload, AccountJsonContext.Default.CheckoutUrl);
@@ -106,6 +116,18 @@ public sealed class AccountApi : IDisposable
     {
         using var result = await _http.DeleteAsync("api/devices/" + Uri.EscapeDataString(deviceId));
         result.EnsureSuccessStatusCode();
+    }
+
+    public async Task<string> EncryptedHistoryJsonAsync(string path, CancellationToken ct = default)
+    {
+        if (path != "commits" && !(path.StartsWith("tree/", StringComparison.Ordinal) ||
+                                   path.StartsWith("blob/", StringComparison.Ordinal)))
+            throw new ArgumentException("Invalid history resource.");
+        using var response = await _http.GetAsync("api/history/" + path, ct);
+        response.EnsureSuccessStatusCode();
+        // Deliberately return raw encrypted JSON; don't deserialize arbitrary remote
+        // Git payloads into runtime-reflection-bound object graphs (iOS/WASM AOT).
+        return await response.Content.ReadAsStringAsync(ct);
     }
 
     public void Dispose() => _http.Dispose();

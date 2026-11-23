@@ -41,11 +41,11 @@ public sealed class GitHistoryProxy : IDisposable
         GetAsync("api/v1/repos/archive/history/commits?page=1&limit=20", 2 * 1024 * 1024, ct);
 
     public Task<string> TreeAsync(string sha, CancellationToken ct) =>
-        ValidGitOid(sha) ? GetAsync("api/v1/repos/archive/history/git/trees/" + sha, 2 * 1024 * 1024, ct)
+        ValidGitOid(sha) ? GetAsync("api/v1/repos/archive/history/git/trees/" + sha + "?recursive=true", 4 * 1024 * 1024, ct)
             : throw new ArgumentException("Invalid Git object ID.");
 
     public Task<string> EncryptedBlobAsync(string sha, CancellationToken ct) =>
-        ValidGitOid(sha) ? GetAsync("api/v1/repos/archive/history/git/blobs/" + sha, 2 * 1024 * 1024, ct)
+        ValidGitOid(sha) ? GetAsync("api/v1/repos/archive/history/git/blobs/" + sha, 16 * 1024 * 1024, ct)
             : throw new ArgumentException("Invalid Git object ID.");
 
     private async Task<string> GetAsync(string path, int maxBytes, CancellationToken ct)

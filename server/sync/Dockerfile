@@ -1,6 +1,6 @@
 FROM ghcr.io/syncthing/syncthing:2.1.7 AS syncthing
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates git curl bash tini && \
+RUN apk add --no-cache ca-certificates git git-lfs curl bash tini && \
     addgroup -g 1000 gtm && adduser -D -u 1000 -G gtm -h /home/gtm gtm && \
     mkdir -p /data/files /data/git /data/syncthing && chown -R 1000:1000 /data /home/gtm
 COPY --from=syncthing /bin/syncthing /usr/local/bin/syncthing

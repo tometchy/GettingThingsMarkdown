@@ -37,16 +37,22 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Validate storage pricing assumptions
+        run: python3 -m unittest discover -s tests/pricing -p 'test_*.py' -v
       - name: Validate local scripts
         run: |
           bash -n dev.sh tests/integration/kind-smoke.sh packaging/linux/bundle-syncthing.sh
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
+      - name: Verify immutable backup rejects weak retention
+        run: bash tests/security/worm-fail-closed.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build encrypted Sync/Git image
         run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
       - name: Build Gitea History image
         run: docker build -f server/history/Dockerfile -t gtm/history:ci .
+      - name: Verify tenant-prefixed Git LFS in local S3 emulator
+        run: bash tests/integration/lfs-s3-moto.sh
       - name: Start disposable kind cluster for integration
         uses: helm/kind-action@v1.14.0
         with:
@@ -97,6 +103,11 @@ jobs:
           helm lint infrastructure/helm/gtm-controlplane
           helm template gtm infrastructure/helm/gtm-controlplane > /tmp/gtm-helm-manifest.yaml
           grep -q 'kind: Deployment' /tmp/gtm-helm-manifest.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set billing.existingSecret=ci-billing \
+            --set mail.existingSecret=ci-mail > /tmp/gtm-helm-with-billing.yaml
+          grep -q 'GTM_STRIPE_PRICE_BASIC_YEAR' /tmp/gtm-helm-with-billing.yaml
+          grep -q 'GTM_SMTP_PASSWORD' /tmp/gtm-helm-with-billing.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0

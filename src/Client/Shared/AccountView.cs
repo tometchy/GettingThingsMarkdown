@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -20,8 +21,10 @@ public sealed class AccountView : UserControl
     private readonly TextBox _email = new() { PlaceholderText = "E-mail" };
     private readonly TextBox _password = new() { PasswordChar = '●' };
     private readonly ComboBox _plan = new() { SelectedIndex = 0 };
+    private readonly ComboBox _billingInterval = new() { SelectedIndex = 0 };
     private readonly Button _register = new();
     private readonly Button _login = new();
+    private readonly Button _resendVerification = new();
     private readonly Button _checkout = new();
     private readonly Button _portal = new();
     private readonly Button _refresh = new();
@@ -45,6 +48,10 @@ public sealed class AccountView : UserControl
     private readonly Button _revokeDevice = new();
     private readonly TextBox _newDocument = new() { PlaceholderText = "Notes/new.md" };
     private readonly ListBox _documents = new() { MaxHeight = 240 };
+    private readonly ListBox _historyItems = new() { MaxHeight = 160 };
+    private readonly TextBlock _historyStatus = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _loadHistory = new();
+    private readonly Button _restoreHistory = new();
     private readonly TextBox _editor = new() { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
         MinHeight = 180, MaxHeight = 500 };
     private readonly Button _listDocuments = new();
@@ -60,7 +67,13 @@ public sealed class AccountView : UserControl
 
     public AccountView()
     {
-        _plan.ItemsSource = new[] { "Basic · 15 GiB", "Plus · 200 GiB", "Pro · 1 TiB" };
+        _plan.ItemsSource = new[] {
+            "Mini · 10 GiB · $1.99/mo",
+            "Plus · 75 GiB · $5.99/mo",
+            "Pro · 500 GiB · $24.99/mo"
+        };
+        _billingInterval.ItemsSource = new[] { "Miesięcznie · Monthly", "Rocznie · Annual (-17–25%)" };
+        _billingInterval.SelectedIndex = 0;
         _plan.SelectedIndex = 0;
 
         _register.Click += async (_, _) => await ExecuteAsync(async () =>
@@ -76,7 +89,7 @@ public sealed class AccountView : UserControl
         });
         _checkout.Click += async (_, _) => await ExecuteAsync(async () =>
         {
-            _pendingUrl = await _api.CheckoutAsync(Plan);
+            _pendingUrl = await _api.CheckoutAsync(Plan, BillingInterval);
             Render();
         });
         _refresh.Click += async (_, _) => await ExecuteAsync(async () =>
@@ -89,7 +102,29 @@ public sealed class AccountView : UserControl
             _pendingUrl = await _api.PortalAsync();
             Render();
         });
+        _resendVerification.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            await _api.ResendVerificationAsync(_email.Text ?? "");
+            _status.Text = T("Sprawdź skrzynkę e-mail (również spam).",
+                "Check your inbox, including spam.");
+        });
         _language.Click += (_, _) => { _polish = !_polish; Render(); };
+        _billingInterval.SelectionChanged += (_, _) =>
+        {
+            var current = _plan.SelectedIndex;
+            _plan.ItemsSource = BillingInterval == "year"
+                ? new[] {
+                    "Mini · 10 GiB · $17.88/year",
+                    "Plus · 75 GiB · $59.88/year",
+                    "Pro · 500 GiB · $239.88/year"
+                }
+                : new[] {
+                    "Mini · 10 GiB · $1.99/mo",
+                    "Plus · 75 GiB · $5.99/mo",
+                    "Pro · 500 GiB · $24.99/mo"
+                };
+            _plan.SelectedIndex = current < 0 ? 0 : current;
+        };
         _tenantRefresh.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var tenant = await _api.TenantAsync();
@@ -154,6 +189,38 @@ public sealed class AccountView : UserControl
             await _api.RevokeDeviceAsync(selected);
             _devices.ItemsSource = await _api.DevicesAsync();
         });
+        _loadHistory.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            using var history = JsonDocument.Parse(await _api.EncryptedHistoryJsonAsync("commits"));
+            var items = new List<string>();
+            foreach (var item in history.RootElement.EnumerateArray().Take(20))
+            {
+                string sha = item.GetProperty("sha").GetString() ?? "";
+                if (sha.Length is not (40 or 64)) continue;
+                var message = item.GetProperty("commit").GetProperty("message").GetString() ?? "";
+                items.Add(sha + " | " + message.Replace("\n", " ", StringComparison.Ordinal)[..Math.Min(message.Length, 80)]);
+            }
+            _historyItems.ItemsSource = items;
+        });
+        _restoreHistory.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_sync is null) return;
+            string value = _historyItems.SelectedItem as string ??
+                throw new InvalidOperationException("Select a historical Git revision.");
+            string sha = value.Split(" | ", 2, StringSplitOptions.None)[0];
+            var top = TopLevel.GetTopLevel(this) ??
+                throw new InvalidOperationException("No desktop window.");
+            var selection = await top.StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions {
+                    Title = T("Folder do odzyskania historii", "Choose restoration directory"),
+                    AllowMultiple = false
+                });
+            string dir = selection.FirstOrDefault()?.TryGetLocalPath() ?? "";
+            if (string.IsNullOrWhiteSpace(dir)) return;
+            string restored = await _sync.RestoreSnapshotAsync(_api, sha, dir);
+            _historyStatus.Text = T("Odzyskano zaszyfrowaną historię do: ",
+                "History decrypted locally into: ") + restored;
+        });
         _listDocuments.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var path = _folderPath.Text ?? "";
@@ -192,8 +259,10 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_email);
         layout.Children.Add(_password);
         layout.Children.Add(_plan);
+        layout.Children.Add(_billingInterval);
         layout.Children.Add(_register);
         layout.Children.Add(_login);
+        layout.Children.Add(_resendVerification);
         layout.Children.Add(_account);
         layout.Children.Add(_refresh);
         layout.Children.Add(_checkout);
@@ -216,6 +285,12 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_recoveryImport);
             layout.Children.Add(_importRecovery);
             layout.Children.Add(_syncState);
+            layout.Children.Add(new TextBlock { Text = "Git / E2EE history",
+                FontSize = 20, FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            layout.Children.Add(_loadHistory);
+            layout.Children.Add(_historyItems);
+            layout.Children.Add(_restoreHistory);
+            layout.Children.Add(_historyStatus);
             layout.Children.Add(new TextBlock { Text = "Markdown",
                 FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
             layout.Children.Add(_listDocuments);
@@ -238,6 +313,7 @@ public sealed class AccountView : UserControl
     }
 
     private string Plan => _plan.SelectedIndex switch { 1 => "plus", 2 => "pro", _ => "basic" };
+    private string BillingInterval => _billingInterval.SelectedIndex == 1 ? "year" : "month";
     private string T(string pl, string en) => _polish ? pl : en;
 
     private void Render()
@@ -249,7 +325,9 @@ public sealed class AccountView : UserControl
         _password.PlaceholderText = T("Hasło (min. 12 znaków)", "Password (min. 12 characters)");
         _register.Content = T("Załóż konto · trial", "Create account · trial");
         _login.Content = T("Zaloguj się", "Sign in");
+        _resendVerification.Content = T("Wyślij ponownie link weryfikacyjny", "Resend verification link");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
+        _billingInterval.IsEnabled = _current is not null;
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
         _refresh.Content = T("Odśwież stan abonamentu", "Refresh subscription status");
         _tenantRefresh.Content = T("Sprawdź stan serwera", "Check tenant server");
@@ -261,23 +339,28 @@ public sealed class AccountView : UserControl
         _pair.Content = T("Połącz folder z szyfrowanym serwerem", "Pair encrypted folder");
         _recovery.Content = T("Skopiuj klucz odzyskiwania", "Copy recovery key");
         _importRecovery.Content = T("Importuj klucz z zaufanego urządzenia", "Import key from trusted device");
+        _loadHistory.Content = T("Pokaż zapisane wersje Git", "List historical revisions");
+        _restoreHistory.Content = T("Odszyfruj wybraną wersję lokalnie", "Restore selected version locally");
+        _loadHistory.IsEnabled = _current is not null;
+        _restoreHistory.IsEnabled = _current is not null;
         _listDocuments.Content = T("Wyświetl pliki Markdown", "List Markdown files");
         _openDocument.Content = T("Otwórz zaznaczony plik", "Open selected file");
         _saveDocument.Content = T("Zapisz plik", "Save Markdown file");
         _previewDocument.Content = T("Podgląd Markdown", "Markdown preview");
         _tenantRefresh.IsEnabled = _current is not null;
-        _pair.IsEnabled = _current is not null;
+        _pair.IsEnabled = _current?.EmailVerified == true;
         _refresh.IsEnabled = _current is not null;
         _openLink.Content = T("Otwórz bezpieczną stronę Stripe", "Open secure Stripe page");
         _openLink.IsVisible = _pendingUrl is not null;
-        _checkout.IsEnabled = _current is not null;
+        _checkout.IsEnabled = _current?.EmailVerified == true;
         _portal.IsEnabled = _current is not null;
         _account.Text = _current is null
             ? T("Zaloguj się lub utwórz konto.", "Sign in or create an account.")
             : $"{_current.Email}\n{T("Plan", "Plan")}: {_current.Plan}\n" +
               $"{T("Uprawnienia", "Entitlement")}: {_current.Entitlement}\n" +
-              $"{T("Trial do", "Trial ends")}: {_current.TrialUntilUtc.ToLocalTime():yyyy-MM-dd}\n" +
-              $"{T("Dostęp do zapisu", "Write access")}: {_current.CanWrite}";
+              (_current.EmailVerified ? $"{T("Trial do", "Trial ends")}: {_current.TrialUntilUtc.ToLocalTime():yyyy-MM-dd}\n" : T("Potwierdź e-mail przed rozpoczęciem triala.\n", "Verify your email to start the trial.\n")) +
+              $"{T("Dostęp do zapisu", "Write access")}: {_current.CanWrite}\n" +
+              $"{T("E-mail potwierdzony", "Email verified")}: {_current.EmailVerified}";
     }
 
     private async Task ExecuteAsync(Func<Task> action)

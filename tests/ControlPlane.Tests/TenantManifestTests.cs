@@ -46,8 +46,52 @@ public class TenantManifestTests
         var production = TenantManifests.Build(id, "pro", 0, null, "sync", "history")
             .First(x => x.Kind == "PersistentVolumeClaim");
         Assert.Contains("2Gi", local.Json);
-        Assert.Contains("1024Gi", production.Json);
+        Assert.Contains("500Gi", production.Json);
     }
+
+    [Fact]
+    public void LfsChangesSecondPvcToSmallMetadataVolume()
+    {
+        var id = Guid.NewGuid();
+        var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
+            .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
+        Assert.Contains("75Gi", pvcs["sync-data"].Json);
+        Assert.Contains("8Gi", pvcs["history-data"].Json);
+        var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
+            .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
+        Assert.Contains("75Gi", noLfs.Json);
+    }
+
+    [Fact]
+    public void ProductionPVCStorageClassesCanBeSelectedIndependently()
+    {
+        var id = Guid.NewGuid();
+        var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history",
+            true, true, "gtm-hdd-quota", "hcloud-fast-small")
+            .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
+        Assert.Contains("gtm-hdd-quota", pvcs["sync-data"].Json);
+        Assert.DoesNotContain("gtm-hdd-quota", pvcs["history-data"].Json);
+        Assert.Contains("hcloud-fast-small", pvcs["history-data"].Json);
+    }
+
+    [Fact]
+    public void WormBackupRequiresDistinctTenantCredentials()
+    {
+        var id = Guid.NewGuid();
+        var sets = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true, true)
+            .Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name, x => x.Json);
+        Assert.Contains("gtm-worm-credentials", sets["history"]);
+        Assert.Contains("GTM_WORM_BACKUP_ENABLED", sets["history"]);
+        Assert.DoesNotContain("gtm-worm-credentials", sets["sync"]);
+    }
+
+    [Theory]
+    [InlineData("10Gi", 10)]
+    [InlineData("8192Mi", 8)]
+    [InlineData("1Ti", 1024)]
+    [InlineData("1025Mi", 2)]
+    public void StorageQuantityReaderRoundsUpGiB(string quantity, long gib)
+        => Assert.Equal(gib, KubeApi.QuantityGiB(quantity));
 
     [Fact]
     public void TenantNamesAreDnsSafeAndStable()
@@ -87,6 +131,43 @@ public class TenantManifestTests
             .GetProperty("podAffinityTerm").GetProperty("topologyKey").GetString());
         Assert.Equal("ScheduleAnyway", pod.GetProperty("topologySpreadConstraints")[0]
             .GetProperty("whenUnsatisfiable").GetString());
+    }
+
+    [Theory]
+    [InlineData("basic", "25m", "128Mi")]
+    [InlineData("plus", "25m", "192Mi")]
+    [InlineData("pro", "100m", "256Mi")]
+    public void PerPlanResourcesHaveLowIdleRequestsButSafeBurstLimits(
+        string plan, string cpu, string memory)
+    {
+        var id = Guid.NewGuid();
+        var set = TenantManifests.Build(id, plan, 2, null, "sync", "history")
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "sync");
+        using var json = JsonDocument.Parse(set.Json);
+        var resources = json.RootElement.GetProperty("spec").GetProperty("template")
+            .GetProperty("spec").GetProperty("containers")[0].GetProperty("resources");
+        Assert.Equal(cpu, resources.GetProperty("requests").GetProperty("cpu").GetString());
+        Assert.Equal(memory, resources.GetProperty("requests").GetProperty("memory").GetString());
+        Assert.Equal("1", resources.GetProperty("limits").GetProperty("cpu").GetString());
+    }
+
+    [Fact]
+    public void S3OffloadIsOptionalAndDoesNotExposeKeysToSync()
+    {
+        var id = Guid.NewGuid();
+        var sets = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
+            .Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name, x => x.Json);
+        Assert.Contains("gtm-lfs-credentials", sets["history"]);
+        Assert.Contains("MINIO_ENDPOINT", sets["history"]);
+        Assert.Contains("LFS_START_SERVER", sets["history"]);
+        Assert.Contains($"tenants/{TenantNames.Namespace(id)}/lfs/", sets["history"]);
+        Assert.DoesNotContain("gtm-lfs-credentials", sets["sync"]);
+        Assert.Contains("prepare-volume", sets["sync"]);
+        Assert.DoesNotContain("prepare-volume", sets["history"]);
+        Assert.DoesNotContain("MINIO_ACCESS_KEY_ID", sets["sync"]);
+        var local = TenantManifests.Build(id, "plus", 0, null, "sync", "history", false)
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "history").Json;
+        Assert.DoesNotContain("gtm-lfs-credentials", local);
     }
 
     [Fact]

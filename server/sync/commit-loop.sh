@@ -17,6 +17,12 @@ while :; do
       # Use Git over HTTPS with pinned CA; credentials supplied by askpass.
       if ! git push origin HEAD:refs/heads/main; then
         echo "Git HTTPS push pending; retry on next cycle" >&2
+      else
+        # Keep the local encrypted working tree intact. LFS cache cleanup is
+        # conservative: never remove LFS objects whose push was not confirmed.
+        if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
+          git lfs prune --verify-remote || true
+        fi
       fi
     fi
   else
