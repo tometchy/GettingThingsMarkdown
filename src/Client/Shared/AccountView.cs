@@ -69,7 +69,7 @@ public sealed class AccountView : UserControl
     private readonly Button _exportMailKey = new();
     private readonly TextBox _importMailKey = new() {
         AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        MinHeight = 70, MaxHeight = 110, Watermark = "Paste RSA private key PEM from a trusted device"
+        MinHeight = 70, MaxHeight = 110, PlaceholderText = "Paste RSA private key PEM from a trusted device"
     };
     private readonly Button _restoreMailKey = new();
     private readonly DispatcherTimer _mailTimer = new() { Interval = TimeSpan.FromSeconds(60) };
