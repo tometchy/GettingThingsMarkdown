@@ -21,6 +21,7 @@ public sealed class AccountView : UserControl
     private readonly TextBox _email = new() { PlaceholderText = "E-mail" };
     private readonly TextBox _password = new() { PasswordChar = '●' };
     private readonly ComboBox _plan = new() { SelectedIndex = 0 };
+    private readonly ComboBox _billingInterval = new() { SelectedIndex = 0 };
     private readonly Button _register = new();
     private readonly Button _login = new();
     private readonly Button _checkout = new();
@@ -65,7 +66,13 @@ public sealed class AccountView : UserControl
 
     public AccountView()
     {
-        _plan.ItemsSource = new[] { "Basic · 15 GiB", "Plus · 200 GiB", "Pro · 1 TiB" };
+        _plan.ItemsSource = new[] {
+            "Mini · 10 GiB · $1.99/mo",
+            "Plus · 75 GiB · $5.99/mo",
+            "Pro · 500 GiB · $24.99/mo"
+        };
+        _billingInterval.ItemsSource = new[] { "Miesięcznie · Monthly", "Rocznie · Annual (-20–25%)" };
+        _billingInterval.SelectedIndex = 0;
         _plan.SelectedIndex = 0;
 
         _register.Click += async (_, _) => await ExecuteAsync(async () =>
@@ -81,7 +88,7 @@ public sealed class AccountView : UserControl
         });
         _checkout.Click += async (_, _) => await ExecuteAsync(async () =>
         {
-            _pendingUrl = await _api.CheckoutAsync(Plan);
+            _pendingUrl = await _api.CheckoutAsync(Plan, BillingInterval);
             Render();
         });
         _refresh.Click += async (_, _) => await ExecuteAsync(async () =>
@@ -229,6 +236,7 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_email);
         layout.Children.Add(_password);
         layout.Children.Add(_plan);
+        layout.Children.Add(_billingInterval);
         layout.Children.Add(_register);
         layout.Children.Add(_login);
         layout.Children.Add(_account);
@@ -281,6 +289,7 @@ public sealed class AccountView : UserControl
     }
 
     private string Plan => _plan.SelectedIndex switch { 1 => "plus", 2 => "pro", _ => "basic" };
+    private string BillingInterval => _billingInterval.SelectedIndex == 1 ? "year" : "month";
     private string T(string pl, string en) => _polish ? pl : en;
 
     private void Render()
@@ -293,6 +302,7 @@ public sealed class AccountView : UserControl
         _register.Content = T("Załóż konto · trial", "Create account · trial");
         _login.Content = T("Zaloguj się", "Sign in");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
+        _billingInterval.IsEnabled = _current is not null;
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");
         _refresh.Content = T("Odśwież stan abonamentu", "Refresh subscription status");
         _tenantRefresh.Content = T("Sprawdź stan serwera", "Check tenant server");

@@ -34,12 +34,40 @@ public sealed class StripeGateway(HttpClient http, IConfiguration config)
         return new(url);
     }
 
-    public Task<SessionUrl> CheckoutAsync(Account account, string plan, CancellationToken ct)
+    // Never accept an arbitrary price ID or amount from a client or deployment.
+    // Stripe's price resource is the source of truth: validate the billing
+    // currency, amount and interval before issuing a Checkout session.
+    public async Task<SessionUrl> CheckoutAsync(Account account, string plan,
+        string billingInterval, CancellationToken ct)
     {
-        string price = config["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()] ??
-            throw new InvalidOperationException("Stripe price for selected plan is not configured.");
-        if (!price.StartsWith("price_", StringComparison.Ordinal))
-            throw new InvalidOperationException("Invalid Stripe price configuration.");
+        if (!PlanCatalog.Tiers.TryGetValue(plan, out var tier) ||
+            !PlanCatalog.ValidInterval(billingInterval))
+            throw new InvalidOperationException("Invalid plan or billing period.");
+        var name = "GTM_STRIPE_PRICE_" + plan.ToUpperInvariant();
+        string? price = config[name + (billingInterval == "year" ? "_YEAR" : "_MONTH")];
+        if (billingInterval == "month") price ??= config[name]; // legacy env alias
+        if (price is null || !price.StartsWith("price_", StringComparison.Ordinal))
+            throw new InvalidOperationException("Stripe price for selected period is not configured.");
+
+        using (var check = new HttpRequestMessage(HttpMethod.Get,
+            "https://api.stripe.com/v1/prices/" + Uri.EscapeDataString(price)))
+        {
+            check.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Secret);
+            using var response = await http.SendAsync(check, ct);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException("Stripe price lookup failed.");
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var root = document.RootElement;
+            var amount = Nested(root, "unit_amount");
+            var interval = Nested(root, "recurring", "interval");
+            if (String(root, "currency") != "usd" || amount.ValueKind != JsonValueKind.Number ||
+                !amount.TryGetInt32(out var cents) || cents != tier.PriceCents(billingInterval) ||
+                interval.GetString() != billingInterval ||
+                String(root, "active") == "false" ||
+                Nested(root, "active").ValueKind == JsonValueKind.False)
+                throw new InvalidOperationException("Stripe configured price does not match published plan.");
+        }
+
         var form = new Dictionary<string, string>
         {
             ["mode"] = "subscription",
@@ -47,6 +75,8 @@ public sealed class StripeGateway(HttpClient http, IConfiguration config)
             ["line_items[0][quantity]"] = "1",
             ["client_reference_id"] = account.Id.ToString(),
             ["subscription_data[metadata][gtm_account_id]"] = account.Id.ToString(),
+            ["subscription_data[metadata][gtm_plan]"] = plan,
+            ["subscription_data[metadata][gtm_period]"] = billingInterval,
             ["success_url"] = PublicUrl + "/?billing=success",
             ["cancel_url"] = PublicUrl + "/?billing=cancel"
         };
@@ -54,7 +84,7 @@ public sealed class StripeGateway(HttpClient http, IConfiguration config)
             form["customer"] = customer;
         else
             form["customer_email"] = account.Email;
-        return SendAsync("checkout/sessions", form, ct);
+        return await SendAsync("checkout/sessions", form, ct);
     }
 
     public Task<SessionUrl> PortalAsync(Account account, CancellationToken ct)

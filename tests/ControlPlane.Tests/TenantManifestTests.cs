@@ -46,7 +46,7 @@ public class TenantManifestTests
         var production = TenantManifests.Build(id, "pro", 0, null, "sync", "history")
             .First(x => x.Kind == "PersistentVolumeClaim");
         Assert.Contains("2Gi", local.Json);
-        Assert.Contains("1024Gi", production.Json);
+        Assert.Contains("500Gi", production.Json);
     }
 
     [Fact]
@@ -55,11 +55,11 @@ public class TenantManifestTests
         var id = Guid.NewGuid();
         var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
             .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
-        Assert.Contains("200Gi", pvcs["sync-data"].Json);
+        Assert.Contains("75Gi", pvcs["sync-data"].Json);
         Assert.Contains("8Gi", pvcs["history-data"].Json);
         var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
             .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
-        Assert.Contains("200Gi", noLfs.Json);
+        Assert.Contains("75Gi", noLfs.Json);
     }
 
     [Fact]

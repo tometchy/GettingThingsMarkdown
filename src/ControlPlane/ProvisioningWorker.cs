@@ -116,7 +116,9 @@ public sealed class ProvisioningWorker(
             config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
-            config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"]).ToList();
+            config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
+            account.QuotaOverrideBytes is long oldQuota
+                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -127,7 +129,9 @@ public sealed class ProvisioningWorker(
                 config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
-                config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"]);
+                config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
+                account.QuotaOverrideBytes is long oldQuota
+                    ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))

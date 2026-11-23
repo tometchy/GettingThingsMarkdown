@@ -56,14 +56,44 @@ app.UseStaticFiles();
 
 using (var scope = app.Services.CreateScope())
 {
-    await scope.ServiceProvider.GetRequiredService<AppDb>().Database.EnsureCreatedAsync();
+    var accountsDb = scope.ServiceProvider.GetRequiredService<AppDb>();
+    await accountsDb.Database.EnsureCreatedAsync();
+    // EnsureCreated does not migrate pre-existing SQLite schemas. On an old
+    // database, retain every existing subscriber's original quota before
+    // activating the new 10/75/500 GiB catalog. This operation is idempotent.
+    var connection = accountsDb.Database.GetDbConnection();
+    await accountsDb.Database.OpenConnectionAsync();
+    bool quotaColumnExists = false;
+    using (var inspect = connection.CreateCommand())
+    {
+        inspect.CommandText = "PRAGMA table_info('Accounts')";
+        using var reader = await inspect.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (string.Equals(reader.GetString(1), "QuotaOverrideBytes",
+                StringComparison.OrdinalIgnoreCase)) quotaColumnExists = true;
+        }
+    }
+    if (!quotaColumnExists)
+    {
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE Accounts ADD COLUMN QuotaOverrideBytes INTEGER NULL");
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "UPDATE Accounts SET QuotaOverrideBytes = CASE Plan " +
+            "WHEN 'basic' THEN 16106127360 WHEN 'plus' THEN 214748364800 " +
+            "WHEN 'pro' THEN 1099511627776 ELSE NULL END " +
+            "WHERE QuotaOverrideBytes IS NULL");
+    }
+    await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
 
 var clock = TimeProvider.System;
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
-app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Quotas.Select(p =>
-    new { id = p.Key, quotaBytes = p.Value })));
+app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Tiers.Values.Select(p =>
+    new { id = p.Id, name = p.Name, quotaBytes = p.QuotaBytes,
+        currency = "usd", monthlyCents = p.MonthlyUsdCents,
+        annualCents = p.AnnualUsdCents, trialDays = 30 })));
 
 app.MapPost("/api/auth/register", async (RegisterRequest input, AppDb db,
     IPasswordHasher<Account> hasher, TokenService tokens, CancellationToken ct) =>
@@ -241,11 +271,12 @@ authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
     if (account is null) return Results.NotFound();
     var plan = (request.Plan ?? "").ToLowerInvariant();
-    if (!PlanCatalog.IsValid(plan)) return Results.BadRequest(new { error = "Unknown plan." });
+    if (!PlanCatalog.IsValid(plan) || !PlanCatalog.ValidInterval(request.BillingInterval))
+        return Results.BadRequest(new { error = "Unknown plan or billing interval." });
     if (!stripe.Configured) return Results.Problem("Stripe is not configured.", statusCode: 503);
     if (account.StripeStatus == "active" && account.PaidUntilUtc > clock.GetUtcNow())
         return Results.Conflict(new { error = "Subscription is active. Use the billing portal to change plans." });
-    try { return Results.Ok(await stripe.CheckoutAsync(account, plan, ct)); }
+    try { return Results.Ok(await stripe.CheckoutAsync(account, plan, request.BillingInterval, ct)); }
     catch (InvalidOperationException) { return Results.Problem("Checkout unavailable.", statusCode: 503); }
 });
 
@@ -367,7 +398,9 @@ app.MapPost("/api/webhooks/stripe", async (HttpContext context,
                 {
                     var price = StripeGateway.String(StripeGateway.Nested(item, "price"), "id");
                     foreach (var plan in PlanCatalog.Quotas.Keys)
-                        if (price is not null && price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()])
+                        if (price is not null && (price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant()] ||
+                            price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant() + "_MONTH"] ||
+                            price == builder.Configuration["GTM_STRIPE_PRICE_" + plan.ToUpperInvariant() + "_YEAR"]))
                             account.Plan = plan;
                 }
         }

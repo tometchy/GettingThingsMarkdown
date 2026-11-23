@@ -39,6 +39,7 @@ public sealed class RegistrationTests
             Assert.Equal(HttpStatusCode.Created, first.StatusCode);
             var result = await first.Content.ReadFromJsonAsync<AuthResponse>();
             Assert.NotNull(result);
+            Assert.Equal(75L * 1024 * 1024 * 1024, result.Account.QuotaBytes);
             Assert.True((result.Account.TrialUntilUtc - DateTimeOffset.UtcNow).TotalDays > minimumDays - 1);
 
             var duplicate = await client.PostAsJsonAsync("/api/auth/register",

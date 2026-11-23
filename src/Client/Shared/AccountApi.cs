@@ -12,7 +12,7 @@ public record LoginResult(string AccessToken, AccountInfo Account);
 public record CheckoutUrl(string Url);
 public record RegisterPayload(string Email, string Password, string Plan);
 public record LoginPayload(string Email, string Password);
-public record CheckoutPayload(string Plan);
+public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
@@ -72,9 +72,9 @@ public sealed class AccountApi : IDisposable
     public Task<AccountInfo> CurrentAsync() =>
         RequestAsync(HttpMethod.Get, "api/account", null, AccountJsonContext.Default.AccountInfo);
 
-    public async Task<Uri> CheckoutAsync(string plan)
+    public async Task<Uri> CheckoutAsync(string plan, string billingInterval = "month")
     {
-        using var payload = JsonContent.Create(new CheckoutPayload(plan),
+        using var payload = JsonContent.Create(new CheckoutPayload(plan, billingInterval),
             AccountJsonContext.Default.CheckoutPayload);
         var result = await RequestAsync(HttpMethod.Post, "api/billing/checkout",
             payload, AccountJsonContext.Default.CheckoutUrl);

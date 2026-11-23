@@ -11,14 +11,16 @@ public static class TenantManifests
 
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
-        string? syncStorageClass = null, string? historyStorageClass = null)
+        string? syncStorageClass = null, string? historyStorageClass = null,
+        int? quotaGiBOverride = null)
     {
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
-        string size = devVolumeGi > 0 ? devVolumeGi + "Gi" : (plan switch
-        {
-            "plus" => "200Gi", "pro" => "1024Gi", _ => "15Gi"
-        });
+        if (!PlanCatalog.IsValid(plan)) throw new ArgumentException("Unsupported plan.", nameof(plan));
+        if (quotaGiBOverride is <= 0 or > 10240)
+            throw new ArgumentOutOfRangeException(nameof(quotaGiBOverride));
+        string size = (devVolumeGi > 0 ? devVolumeGi :
+            quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)))) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
             apiVersion = "v1", kind = "Namespace",
