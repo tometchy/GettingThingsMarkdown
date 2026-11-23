@@ -73,6 +73,24 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void FailoverPlacementCanUseTheSurvivingCloudButKeepsTwoPodsSeparated()
+    {
+        var id = Guid.NewGuid();
+        var manifests = TenantManifests.Build(id, "basic", 0, null, "sync", "history",
+            syncCloud: "hetzner", historyCloud: "ovh", failoverCloud: "ovh").ToList();
+        var sets = manifests.Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name);
+        foreach (var set in sets.Values)
+        {
+            Assert.Contains("ovh", set.Json);
+            Assert.DoesNotContain("hetzner", set.Json);
+            Assert.Contains("requiredDuringSchedulingIgnoredDuringExecution", set.Json);
+        }
+        Assert.Throws<ArgumentException>(() => TenantManifests.Build(id, "basic", 0,
+            null, "sync", "history", syncCloud: "hetzner", historyCloud: "ovh",
+            failoverCloud: "third-cloud").ToList());
+    }
+
+    [Fact]
     public void LocalPVCIsIndependentOfSubscriptionQuota()
     {
         var id = Guid.NewGuid();

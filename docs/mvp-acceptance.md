@@ -35,6 +35,17 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 
 ## New full-Git direction
 
+- [x] Manual, explicitly fenced placement override may schedule both tenant
+  roles on surviving provider; still requires two separate surviving nodes.
+  Does **not** make a failed provider PVC magically attachable elsewhere.
+- [x] Operator-only encrypted secrets export to the `gtm-infra` branch
+  in the same Git repo, under >=2 independent age public recipients.
+  Each cloud must independently hold the matching private age key securely.
+- [x] Cold full-Git Sync restore script uses operator-supplied private age key,
+  restores same Syncthing certificate and encrypted Git working directory;
+  offline integration exercises A->B and B->A.
+
+
 - [x] New tenants default to **full local Git** without S3/LFS; when production-sized,
   Sync PVC requests 3× plan GiB and Gitea/History PVC requests 2× to reserve
   space for active encrypted data and independently complete Git history.

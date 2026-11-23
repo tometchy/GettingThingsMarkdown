@@ -14,6 +14,8 @@ encryptedArchive:
   lfsEnabled: false
   wormBackupEnabled: false
 recovery:
+  failoverTargetCloud: "" # operator-only, empty in normal operation
+  fenceAcknowledged: false # manually fence lost provider BEFORE switching
   ageRecipient: "" # public key only; keep age private key outside BOTH clouds
 placement:
   syncCloud: "" # e.g. hetzner (set both or neither)

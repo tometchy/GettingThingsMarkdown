@@ -13,13 +13,17 @@ public static class TenantManifests
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
         string? syncStorageClass = null, string? historyStorageClass = null,
         int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null,
-        string? recoveryRecipient = null)
+        string? recoveryRecipient = null, string? failoverCloud = null)
     {
         if (string.IsNullOrWhiteSpace(syncCloud) != string.IsNullOrWhiteSpace(historyCloud))
             throw new ArgumentException("Cloud placement requires both providers.");
         if (!string.IsNullOrWhiteSpace(syncCloud) &&
             (!ValidCloud(syncCloud) || !ValidCloud(historyCloud!) || syncCloud == historyCloud))
             throw new ArgumentException("Two distinct DNS-safe cloud labels are required.");
+        if (!string.IsNullOrWhiteSpace(failoverCloud) &&
+            (string.IsNullOrEmpty(syncCloud) || string.IsNullOrEmpty(historyCloud) ||
+             (failoverCloud != syncCloud && failoverCloud != historyCloud)))
+            throw new ArgumentException("Failover must use one of the configured surviving providers.");
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
         if (!PlanCatalog.IsValid(plan)) throw new ArgumentException("Unsupported plan.", nameof(plan));
@@ -114,7 +118,8 @@ public static class TenantManifests
                 }}
             };
             string historyHost = $"history.{ns}.svc.cluster.local";
-            string? cloud = role == "sync" ? syncCloud : historyCloud;
+            string? cloud = !string.IsNullOrWhiteSpace(failoverCloud) ? failoverCloud :
+                role == "sync" ? syncCloud : historyCloud;
             object affinity = string.IsNullOrWhiteSpace(cloud) ? new { podAntiAffinity = podAnti } :
                 new { podAntiAffinity = podAnti, nodeAffinity = new {
                     requiredDuringSchedulingIgnoredDuringExecution = new {
