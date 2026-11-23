@@ -20,7 +20,7 @@ public sealed class MailEncryptionTests
         Assert.NotEmpty(entry.WrappedKey);
         Assert.NotEmpty(entry.Ciphertext);
         Assert.DoesNotContain("Do the task", Encoding.UTF8.GetString(entry.Ciphertext));
-        Assert.Throws<CryptographicException>(() => MailEncryption.DecryptForTestOnly(entry, other));
+        Assert.ThrowsAny<CryptographicException>(() => MailEncryption.DecryptForTestOnly(entry, other));
         var restored = MailEncryption.DecryptForTestOnly(entry, recipient);
         Assert.Equal("Do the task.", restored.Body.Trim());
         Assert.Contains("sender@example.com", restored.From);
