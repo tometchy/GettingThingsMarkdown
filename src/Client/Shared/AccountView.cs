@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using GettingThingsMarkdown.Automations;
 using Avalonia.Input.Platform;
+using Avalonia.Threading;
 
 namespace GettingThingsMarkdown.Client.Shared;
 
@@ -59,6 +60,20 @@ public sealed class AccountView : UserControl
     private readonly Button _saveDocument = new();
     private readonly Button _previewDocument = new();
     private readonly ContentControl _previewContent = new();
+    private readonly TextBlock _mailStatus = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _createMail = new();
+    private readonly Button _refreshMail = new();
+    private readonly Button _importMail = new();
+    private readonly Button _rotateMail = new();
+    private readonly TextBox _mailPassword = new() { PasswordChar = '●', PlaceholderText = "Password to rotate inbox address" };
+    private readonly Button _exportMailKey = new();
+    private readonly TextBox _importMailKey = new() {
+        AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        MinHeight = 70, MaxHeight = 110, Watermark = "Paste RSA private key PEM from a trusted device"
+    };
+    private readonly Button _restoreMailKey = new();
+    private readonly DispatcherTimer _mailTimer = new() { Interval = TimeSpan.FromSeconds(60) };
+    private bool _mailImporting;
     private MarkdownWorkspace? _workspace;
     private string? _openedDocument;
     private Uri? _pendingUrl;
@@ -178,6 +193,83 @@ public sealed class AccountView : UserControl
             _syncState.Text = T("Klucz odzyskiwania skopiowano. Chroń go.",
                 "Recovery key copied. Protect it.");
         });
+        _createMail.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null) throw new InvalidOperationException("Sign in on a trusted client.");
+            var publicKey = await _sync.EnsureMailPublicKeyAsync(_current.Id);
+            var inbox = await _api.RegisterMailInboxAsync(publicKey);
+            _mailStatus.Text = T("Przekieruj NOWE wiadomości na: ",
+                "Forward NEW messages to: ") + inbox.Address +
+                T("\nW Gmailu potwierdź przekierowanie, a następnie importuj wiadomość weryfikacyjną.",
+                  "\nVerify the forwarding address in Gmail, then import its confirmation email.");
+        });
+        _refreshMail.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            var state = await _api.MailInboxAsync();
+            _mailStatus.Text = state.PublicKeyRegistered ?
+                state.Address + T(" | zaszyfrowane oczekujące: ", " | encrypted pending: ") + state.Pending :
+                T("Nie utworzono jeszcze skrzynki SMTP.", "Encrypted mail inbox not created yet.");
+        });
+        _importMail.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null) throw new InvalidOperationException("Sign in first.");
+            int imported = await _sync.ImportMailTasksAsync(_api, _current.Id, _folderPath.Text ?? "");
+            _mailStatus.Text = T("Zaimportowano do lokalnego ToDo/: ",
+                "Imported into local ToDo/: ") + imported;
+        });
+        _rotateMail.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (string.IsNullOrWhiteSpace(_mailPassword.Text))
+                throw new InvalidOperationException("Enter account password again.");
+            var inbox = await _api.RotateMailAliasAsync(_mailPassword.Text);
+            _mailPassword.Text = "";
+            _mailStatus.Text = T("Stary adres wyłączony. Nowy: ",
+                "Old address disabled. New address: ") + inbox.Address;
+        });
+        _exportMailKey.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null) throw new InvalidOperationException("Sign in first.");
+            var pem = await _sync.ExportMailPrivateKeyAsync(_current.Id);
+            if (string.IsNullOrEmpty(pem))
+                throw new InvalidOperationException("No local email private key to export.");
+            var clip = TopLevel.GetTopLevel(this)?.Clipboard ??
+                throw new InvalidOperationException("Clipboard not available.");
+            await clip.SetTextAsync(pem);
+            _mailStatus.Text = T("Klucz prywatny skopiowano. Przechowuj poza serwerem.",
+                "Private key copied. Keep it off the server.");
+        });
+        _restoreMailKey.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null) throw new InvalidOperationException("Sign in first.");
+            await _sync.ImportMailPrivateKeyAsync(_current.Id, _importMailKey.Text ?? "");
+            _importMailKey.Text = "";
+            _mailStatus.Text = T("Klucz prywatny zaimportowany na urządzenie.",
+                "Private key imported to this device.");
+        });
+        _mailTimer.Tick += async (_, _) =>
+        {
+            if (_mailImporting || _sync is null || _current is not { CanWrite: true } ||
+                _current.Plan is not ("plus" or "pro") || !Directory.Exists(_folderPath.Text ?? ""))
+                return;
+            _mailImporting = true;
+            try
+            {
+                // Poll only on trusted clients with an explicitly selected local folder.
+                var count = await _sync.ImportMailTasksAsync(_api, _current.Id, _folderPath.Text!);
+                if (count > 0)
+                    _mailStatus.Text = T("Automatycznie zaimportowano z poczty: ",
+                        "Automatically imported mail: ") + count;
+            }
+            catch (Exception ex)
+            {
+                // The encrypted queue is not acknowledged if local import fails.
+                _mailStatus.Text = T("Import poczty odroczony: ",
+                    "Mail import deferred: ") + ex.Message;
+            }
+            finally { _mailImporting = false; }
+        };
+        if (_sync is not null) _mailTimer.Start();
+
         _refreshDevices.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             _devices.ItemsSource = await _api.DevicesAsync();
@@ -285,6 +377,21 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_recoveryImport);
             layout.Children.Add(_importRecovery);
             layout.Children.Add(_syncState);
+            layout.Children.Add(new TextBlock { Text = "Email → ToDo (Plus / Pro)",
+                FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
+            layout.Children.Add(new TextBlock { Text =
+                "Forwarded mail is encrypted with this device's public key. The SMTP edge briefly sees plaintext. " +
+                "Keep your private key backup; import runs on this trusted device only.",
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+            layout.Children.Add(_createMail);
+            layout.Children.Add(_refreshMail);
+            layout.Children.Add(_mailStatus);
+            layout.Children.Add(_importMail);
+            layout.Children.Add(_mailPassword);
+            layout.Children.Add(_rotateMail);
+            layout.Children.Add(_exportMailKey);
+            layout.Children.Add(_importMailKey);
+            layout.Children.Add(_restoreMailKey);
             layout.Children.Add(new TextBlock { Text = "Git / E2EE history",
                 FontSize = 20, FontWeight = Avalonia.Media.FontWeight.SemiBold });
             layout.Children.Add(_loadHistory);
@@ -341,6 +448,22 @@ public sealed class AccountView : UserControl
         _importRecovery.Content = T("Importuj klucz z zaufanego urządzenia", "Import key from trusted device");
         _loadHistory.Content = T("Pokaż zapisane wersje Git", "List historical revisions");
         _restoreHistory.Content = T("Odszyfruj wybraną wersję lokalnie", "Restore selected version locally");
+        _createMail.Content = T("Utwórz szyfrowany adres do przekierowania e-maili",
+            "Create encrypted mail forwarding address");
+        _refreshMail.Content = T("Sprawdź adres i kolejkę wiadomości", "Check address and pending mail");
+        _importMail.Content = T("Importuj wiadomości do ToDo teraz",
+            "Import pending mail to local ToDo");
+        _rotateMail.Content = T("Zmień adres przekierowania (stary wyłączy się)",
+            "Rotate forwarding address (disable old)");
+        _exportMailKey.Content = T("Skopiuj prywatny klucz poczty do bezpiecznej kopii",
+            "Copy mail private key for trusted-device backup");
+        _restoreMailKey.Content = T("Importuj prywatny klucz z innego urządzenia",
+            "Import mail private key from a trusted device");
+        bool mailEligible = _sync is not null &&
+            _current is { CanWrite: true } && _current.Plan is ("plus" or "pro");
+        foreach (var button in new[] { _createMail, _refreshMail, _importMail,
+            _rotateMail, _exportMailKey, _restoreMailKey })
+            button.IsEnabled = mailEligible;
         _loadHistory.IsEnabled = _current is not null;
         _restoreHistory.IsEnabled = _current is not null;
         _listDocuments.Content = T("Wyświetl pliki Markdown", "List Markdown files");
