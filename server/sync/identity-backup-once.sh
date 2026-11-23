@@ -16,8 +16,11 @@ recipients="$GTM_RECOVERY_AGE_RECIPIENT"
 oldIFS="$IFS"
 IFS=,
 set --
+seen=","
 for recipient in $recipients; do
   case "$recipient" in age1*) ;; *) echo "Invalid age recipient" >&2; exit 1 ;; esac
+  case "$seen" in *,"$recipient",*) echo "Duplicate age recipient" >&2; exit 1 ;; esac
+  seen="$seen$recipient,"
   set -- "$@" -r "$recipient"
 done
 IFS="$oldIFS"
@@ -40,7 +43,9 @@ if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
 else
   git -C "$repo" remote add origin "$GTM_GIT_URL"
 fi
-fingerprint="$(cd "$home" && sha256sum config.xml cert.pem key.pem | sha256sum | awk '{print $1}')"
+# Rotating recipients must re-encrypt the same Syncthing identity, even if
+# the config/certificate/key bytes themselves did not change.
+fingerprint="$( (cd "$home" && sha256sum config.xml cert.pem key.pem; printf '%s\\n' "$recipients") | sha256sum | awk '{print $1}')"
 previous="$(cat "$repo/fingerprint.sha256" 2>/dev/null || true)"
 if [ "$fingerprint" != "$previous" ] || [ ! -s "$repo/identity.tar.gz.age" ]; then
   tmp="$(mktemp -d)"

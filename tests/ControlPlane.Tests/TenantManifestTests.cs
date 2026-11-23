@@ -103,6 +103,17 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void CrossCloudKeyConfigurationMustHaveTwoDistinctRecipients()
+    {
+        var a = "age1" + new string('a', 55);
+        var b = "age1" + new string('b', 55);
+        Assert.True(TenantManifests.ValidRecoveryRecipients(a + "," + b));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a + "," + a));
+        Assert.False(TenantManifests.ValidRecoveryRecipients(a + ",not-age"));
+    }
+
+    [Fact]
     public void FullGitReservesIndependentCompleteHistoryVolumes()
     {
         var id = Guid.NewGuid();

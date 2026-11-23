@@ -322,6 +322,16 @@ public static class TenantManifests
         });
     }
 
+    public static bool ValidRecoveryRecipients(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return false;
+        var keys = csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return keys.Length >= 2 && keys.Distinct(StringComparer.Ordinal).Count() == keys.Length &&
+            keys.All(key => System.Text.RegularExpressions.Regex.IsMatch(key,
+                "^age1[a-z0-9]{50,70}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100)));
+    }
+
     private static bool ValidCloud(string value) =>
         value.Length <= 63 && System.Text.RegularExpressions.Regex.IsMatch(value,
             "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",

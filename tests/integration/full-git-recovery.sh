@@ -37,6 +37,7 @@ run original '
   rb="$(sed -n "s/^# public key: //p" /store/age-b.key)"
   GTM_GIT_URL=/store/history.git GTM_RECOVERY_AGE_RECIPIENT="$ra,$rb" \
     /usr/local/bin/identity-backup-once.sh
+  unset GIT_DIR GIT_WORK_TREE
   git -C /data/recovery/infra init -q -b gtm-infra
   git -C /data/recovery/infra config user.name "Test archive"
   git -C /data/recovery/infra config user.email archive@localhost.invalid

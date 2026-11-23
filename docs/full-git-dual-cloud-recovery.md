@@ -27,9 +27,14 @@ not yet a production-tested two-provider HA system.
 5. Set `GTM_RECOVERY_AGE_RECIPIENT` to **two or more comma-separated
    age1 public keys** (ideally three: Hetzner, OVH and offline).
    Hold the corresponding **private identities** separately in the
-   two independent cloud secret stores. No private age key is mounted into
-   a normal tenant pod; it is required on the trusted operator's recovery
-   workstation for an explicit recovery procedure.
+   two independent cloud secret stores. **Kubernetes Secrets alone are NOT
+   encrypted at rest unless Kubernetes encryption/KMS is enabled, and any
+   cluster administrator with secrets read rights may extract the key.**
+   Recommended: OpenBao with a third independent quorum voter/witness, or
+   separately encrypted KMS-backed Kubernetes Secrets in BOTH providers.
+   No private age key is mounted into a normal tenant pod; it is required on
+   the trusted operator's recovery workstation for an explicit procedure.
+   Recipient rotation automatically creates a new encrypted identity snapshot.
 6. For **all user account settings** also back up **Control Plane SQLite**,
    Stripe event reconciliation state, JWT signing material, billing prices
    and configuration in both providers. This remains outstanding: storing
@@ -37,6 +42,19 @@ not yet a production-tested two-provider HA system.
    or make two cloud providers automatically available.
 
 ## Operator workflow (dev / tabletop, not production HA)
+
+### Separate cloud-held age key installation
+
+Generate distinct `age-keygen -o` identities **on trusted operator systems**.
+After independent Kubernetes clusters, namespaces and KMS-backed encryption are
+ready, use `scripts/recovery/install-cloud-age-keys.sh context-a key-a.txt
+context-b key-b.txt` as an inspection-only dry run. `--apply` changes both
+secret stores **only after** an operator has independently verified their KMS
+at-rest encryption and sets `GTM_KMS_AT_REST_VERIFIED=yes`. This installer
+checks that kube-system namespace UIDs differ, reducing risk of accidentally
+storing both recovery keys in one cluster. Separate RBAC, private access to
+the management Kubernetes APIs and provider-independent KMS are still needed.
+This installer is a tool, not evidence a production secret manager is running.
 
 ### First setup
 

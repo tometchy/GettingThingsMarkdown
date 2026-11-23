@@ -144,9 +144,9 @@ public sealed class ProvisioningWorker(
             !config.GetValue<bool>("GTM_FENCE_ACKNOWLEDGED"))
             throw new InvalidOperationException("Failover placement requires manual fencing acknowledgement.");
         if (!string.IsNullOrWhiteSpace(config["GTM_SYNC_CLOUD"]) &&
-            string.IsNullOrWhiteSpace(config["GTM_RECOVERY_AGE_RECIPIENT"]))
+            !TenantManifests.ValidRecoveryRecipients(config["GTM_RECOVERY_AGE_RECIPIENT"]))
             throw new InvalidOperationException(
-                "Cross-cloud placement requires an offline-held age recovery public key.");
+                "Cross-cloud placement requires >=2 distinct public age recovery recipients; private keys must be securely held by separate clouds.");
         if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
             !config.GetValue<bool>("GTM_ALLOW_UNTESTED_LOCAL_STORAGE") &&
             string.IsNullOrWhiteSpace(config["GTM_SYNC_STORAGE_CLASS"]))
