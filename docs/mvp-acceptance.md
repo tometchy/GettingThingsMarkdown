@@ -34,6 +34,18 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   post-expiry native Git garbage collection on BOTH replicas. Current 30-day WORM backup conflicts
   with this policy: do not enable it for production.
 
+## History protection and non-privileged operations (2026-11-23)
+
+- [x] Durable per-account history deletion intents using opaque encrypted paths, fresh account password verification, replay/idempotence controls, seven-day minimum deadline and Undo while pending.
+- [x] Admin can only **extend**, not shorten, a whole-tenant retention hold for reported ransomware incidents; reason and change are audited. No admin route can read the tenant's Git objects or access its pods.
+- [x] Read-only admin observability summary (aggregate tenant/provisioning health, pending intents, holds and explicit disabled safety flags) plus database-backed readiness probe.
+- [ ] No automatic purge after the seven-day period. An intent records a requested operation; it neither rewrites Git nor frees disk. Requires independently enforced immutable retention, separately privileged double-replica rewrite, verified GC, concurrency control and reproducible chaos tests.
+- [ ] Incident-hold/intent state plus account/Stripe state must survive losing either provider without rollback; the single SQLite control-plane PVC is not redundant.
+- [ ] Operator SSO/MFA, non-public admin ingress, separate read-only admin identity, independent security audit ledger and verified root-resistant retention in both physical sites.
+- [ ] Full automatic A↔B failover with real fencing/quorum, new local volumes, restored secrets and routing; not safe to switch on automatically in this branch.
+
+See [history-protection-operations.md](history-protection-operations.md).
+
 ## New full-Git direction
 
 - [x] Manual, explicitly fenced placement override may schedule both tenant
