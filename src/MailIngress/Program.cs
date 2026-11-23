@@ -88,12 +88,12 @@ internal sealed class IngressMailStore(HttpClient api) : MessageStore
                 return SmtpResponse.SizeLimitExceeded;
             // Do not confirm SMTP DATA unless encrypted bytes are committed.
             // 4xx causes senders to retry on temporary storage/rate failures.
-            return new SmtpResponse(SmtpReplyCode.LocalErrorInProcessing,
+            return new SmtpResponse(SmtpReplyCode.Aborted,
                 "Temporary encrypted inbox delivery failure");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            return new SmtpResponse(SmtpReplyCode.LocalErrorInProcessing,
+            return new SmtpResponse(SmtpReplyCode.Aborted,
                 "Encrypted inbox temporarily unavailable");
         }
     }
