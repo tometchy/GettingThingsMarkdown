@@ -74,6 +74,18 @@ See [history-protection-operations.md](history-protection-operations.md).
 - [ ] Physical quotas must include history and reserve space; currently
   gift changes the declared PVC size, but does not enforce a logical cap.
 
+## Plus / Pro SMTP → tasks (engineering preview)
+
+- [x] Random 192-bit forwarding recipient aliases, Plus/Pro eligibility checks and independently authenticated encrypted mail queue (no plaintext mail disk writes).
+- [x] Hybrid RSA-3072/OAEP-SHA256 and AES-256-GCM ciphertext envelopes; trusted desktop keeps private key locally and produces native `ToDo/*.md` files for standard Syncthing E2EE.
+- [x] Alias registration/rotation, HTML forwarding verification URL handling, mailbox/queue endpoints, bounded message size/dedup and automatic import polling while trusted desktop is running.
+- [x] Optional shared SMTP service/deployment (not one SMTP container per tenant), encrypted queue ingress, localhost kind smoke script.
+- [ ] CI full SMTP STARTTLS pipeline passing for all images, client and tests, followed by external Gmail verification and DNS MX/TLS in a real provider.
+- [ ] Durable multi-cloud inbox/account persistence, independent recovery keys, strong spam/flood/throttle policy, production auth/network hardening and tested mobile import/background behavior.
+- [ ] Mail-to-task import on each trusted device must not cause duplicates after ACK race and multiple clients; current implementation limits by deterministic file name and server acknowledgement.
+
+See [SMTP feature and security contract](smtp-encrypted-inbox.md).
+
 ## Release acceptance checks
 
 - [x] Backend with 1-month trial, admin extension, Stripe test-mode Checkout

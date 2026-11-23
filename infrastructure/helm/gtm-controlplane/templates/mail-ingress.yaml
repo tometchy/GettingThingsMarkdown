@@ -1,0 +1,103 @@
+{{- if .Values.mailIngress.enabled }}
+{{- if or (not .Values.mailIngress.domain) (not .Values.mailIngress.tlsSecret) (not .Values.mailIngress.tokenSecret) }}
+{{- fail "mailIngress needs domain, an existing tlsSecret and an existing tokenSecret" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-ingress
+  namespace: {{ .Values.namespace | quote }}
+  labels: { app: gtm-mail-ingress }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate }
+  selector:
+    matchLabels: { app: gtm-mail-ingress }
+  template:
+    metadata:
+      labels: { app: gtm-mail-ingress }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: mail-ingress
+          image: {{ .Values.mailIngress.image | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: smtp
+              containerPort: {{ .Values.mailIngress.containerPort }}
+              protocol: TCP
+          env:
+            - name: GTM_MAIL_DOMAIN
+              value: {{ .Values.mailIngress.domain | quote }}
+            - name: GTM_SMTP_PORT
+              value: {{ .Values.mailIngress.containerPort | quote }}
+            - name: GTM_MAIL_API_URL
+              value: {{ printf "http://controlplane.%s.svc.cluster.local:8080/" .Values.namespace | quote }}
+            - name: GTM_MAIL_INGRESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mailIngress.tokenSecret | quote }}
+                  key: mail-ingress-token
+            - name: GTM_SMTP_TLS_CERT
+              value: /tls/tls.crt
+            - name: GTM_SMTP_TLS_KEY
+              value: /tls/tls.key
+          volumeMounts:
+            - name: smtp-tls
+              mountPath: /tls
+              readOnly: true
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          readinessProbe:
+            tcpSocket: { port: smtp }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: smtp }
+            periodSeconds: 20
+      volumes:
+        - name: smtp-tls
+          secret:
+            secretName: {{ .Values.mailIngress.tlsSecret | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-ingress
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  type: {{ .Values.mailIngress.serviceType | quote }}
+  selector: { app: gtm-mail-ingress }
+  ports:
+    - name: smtp
+      port: {{ .Values.mailIngress.externalPort }}
+      targetPort: smtp
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mail-ingress-isolation
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  podSelector:
+    matchLabels: { app: gtm-mail-ingress }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [ { protocol: TCP, port: {{ .Values.mailIngress.containerPort }} } ]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: gtm-controlplane }
+      ports: [ { protocol: TCP, port: 8080 } ]
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- end }}

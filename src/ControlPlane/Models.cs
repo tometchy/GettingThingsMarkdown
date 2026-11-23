@@ -49,6 +49,8 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<AuditEntry> Audit => Set<AuditEntry>();
     public DbSet<HandledStripeEvent> HandledStripeEvents => Set<HandledStripeEvent>();
     public DbSet<HistoryDeletionIntent> HistoryDeletionIntents => Set<HistoryDeletionIntent>();
+    public DbSet<MailInbox> MailInboxes => Set<MailInbox>();
+    public DbSet<EncryptedInboundMail> EncryptedInboundMails => Set<EncryptedInboundMail>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -59,6 +61,10 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         model.Entity<HandledStripeEvent>().HasKey(x => x.Id);
         model.Entity<HistoryDeletionIntent>().HasKey(x => x.Id);
         model.Entity<HistoryDeletionIntent>().HasIndex(x => new { x.AccountId, x.OpaquePath }).IsUnique();
+        model.Entity<MailInbox>().HasKey(x => x.AccountId);
+        model.Entity<MailInbox>().HasIndex(x => x.LocalPart).IsUnique();
+        model.Entity<EncryptedInboundMail>().HasKey(x => x.Id);
+        model.Entity<EncryptedInboundMail>().HasIndex(x => new { x.AccountId, x.DedupSha256 }).IsUnique();
     }
 }
 

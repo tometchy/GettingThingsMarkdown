@@ -19,6 +19,7 @@ jobs:
       - run: dotnet restore tests/ControlPlane.Tests/ControlPlane.Tests.csproj
       - run: dotnet test tests/ControlPlane.Tests/ControlPlane.Tests.csproj --no-restore --configuration Release
       - run: dotnet build src/Client/Desktop/GettingThingsMarkdown.Client.Desktop.csproj --configuration Release
+      - run: dotnet build src/MailIngress/GettingThingsMarkdown.MailIngress.csproj --configuration Release
   browser:
     runs-on: ubuntu-latest
     steps:
@@ -47,6 +48,8 @@ jobs:
         run: bash tests/security/worm-fail-closed.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
+      - name: Build standalone shared SMTP gateway image
+        run: docker build -f src/MailIngress/Dockerfile -t gtm/mail-ingress:ci .
       - name: Build encrypted Sync/Git image
         run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
       - name: Build Gitea History image
@@ -64,11 +67,12 @@ jobs:
           config: infrastructure/kind/config.yaml
       - name: Load real images and start API
         run: |
-          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci
+          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci
           docker tag gtm/controlplane:ci gtm/controlplane:dev
           docker tag gtm/sync:ci gtm/sync:dev
           docker tag gtm/history:ci gtm/history:dev
-          kind load docker-image --name gtm gtm/controlplane:dev gtm/sync:dev gtm/history:dev
+          docker tag gtm/mail-ingress:ci gtm/mail-ingress:dev
+          kind load docker-image --name gtm gtm/controlplane:dev gtm/sync:dev gtm/history:dev gtm/mail-ingress:dev
           kubectl apply -f infrastructure/kubernetes/control-plane.yaml
           kubectl -n gtm-system create secret generic controlplane-secrets \
             --from-literal=jwt="$(openssl rand -hex 32)" \
@@ -86,6 +90,32 @@ jobs:
           bash tests/integration/kind-smoke.sh
           source /tmp/gtm-kind-e2e-account.env
           bash tests/integration/e2ee-git.sh
+      - name: SMTP STARTTLS to encrypted queue over real kind networking
+        run: |
+          openssl req -new -newkey rsa:3072 -sha256 -days 1 -nodes -x509 \
+            -subj '/CN=inbox.test.invalid' -keyout /tmp/gtm-smtp.key \
+            -out /tmp/gtm-smtp.crt >/dev/null 2>&1
+          kubectl -n gtm-system create secret tls gtm-mail-tls \
+            --cert=/tmp/gtm-smtp.crt --key=/tmp/gtm-smtp.key
+          token="$(openssl rand -hex 32)"
+          kubectl -n gtm-system create secret generic gtm-mail-secret \
+            --from-literal=mail-ingress-token="$token"
+          kubectl -n gtm-system set env deployment/controlplane \
+            GTM_INBOUND_MAIL_DOMAIN=inbox.test.invalid GTM_MAIL_INGRESS_TOKEN="$token"
+          kubectl -n gtm-system rollout status deployment/controlplane --timeout=240s
+          kubectl apply -f infrastructure/kubernetes/mail-ingress-dev.yaml
+          kubectl -n gtm-system rollout status deployment/mail-ingress --timeout=240s
+          kubectl -n gtm-system port-forward service/controlplane 5081:8080 >/tmp/gtm-mail-api.log 2>&1 &
+          pf_api=$!
+          kubectl -n gtm-system port-forward service/mail-ingress 2525:2525 >/tmp/gtm-mail-smtp.log 2>&1 &
+          pf_smtp=$!
+          trap 'kill "$pf_api" "$pf_smtp" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5081/readyz >/dev/null 2>&1 &&
+               bash -c 'echo > /dev/tcp/127.0.0.1/2525' >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          bash tests/integration/smtp-gateway.sh
       - name: Dump diagnostic logs if integration fails
         if: failure()
         run: |
@@ -112,6 +142,13 @@ jobs:
             --set mail.existingSecret=ci-mail > /tmp/gtm-helm-with-billing.yaml
           grep -q 'GTM_STRIPE_PRICE_BASIC_YEAR' /tmp/gtm-helm-with-billing.yaml
           grep -q 'GTM_SMTP_PASSWORD' /tmp/gtm-helm-with-billing.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set mailIngress.enabled=true \
+            --set mailIngress.domain=inbox.example.test \
+            --set mailIngress.tlsSecret=existing-smtp-tls \
+            --set mailIngress.tokenSecret=existing-inbound-token > /tmp/gtm-mail.yaml
+          grep -q 'name: mail-ingress' /tmp/gtm-mail.yaml
+          grep -q 'GTM_INBOUND_MAIL_DOMAIN' /tmp/gtm-mail.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0

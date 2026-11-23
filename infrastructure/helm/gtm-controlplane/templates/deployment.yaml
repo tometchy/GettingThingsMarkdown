@@ -66,6 +66,15 @@ spec:
               value: {{ printf "https://%s" .Values.api.host | quote }}
             - name: GTM_WEB_ORIGIN
               value: {{ printf "https://%s" .Values.api.host | quote }}
+            {{- if .Values.mailIngress.enabled }}
+            - name: GTM_INBOUND_MAIL_DOMAIN
+              value: {{ .Values.mailIngress.domain | quote }}
+            - name: GTM_MAIL_INGRESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mailIngress.tokenSecret | quote }}
+                  key: mail-ingress-token
+            {{- end }}
             - name: GTM_JWT_SECRET
               valueFrom:
                 secretKeyRef:

@@ -18,6 +18,12 @@ public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
+public record MailInboxInfo(bool Enabled, string Address, int Pending, bool PublicKeyRegistered);
+public record RegisterMailInboxPayload(string PublicKeyBase64);
+public record RotateMailAddressPayload(string Password);
+public record MailEnvelopeInfo(Guid Id, string WrappedKey, string Nonce,
+    string Tag, string Ciphertext, DateTimeOffset ReceivedUtc);
+public record MailMessagePayload(string Subject, string From, string Body, DateTimeOffset ReceivedUtc);
 
 // WASM trimming and future iOS AOT: all API JSON shapes must be source-generated.
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -30,6 +36,11 @@ public record TenantStatusInfo(string Status, string? ServerDeviceId, string? De
 [JsonSerializable(typeof(CheckoutPayload))]
 [JsonSerializable(typeof(PairDevicePayload))]
 [JsonSerializable(typeof(TenantStatusInfo))]
+[JsonSerializable(typeof(MailInboxInfo))]
+[JsonSerializable(typeof(RegisterMailInboxPayload))]
+[JsonSerializable(typeof(RotateMailAddressPayload))]
+[JsonSerializable(typeof(MailEnvelopeInfo[]))]
+[JsonSerializable(typeof(MailMessagePayload))]
 [JsonSerializable(typeof(ServerPairing))]
 [JsonSerializable(typeof(string[]))]
 public partial class AccountJsonContext : JsonSerializerContext { }
@@ -129,6 +140,39 @@ public sealed class AccountApi : IDisposable
         // Deliberately return raw encrypted JSON; don't deserialize arbitrary remote
         // Git payloads into runtime-reflection-bound object graphs (iOS/WASM AOT).
         return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    public Task<MailInboxInfo> MailInboxAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "api/mail/inbox", null,
+            AccountJsonContext.Default.MailInboxInfo);
+
+    public async Task<MailInboxInfo> RegisterMailInboxAsync(
+        string publicKey, CancellationToken ct = default)
+    {
+        using var body = JsonContent.Create(new RegisterMailInboxPayload(publicKey),
+            AccountJsonContext.Default.RegisterMailInboxPayload);
+        return await RequestAsync(HttpMethod.Post, "api/mail/inbox", body,
+            AccountJsonContext.Default.MailInboxInfo);
+    }
+
+    public Task<MailEnvelopeInfo[]> MailMessagesAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "api/mail/messages", null,
+            AccountJsonContext.Default.MailEnvelopeInfoArray);
+
+    public async Task AckMailAsync(Guid messageId, CancellationToken ct = default)
+    {
+        using var response = await _http.DeleteAsync(
+            "api/mail/messages/" + messageId.ToString("D"), ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<MailInboxInfo> RotateMailAliasAsync(string password,
+        CancellationToken ct = default)
+    {
+        using var body = JsonContent.Create(new RotateMailAddressPayload(password),
+            AccountJsonContext.Default.RotateMailAddressPayload);
+        return await RequestAsync(HttpMethod.Post, "api/mail/inbox/rotate-address", body,
+            AccountJsonContext.Default.MailInboxInfo);
     }
 
     public void Dispose() => _http.Dispose();
