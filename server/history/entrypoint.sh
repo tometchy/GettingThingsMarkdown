@@ -2,6 +2,7 @@
 set -eu
 : "${GTM_GITEA_ADMIN_PASSWORD:?Missing admin secret}"
 : "${GTM_GITEA_SYNC_PASSWORD:?Missing sync writer secret}"
+: "${GTM_GITEA_READER_PASSWORD:?Missing read-only secret}"
 : "${GITEA__server__DOMAIN:?Missing service DNS}"
 /usr/local/bin/docker-setup.sh
 GITEA="/usr/local/bin/gitea -c ${GITEA_APP_INI}"
@@ -10,6 +11,10 @@ $GITEA migrate
 if ! $GITEA admin user list | grep -Eq '[[:space:]]archive[[:space:]]'; then
   $GITEA admin user create --username archive --email archive@localhost.invalid \
     --password "$GTM_GITEA_ADMIN_PASSWORD" --admin --must-change-password=false
+fi
+if ! $GITEA admin user list | grep -Eq '[[:space:]]reader[[:space:]]'; then
+  $GITEA admin user create --username reader --email reader@localhost.invalid \
+    --password "$GTM_GITEA_READER_PASSWORD" --must-change-password=false
 fi
 if ! $GITEA admin user list | grep -Eq '[[:space:]]sync[[:space:]]'; then
   $GITEA admin user create --username sync --email sync@localhost.invalid \
@@ -41,6 +46,9 @@ fi
 $CURL --user "archive:$GTM_GITEA_ADMIN_PASSWORD" -X PUT \
   -H 'Content-Type: application/json' -d '{"permission":"write"}' \
   "$ROOT/api/v1/repos/archive/history/collaborators/sync" >/dev/null
+$CURL --user "archive:$GTM_GITEA_ADMIN_PASSWORD" -X PUT \
+  -H 'Content-Type: application/json' -d '{"permission":"read"}' \
+  "$ROOT/api/v1/repos/archive/history/collaborators/reader" >/dev/null
 
 # A's Git credential only has write access as a collaborator, not repository
 # ownership. Reject force pushes and branch deletion even before protection API.

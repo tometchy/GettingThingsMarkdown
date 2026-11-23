@@ -44,6 +44,7 @@ docker run -d --name "$history" --network "$network" --network-alias history \
   -v "$root/tls:/tls:ro" \
   -e GTM_GITEA_ADMIN_PASSWORD="ci-test-history-admin-$(openssl rand -hex 16)" \
   -e GTM_GITEA_SYNC_PASSWORD="CI-SYNC-$(openssl rand -hex 16)" \
+  -e GTM_GITEA_READER_PASSWORD="CI-READER-$(openssl rand -hex 16)" \
   -e GITEA__server__DOMAIN=history \
   -e GITEA__server__PROTOCOL=https \
   -e GITEA__server__ROOT_URL=https://history:3000/ \

@@ -5,6 +5,28 @@ account screens, two-tenant kind provisioning, non-S3 E2EE -> encrypted Git ->
 HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 **Production operation, paid S3 restore and Android/iOS are not yet proven.**
 
+## Newly hardened, but still not production redundancy
+
+- [x] Gitea reader is a separate, unprivileged collaborator. Only Sync holds
+  its Git-writer password; account-facing history requests no longer use the
+  repository owner/admin identity. Added per-role ingress NetworkPolicies.
+- [x] Optional provider-specific nodeAffinity: Sync on a `hetzner`-labeled
+  worker, History on an `ovh`-labeled worker, validated for distinct values.
+- [ ] Kubernetes NetworkPolicy actually enforced by a suitable production CNI;
+  kind default networking alone is NOT proof.
+- [ ] Real, fenced automatic failover; cross-cloud network, independent storage
+  recovery, active quorum/witness and separate cloud bootstrap credentials.
+- [x] Optional, age-encrypted Syncthing identity/config snapshot pushed to
+  Gitea on a separate Git branch, retained in local Sync Git too. CI must
+  prove a cold decrypt + exact key/cert recovery. Offline key is operator-held.
+- [ ] Redundant signed/encrypted user settings + stable Syncthing identities
+  stored on both clouds, not merely the control-plane SQLite PVC.
+- [ ] Both provider copies contain all needed historical LFS bytes. Currently
+  two Git repositories do NOT imply two copies of offloaded Git LFS.
+- [ ] 7-day client-originated deletion rewrite/undo, quota accounting and
+  post-expiry LFS garbage collection. Current 30-day WORM backup conflicts
+  with this policy: do not enable it for production.
+
 ## Release acceptance checks
 
 - [x] Backend with 1-month trial, admin extension, Stripe test-mode Checkout
