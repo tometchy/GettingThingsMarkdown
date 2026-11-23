@@ -10,7 +10,7 @@ public static class TenantManifests
         => new { name, @namespace = ns, labels };
 
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
-        IDictionary<string, string>? secrets, string syncImage, string historyImage)
+        IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false)
     {
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
@@ -96,7 +96,8 @@ public static class TenantManifests
                     FromSecret("GTM_SYNCTHING_API_KEY", "sync-api-key"),
                     FromSecret("GTM_GIT_PASSWORD", "sync-pass"),
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
-                    new { name = "GTM_GIT_USERNAME", value = "sync" }
+                    new { name = "GTM_GIT_USERNAME", value = "sync" },
+                    new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" }
                 }
                 : new object[]
                 {
@@ -118,6 +119,16 @@ public static class TenantManifests
                     new { name = "GITEA__database__DB_TYPE", value = "sqlite3" },
                     new { name = "GITEA__actions__ENABLED", value = "false" }
                 };
+            var initContainers = role == "sync" ? new object[] { new {
+                name = "prepare-volume", image = "busybox:1.37",
+                command = new[] { "/bin/sh", "-ec",
+                    "mkdir -p /data/files /data/git /data/syncthing && chown 1000:1000 /data /data/files /data/git /data/syncthing && chmod 0770 /data/files /data/git /data/syncthing" },
+                securityContext = new {
+                    runAsUser = 0, runAsNonRoot = false, allowPrivilegeEscalation = false,
+                    capabilities = new { drop = new[] { "ALL" }, add = new[] { "CHOWN", "DAC_OVERRIDE", "FOWNER" } }
+                },
+                volumeMounts = new[] { new { name = "data", mountPath = "/data" } }
+            } } : Array.Empty<object>();
             var mounts = role == "sync"
                 ? new object[] {
                     new { name = "data", mountPath = "/data" },
@@ -160,6 +171,7 @@ public static class TenantManifests
                                     ["gtm.io/tenant"] = ns
                                 } }
                             } },
+                            initContainers,
                             containers = new[] { new
                             {
                                 name = role, image = role == "sync" ? syncImage : historyImage,

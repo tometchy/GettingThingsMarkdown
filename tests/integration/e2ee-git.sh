@@ -108,7 +108,7 @@ docker run --rm --network none --user 1000:1000 \
   -e FOLDER_PASSWORD="$password" \
   -v "$root/cipher:/cipher:ro" -v "$root/restored:/plain" \
   --entrypoint /bin/syncthing ghcr.io/syncthing/syncthing:2.1.7 \
-  decrypt --folder-id notes --to=/plain /cipher
+  decrypt --folder-id notes --password="$password" --to=/plain /cipher
 if [ ! -f "$root/restored/ToDo/test.md" ] || \
    ! grep -q PRIVATE_E2E_SENTINEL_8c2f "$root/restored/ToDo/test.md"; then
   echo "Decryption of encrypted history from Gitea failed" >&2

@@ -21,6 +21,13 @@ fi
 git config --local core.bare false
 git config --local core.worktree /data/files
 git config --local user.name 'GettingThingsMarkdown encrypted archive'
+if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
+  # Git attributes remain outside the Syncthing directory so no clear-text
+  # infrastructure metadata enters the folder sent to the encrypted device.
+  # Git LFS stores encrypted file contents as S3 objects in History (Gitea).
+  git lfs install --local
+  printf '%s\n' '* filter=lfs diff=lfs merge=lfs -text' > /data/git/info/attributes
+fi
 git config --local user.email 'archive@localhost.invalid'
 # Git's exclusion metadata lives outside the Syncthing folder.
 printf '%s\n' '.stfolder' '.stversions/' '.stignore' '.syncthing.*' > /data/git/info/exclude

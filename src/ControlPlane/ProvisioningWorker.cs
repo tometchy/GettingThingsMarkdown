@@ -96,7 +96,8 @@ public sealed class ProvisioningWorker(
         var declarations = TenantManifests.Build(account.Id, account.Plan,
             config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
             config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
-            config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev").ToList();
+            config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
+            config.GetValue<bool>("GTM_GIT_LFS_ENABLED")).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -104,7 +105,8 @@ public sealed class ProvisioningWorker(
             var initial = TenantManifests.Build(account.Id, account.Plan,
                 config.GetValue<int>("GTM_DEV_VOLUME_GI"),
                 TenantManifests.NewSecrets(), config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
-                config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev");
+                config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
+                config.GetValue<bool>("GTM_GIT_LFS_ENABLED"));
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))
