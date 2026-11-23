@@ -43,7 +43,11 @@ public static class TenantManifests
                 spec = new
                 {
                     accessModes = new[] { "ReadWriteOnce" },
-                    resources = new { requests = new Dictionary<string, string> { ["storage"] = size } }
+                    resources = new { requests = new Dictionary<string, string> {
+                        ["storage"] = lfsEnabled && role == "history"
+                            ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
+                            : size
+                    } }
                 }
             });
         }

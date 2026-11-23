@@ -6,6 +6,9 @@ image:
 syncImage: gtm/sync:dev
 historyImage: gtm/history:dev
 existingSecret: controlplane-secrets
+encryptedArchive:
+  lfsEnabled: false
+  wormBackupEnabled: false
 storage:
   controlPlaneGi: 2
   className: ""

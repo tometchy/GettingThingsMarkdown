@@ -68,3 +68,17 @@ accounts/bucket sharding is required.
 - Do not claim full 200 GiB profitability until workloads and bills confirm
   the model; S3 minimum object billing size can inflate costs for tiny files.
 - Do not deploy paid cloud resources without explicit operational approval.
+
+## Production Helm flags
+
+The chart defaults `encryptedArchive.lfsEnabled=false` and
+`encryptedArchive.wormBackupEnabled=false`, so local kind needs no remote
+storage credentials. Enabling both in real production also requires
+**per-tenant** secrets `gtm-lfs-credentials` and `gtm-worm-credentials`, and
+an S3 bucket created with default 30-day COMPLIANCE Object Lock.
+
+When Git LFS is enabled the independent History PVC is 8 GiB rather than a
+second 200 GiB block disk for Plus. The Sync PVC remains 200 GiB (or the
+development size) and must use a cost-efficient enforceable HDD-backed storage
+class. This does not imply history metadata will never exceed 8 GiB; reserve
+space, monitor and resize when needed.

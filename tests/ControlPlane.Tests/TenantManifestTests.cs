@@ -50,6 +50,30 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void LfsChangesSecondPvcToSmallMetadataVolume()
+    {
+        var id = Guid.NewGuid();
+        var pvcs = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
+            .Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
+        Assert.Contains("200Gi", pvcs["sync-data"].Json);
+        Assert.Contains("8Gi", pvcs["history-data"].Json);
+        var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
+            .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
+        Assert.Contains("200Gi", noLfs.Json);
+    }
+
+    [Fact]
+    public void WormBackupRequiresDistinctTenantCredentials()
+    {
+        var id = Guid.NewGuid();
+        var sets = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true, true)
+            .Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name, x => x.Json);
+        Assert.Contains("gtm-worm-credentials", sets["history"]);
+        Assert.Contains("GTM_WORM_BACKUP_ENABLED", sets["history"]);
+        Assert.DoesNotContain("gtm-worm-credentials", sets["sync"]);
+    }
+
+    [Fact]
     public void TenantNamesAreDnsSafeAndStable()
     {
         var id = Guid.Parse("5a535d7d-f0aa-433a-b98d-19351446d27f");

@@ -36,6 +36,10 @@ spec:
               value: {{ and .Values.development.enabled .Values.development.longTrial | quote }}
             - name: GTM_DEV_VOLUME_GI
               value: {{ .Values.development.tenantVolumeGi | quote }}
+            - name: GTM_GIT_LFS_ENABLED
+              value: {{ .Values.encryptedArchive.lfsEnabled | quote }}
+            - name: GTM_WORM_BACKUP_ENABLED
+              value: {{ .Values.encryptedArchive.wormBackupEnabled | quote }}
             - name: GTM_SYNC_IMAGE
               value: {{ .Values.syncImage | quote }}
             - name: GTM_HISTORY_IMAGE
