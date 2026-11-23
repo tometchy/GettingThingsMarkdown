@@ -1,10 +1,10 @@
-> **Current design:** New tenants use complete encrypted local Git on BOTH Sync and History; no LFS/S3 required. A 7-day history erasure UI, strict history quota and actually automated cross-cloud failover remain **NOT IMPLEMENTED**. See [full-Git recovery](docs/full-git-dual-cloud-recovery.md). The privileged admin can grant expiring extra space at `/admin/` on a suitably protected management endpoint. Never launch production billing until actual storage economics and HA tests pass.
+> **Current design:** New tenants use complete encrypted local Git on BOTH Sync and History; no LFS/S3 required. A seven-day deletion-intent/Undo API and operator incident holds are present, but **physical Git erasure, root-resistant immutability, strict quota accounting, and automatic cross-cloud failover are NOT IMPLEMENTED**. See [full-Git recovery](docs/full-git-dual-cloud-recovery.md) and [history protection](docs/history-protection-operations.md). Admin management at `/admin/` must be private and protected with operator SSO/MFA. No live billing until real cloud and data-loss tests pass.
 
 # GettingThingsMarkdown
 
 A 100% open-source, privacy-first SaaS for Syncthing E2EE, encrypted Git history and Markdown task automation. **Unreleased engineering preview. Not production-ready.**
 
-## Implemented foundation; full-Git dual-cloud recovery proposal in draft PR #5
+## Implemented foundation; full-Git dual-cloud recovery engineering preview
 
 - Backend: ASP.NET Core 10 identity, SQLite account/subscription metadata, JWT, password hashing, rate limiting, PL/EN Avalonia shared subscription UI for desktop and WebAssembly.
 - Billing: month trial, admin trial extension with audit, Stripe Checkout/Portal and signed webhooks. Server-only 100-year trial when **Development** and explicitly enabled.
@@ -24,7 +24,6 @@ Prerequisites: .NET 10 SDK, Podman rootless, cgroups v2, kind, kubectl, curl, jq
 ```bash
 git clone https://github.com/tometchy/GettingThingsMarkdown.git
 cd GettingThingsMarkdown
-git switch feature/affordable-object-storage-mvp-hardening
 chmod +x dev.sh
 ./dev.sh setup
 ./dev.sh up
@@ -110,8 +109,8 @@ Before charging users, complete Stripe reconciliation, pricing/VAT, email verifi
 
 ## Release blockers
 
-- **E2EE/Git recovery:** Must pass real Syncthing transfer and historical version retrieval + native decrypt tests; repository restoration on new nodes is not yet implemented. Git revisions currently retain encrypted file blobs but there is no user-facing history UI.
-- **Tenancy and quotas:** No production-complete quota enforcement or suspension. Need authorization/rate limiting for device count, entitlement reconciliation, Gitea read-only history tokens, deletion/retention procedures and no-force-push audit.
+- **E2EE/Git recovery:** Offline recovery from full Git is tested in CI, but automatic fresh-PVC restoration after a real cloud loss and end-user encrypted-history restore UX are not implemented. The new history erasure API records requests only; no physical erasure occurs.
+- **Tenancy and quotas:** No production-complete physical quota enforcement; current PVC sizes are reservations, not user quotas. Fresh-password deletion intents and hold extension are available, but independent immutable retention, safe dual-Git purge and audited physically verified cleanup remain mandatory release gates.
 - **Syncthing:** Browser cannot run the native filesystem daemon. Android and iOS platform-native bridges, secure storage, background execution and Apple file integrations still needed; iOS background limitations cannot be removed with a shared UI.
 - **Infrastructure:** TLS public ingress, cert-manager, production relay/discovery, monitoring, backups, failure/recovery automation, production Scaleway Terraform/OpenTofu and Helm not complete.
 - **Product:** Markdown explorer/editor/restore UX and advanced automations incomplete; email verification and account recovery absent; security review required.
