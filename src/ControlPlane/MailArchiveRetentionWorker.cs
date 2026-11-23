@@ -30,20 +30,29 @@ public sealed class MailArchiveRetentionWorker(
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDb>();
-        // Never query or log the plaintext (not present); read only ACK
-        // timestamps, owners and ciphertext-bearing rows for deletion.
-        var acked = await db.EncryptedInboundMails
-            .Where(m => m.AcknowledgedUtc != null).ToListAsync(ct);
-        if (acked.Count == 0) return 0;
-
-        var owners = acked.Select(x => x.AccountId).Distinct().ToHashSet();
+        // Stream lightweight metadata; do NOT materialize every ciphertext
+        // blob in memory when the global service has many customer inboxes.
+        // Two queries are sequential because EF does not allow simultaneous
+        // enumeration and other commands on a single DbContext.
         var accounts = await db.Accounts.AsNoTracking()
-            .Where(a => owners.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
-        var candidates = acked.Where(x => accounts.TryGetValue(x.AccountId, out var owner) &&
-            MailInboxPolicy.EligibleForPurge(x, owner, now)).Take(500).ToList();
-        if (candidates.Count == 0) return 0;
-        db.EncryptedInboundMails.RemoveRange(candidates);
-        await db.SaveChangesAsync(ct);
-        return candidates.Count;
+            .Select(a => new { a.Id, a.HistoryHoldUntilUtc })
+            .ToDictionaryAsync(a => a.Id, ct);
+        var expiredIds = new List<Guid>(500);
+        await foreach (var entry in db.EncryptedInboundMails.AsNoTracking()
+            .Where(m => m.AcknowledgedUtc != null)
+            .Select(m => new { m.Id, m.AccountId, m.AcknowledgedUtc })
+            .AsAsyncEnumerable().WithCancellation(ct))
+        {
+            if (entry.AcknowledgedUtc is not { } ack ||
+                ack.AddDays(MailInboxPolicy.RecoveryDays) > now ||
+                !accounts.TryGetValue(entry.AccountId, out var account) ||
+                account.HistoryHoldUntilUtc > now)
+                continue;
+            expiredIds.Add(entry.Id);
+            if (expiredIds.Count == 500) break;
+        }
+        if (expiredIds.Count == 0) return 0;
+        return await db.EncryptedInboundMails
+            .Where(m => expiredIds.Contains(m.Id)).ExecuteDeleteAsync(ct);
     }
 }
