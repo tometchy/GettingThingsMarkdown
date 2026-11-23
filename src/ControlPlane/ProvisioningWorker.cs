@@ -122,6 +122,13 @@ public sealed class ProvisioningWorker(
             await kube.ApplyAsync(TenantCertificate.PublicOnly(ns, existing["tls.crt"]), ct);
         }
 
+        if (config.GetValue<bool>("GTM_GIT_LFS_ENABLED") &&
+            !await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-lfs-credentials", ct))
+        {
+            throw new InvalidOperationException(
+                "Dedicated S3 LFS credentials and bucket are required for this tenant. " +
+                "Failing closed; shared object-storage credentials are forbidden.");
+        }
         // Apply Services before StatefulSets. A/B must remain in different nodes.
         foreach (var resource in declarations.Skip(1))
             await kube.ApplyAsync(resource, ct);

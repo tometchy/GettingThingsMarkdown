@@ -90,6 +90,24 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void S3OffloadIsOptionalAndDoesNotExposeKeysToSync()
+    {
+        var id = Guid.NewGuid();
+        var sets = TenantManifests.Build(id, "plus", 0, null, "sync", "history", true)
+            .Where(x => x.Kind == "StatefulSet").ToDictionary(x => x.Name, x => x.Json);
+        Assert.Contains("gtm-lfs-credentials", sets["history"]);
+        Assert.Contains("MINIO_ENDPOINT", sets["history"]);
+        Assert.Contains("LFS_START_SERVER", sets["history"]);
+        Assert.DoesNotContain("gtm-lfs-credentials", sets["sync"]);
+        Assert.Contains("prepare-volume", sets["sync"]);
+        Assert.DoesNotContain("prepare-volume", sets["history"]);
+        Assert.DoesNotContain("MINIO_ACCESS_KEY_ID", sets["sync"]);
+        var local = TenantManifests.Build(id, "plus", 0, null, "sync", "history", false)
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "history").Json;
+        Assert.DoesNotContain("gtm-lfs-credentials", local);
+    }
+
+    [Fact]
     public void ServerCertificateMatchesInternalHistoryHost()
     {
         var resource = TenantCertificate.Create("gtm-abc");

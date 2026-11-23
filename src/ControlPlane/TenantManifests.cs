@@ -129,6 +129,22 @@ public static class TenantManifests
                 },
                 volumeMounts = new[] { new { name = "data", mountPath = "/data" } }
             } } : Array.Empty<object>();
+            if (lfsEnabled && role == "history")
+            {
+                env = env.Concat(new object[]
+                {
+                    new { name = "GITEA__server__LFS_START_SERVER", value = "true" },
+                    new { name = "GITEA__storage__STORAGE_TYPE", value = "minio" },
+                    FromLfsSecret("GITEA__storage__MINIO_ENDPOINT", "endpoint"),
+                    FromLfsSecret("GITEA__storage__MINIO_ACCESS_KEY_ID", "access-key-id"),
+                    FromLfsSecret("GITEA__storage__MINIO_SECRET_ACCESS_KEY", "secret-access-key"),
+                    FromLfsSecret("GITEA__storage__MINIO_BUCKET", "bucket"),
+                    FromLfsSecret("GITEA__storage__MINIO_LOCATION", "location"),
+                    new { name = "GITEA__storage__MINIO_USE_SSL", value = "true" },
+                    new { name = "GITEA__storage__MINIO_INSECURE_SKIP_VERIFY", value = "false" },
+                    new { name = "GITEA__storage__MINIO_BUCKET_LOOKUP_TYPE", value = "path" }
+                }).ToArray();
+            }
             var mounts = role == "sync"
                 ? new object[] {
                     new { name = "data", mountPath = "/data" },
@@ -225,6 +241,11 @@ public static class TenantManifests
     private static object FromSecret(string name, string key) => new
     {
         name, valueFrom = new { secretKeyRef = new { name = "gtm-credentials", key } }
+    };
+
+    private static object FromLfsSecret(string name, string key) => new
+    {
+        name, valueFrom = new { secretKeyRef = new { name = "gtm-lfs-credentials", key } }
     };
 
     public static Dictionary<string, string> NewSecrets()
