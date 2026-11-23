@@ -50,12 +50,23 @@ public sealed class ProvisioningWorker(
             {
                 // The trial state only determines eligibility to provision. Data is never
                 // deleted on expiration. Storage enforcement is an independent future gate.
-                if (!PlanCatalog.View(account, DateTimeOffset.UtcNow).CanWrite)
+                bool allowed = PlanCatalog.View(account, DateTimeOffset.UtcNow).CanWrite;
+                if (!allowed)
                 {
-                    if (state.Status == "Pending") state.Status = "Expired";
+                    if (state.Status == "Ready")
+                    {
+                        var creds = await kube.SecretAsync(state.Namespace, "gtm-credentials", ct);
+                        if (creds is null)
+                            throw new InvalidOperationException("Cannot suspend: missing Syncthing credentials.");
+                        using var syncService = new SyncthingTenantApi(state.Namespace, creds["sync-api-key"]);
+                        await syncService.SetFolderPausedAsync(true, ct);
+                        state.Status = "Suspended";
+                    }
+                    else if (state.Status == "Pending") state.Status = "Expired";
                     continue;
                 }
                 if (state.Status == "Ready") continue;
+                bool resuming = state.Status == "Suspended";
                 state.Status = "Provisioning";
                 await EnsureTenantAsync(kube, state.Namespace, account, ct);
                 bool ready = await kube.StatefulSetReadyAsync(state.Namespace, "sync", ct) &&
@@ -64,7 +75,8 @@ public sealed class ProvisioningWorker(
                 {
                     var secret = await kube.SecretAsync(state.Namespace, "gtm-credentials", ct);
                     if (secret is null) throw new InvalidOperationException("Missing tenant credentials.");
-                    var sync = new SyncthingTenantApi(state.Namespace, secret["sync-api-key"]);
+                    using var sync = new SyncthingTenantApi(state.Namespace, secret["sync-api-key"]);
+                    if (resuming) await sync.SetFolderPausedAsync(false, ct);
                     var serverId = await sync.DeviceIdAsync(ct);
                     if (await GiteaTenantApi.RepositoryReadyAsync(state.Namespace,
                         await kube.SecretAsync(state.Namespace, "history-ca", ct), secret["admin-pass"], ct))

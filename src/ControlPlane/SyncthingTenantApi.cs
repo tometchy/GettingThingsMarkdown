@@ -73,6 +73,22 @@ public sealed class SyncthingTenantApi : IDisposable
         save.EnsureSuccessStatusCode();
     }
 
+    public async Task SetFolderPausedAsync(bool paused, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            "rest/config/folders/" + TenantNames.FolderId, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
+        var folder = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))!.AsObject();
+        if (folder["type"]?.ToString() != "receiveencrypted")
+            throw new InvalidOperationException("Refusing to alter a non-encrypted folder.");
+        if (folder["paused"]?.GetValue<bool>() == paused) return;
+        folder["paused"] = paused;
+        using var save = await _http.PutAsJsonAsync(
+            "rest/config/folders/" + TenantNames.FolderId, folder, ct);
+        save.EnsureSuccessStatusCode();
+    }
+
     public async Task<IReadOnlyList<string>> ListPairedDeviceIdsAsync(CancellationToken ct)
     {
         var ownId = await DeviceIdAsync(ct);

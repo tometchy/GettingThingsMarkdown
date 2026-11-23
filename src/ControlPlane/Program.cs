@@ -190,7 +190,7 @@ async Task<IResult> GetHistoryAsync(ClaimsPrincipal user, string? sha, string ki
     var id = AdminSecurity.UserId(user);
     if (id is null) return Results.Unauthorized();
     var tenant = await states.Tenants.FindAsync([id.Value], ct);
-    if (tenant is null || tenant.Status != "Ready")
+    if (tenant is null || tenant.Status is not ("Ready" or "Suspended"))
         return Results.Problem("History tenant not ready.", statusCode: 409);
     if (sha is not null && !GitHistoryProxy.ValidGitOid(sha))
         return Results.BadRequest(new { error = "Invalid Git SHA." });
