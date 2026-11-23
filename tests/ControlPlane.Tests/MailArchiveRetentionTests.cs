@@ -1,5 +1,6 @@
 using GettingThingsMarkdown.ControlPlane;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GettingThingsMarkdown.Tests;
 
