@@ -7,10 +7,11 @@ namespace GettingThingsMarkdown.Client.Shared;
 
 public record AccountInfo(Guid Id, string Email, string Plan, long QuotaBytes,
     DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
-    string PaymentStatus, bool CanWrite, string Entitlement);
+    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified);
 public record LoginResult(string AccessToken, AccountInfo Account);
 public record CheckoutUrl(string Url);
 public record RegisterPayload(string Email, string Password, string Plan);
+public record ResendVerificationPayload(string Email);
 public record LoginPayload(string Email, string Password);
 public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
@@ -23,6 +24,7 @@ public record TenantStatusInfo(string Status, string? ServerDeviceId, string? De
 [JsonSerializable(typeof(LoginResult))]
 [JsonSerializable(typeof(CheckoutUrl))]
 [JsonSerializable(typeof(RegisterPayload))]
+[JsonSerializable(typeof(ResendVerificationPayload))]
 [JsonSerializable(typeof(LoginPayload))]
 [JsonSerializable(typeof(CheckoutPayload))]
 [JsonSerializable(typeof(PairDevicePayload))]
@@ -68,6 +70,14 @@ public sealed class AccountApi : IDisposable
 
     private void SetToken(string token) =>
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+    public async Task ResendVerificationAsync(string email)
+    {
+        using var payload = JsonContent.Create(
+            new ResendVerificationPayload(email), AccountJsonContext.Default.ResendVerificationPayload);
+        using var response = await _http.PostAsync("api/auth/resend-verification", payload);
+        response.EnsureSuccessStatusCode();
+    }
 
     public Task<AccountInfo> CurrentAsync() =>
         RequestAsync(HttpMethod.Get, "api/account", null, AccountJsonContext.Default.AccountInfo);

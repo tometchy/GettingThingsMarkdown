@@ -30,8 +30,11 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   relay/discovery, TLS ingress, monitoring, backpressure, security review.
 - [ ] Control-plane database, Syncthing identity, secrets and encrypted S3
   objects all backed up and restored in a documented outage drill.
-- [ ] Stripe sandbox end-to-end invoices, failed payments, cancels, refunds,
-  email verification and tax settings; no live charges.
+- [x] Production email verification is required before allocating tenant pods;
+  tokens are hashed, expire after 24h and are rate-limited. Existing users are
+  migrated as verified; Development auto-verifies locally.
+- [ ] Provider SMTP deliverability and abuse controls, Stripe sandbox invoices,
+  failed payments, cancellations, refunds and tax settings; no live charges.
 - [ ] Android embedded Syncthing native engine and iOS app functionality,
   signing and mobile background lifecycle tests.
 - [ ] Local desktop GUI whole workflow validated on Linux Mint, including

@@ -24,6 +24,7 @@ public sealed class AccountView : UserControl
     private readonly ComboBox _billingInterval = new() { SelectedIndex = 0 };
     private readonly Button _register = new();
     private readonly Button _login = new();
+    private readonly Button _resendVerification = new();
     private readonly Button _checkout = new();
     private readonly Button _portal = new();
     private readonly Button _refresh = new();
@@ -100,6 +101,12 @@ public sealed class AccountView : UserControl
         {
             _pendingUrl = await _api.PortalAsync();
             Render();
+        });
+        _resendVerification.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            await _api.ResendVerificationAsync(_email.Text ?? "");
+            _status.Text = T("Sprawdź skrzynkę e-mail (również spam).",
+                "Check your inbox, including spam.");
         });
         _language.Click += (_, _) => { _polish = !_polish; Render(); };
         _billingInterval.SelectionChanged += (_, _) =>
@@ -255,6 +262,7 @@ public sealed class AccountView : UserControl
         layout.Children.Add(_billingInterval);
         layout.Children.Add(_register);
         layout.Children.Add(_login);
+        layout.Children.Add(_resendVerification);
         layout.Children.Add(_account);
         layout.Children.Add(_refresh);
         layout.Children.Add(_checkout);
@@ -317,6 +325,7 @@ public sealed class AccountView : UserControl
         _password.PlaceholderText = T("Hasło (min. 12 znaków)", "Password (min. 12 characters)");
         _register.Content = T("Załóż konto · trial", "Create account · trial");
         _login.Content = T("Zaloguj się", "Sign in");
+        _resendVerification.Content = T("Wyślij ponownie link weryfikacyjny", "Resend verification link");
         _checkout.Content = T("Przejdź do płatności Stripe", "Continue to Stripe Checkout");
         _billingInterval.IsEnabled = _current is not null;
         _portal.Content = T("Zarządzaj subskrypcją", "Manage subscription");

@@ -10,6 +10,10 @@ public sealed class Account
     public string Plan { get; set; } = "basic";
     // Persist old subscriber allowances when introducing a smaller plan catalog.
     public long? QuotaOverrideBytes { get; set; }
+    public DateTimeOffset? EmailVerifiedUtc { get; set; }
+    public string? VerificationTokenHash { get; set; }
+    public DateTimeOffset? VerificationExpiresUtc { get; set; }
+    public DateTimeOffset? VerificationSentUtc { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
     public DateTimeOffset TrialUntilUtc { get; set; }
     public DateTimeOffset? PaidUntilUtc { get; set; }
@@ -51,6 +55,7 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
 }
 
 public record RegisterRequest(string Email, string Password, string Plan);
+public record ResendVerificationRequest(string Email);
 public record LoginRequest(string Email, string Password);
 public record ExtendTrialRequest(int Days, string? Reason);
 public record CheckoutRequest(string Plan, string BillingInterval = "month");
@@ -59,7 +64,7 @@ public record SessionUrl(string Url);
 public record AccountView(
     Guid Id, string Email, string Plan, long QuotaBytes,
     DateTimeOffset TrialUntilUtc, DateTimeOffset? PaidUntilUtc,
-    string PaymentStatus, bool CanWrite, string Entitlement);
+    string PaymentStatus, bool CanWrite, string Entitlement, bool EmailVerified);
 public record AuthResponse(string AccessToken, AccountView Account);
 
 public sealed record PlanTier(string Id, string Name, long QuotaBytes, int MonthlyUsdCents,
@@ -95,9 +100,10 @@ public static class PlanCatalog
         bool paid = a.PaidUntilUtc is { } until && until > now &&
                     a.StripeStatus is "active" or "canceled";
         bool trial = a.TrialUntilUtc > now;
-        string state = paid ? "paid" : trial ? "trial" : "expired";
+        bool verified = a.EmailVerifiedUtc is not null;
+        string state = !verified ? "email_unverified" : paid ? "paid" : trial ? "trial" : "expired";
         return new(a.Id, a.Email, a.Plan, a.QuotaOverrideBytes ?? Quotas[a.Plan],
-            a.TrialUntilUtc, a.PaidUntilUtc, a.StripeStatus, trial || paid, state);
+            a.TrialUntilUtc, a.PaidUntilUtc, a.StripeStatus, verified && (trial || paid), state, verified);
     }
 }
 

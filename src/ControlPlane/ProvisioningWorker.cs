@@ -36,6 +36,8 @@ public sealed class ProvisioningWorker(
         using var kube = new KubeApi();
         foreach (var account in await accounts.Accounts.AsNoTracking().ToListAsync(ct))
         {
+            // Reject free-trial abuse: no cloud resources before confirming ownership.
+            if (account.EmailVerifiedUtc is null) continue;
             var state = await stateDb.Tenants.FindAsync([account.Id], ct);
             if (state is null)
             {
