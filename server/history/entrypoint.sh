@@ -50,5 +50,9 @@ if [ -d "$REPO" ]; then
   git --git-dir="$REPO" config receive.denyDeletes true
 fi
 
+if [ "${GTM_WORM_BACKUP_ENABLED:-false}" = "true" ]; then
+  /usr/local/bin/backup-loop.sh &
+  echo 'WORM backup worker started (same History container, no sidecar).'
+fi
 echo 'Gitea archive initialized. Waiting for server.'
 wait "$server_pid"

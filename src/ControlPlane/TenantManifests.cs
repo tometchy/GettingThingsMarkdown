@@ -10,7 +10,7 @@ public static class TenantManifests
         => new { name, @namespace = ns, labels };
 
     public static IEnumerable<KubeObject> Build(Guid id, string plan, int devVolumeGi,
-        IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false)
+        IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false)
     {
         var ns = TenantNames.Namespace(id);
         var labels = new Dictionary<string, string> { ["gtm.io/tenant"] = ns };
@@ -145,6 +145,20 @@ public static class TenantManifests
                     new { name = "GITEA__storage__MINIO_BUCKET_LOOKUP_TYPE", value = "path" }
                 }).ToArray();
             }
+            if (wormEnabled && lfsEnabled && role == "history")
+            {
+                env = env.Concat(new object[]
+                {
+                    new { name = "GTM_WORM_BACKUP_ENABLED", value = "true" },
+                    new { name = "GTM_TENANT_NAMESPACE", value = ns },
+                    FromWormSecret("GTM_WORM_ENDPOINT", "endpoint-url"),
+                    FromWormSecret("GTM_WORM_BUCKET", "bucket"),
+                    FromWormSecret("GTM_WORM_REGION", "region"),
+                    FromWormSecret("GTM_WORM_ACCESS_KEY_ID", "access-key-id"),
+                    FromWormSecret("GTM_WORM_SECRET_ACCESS_KEY", "secret-access-key"),
+                    FromWormSecret("GTM_WORM_BACKUP_PASSPHRASE", "backup-passphrase")
+                }).ToArray();
+            }
             var mounts = role == "sync"
                 ? new object[] {
                     new { name = "data", mountPath = "/data" },
@@ -241,6 +255,11 @@ public static class TenantManifests
     private static object FromSecret(string name, string key) => new
     {
         name, valueFrom = new { secretKeyRef = new { name = "gtm-credentials", key } }
+    };
+
+    private static object FromWormSecret(string name, string key) => new
+    {
+        name, valueFrom = new { secretKeyRef = new { name = "gtm-worm-credentials", key } }
     };
 
     private static object FromLfsSecret(string name, string key) => new

@@ -97,7 +97,8 @@ public sealed class ProvisioningWorker(
             config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
             config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
             config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
-            config.GetValue<bool>("GTM_GIT_LFS_ENABLED")).ToList();
+            config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
+            config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED")).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -106,7 +107,8 @@ public sealed class ProvisioningWorker(
                 config.GetValue<int>("GTM_DEV_VOLUME_GI"),
                 TenantManifests.NewSecrets(), config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
                 config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
-                config.GetValue<bool>("GTM_GIT_LFS_ENABLED"));
+                config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
+                config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"));
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
         }
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/history-tls", ct))
@@ -128,6 +130,13 @@ public sealed class ProvisioningWorker(
             throw new InvalidOperationException(
                 "Dedicated S3 LFS credentials and bucket are required for this tenant. " +
                 "Failing closed; shared object-storage credentials are forbidden.");
+        }
+        if (config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED") &&
+            (!config.GetValue<bool>("GTM_GIT_LFS_ENABLED") ||
+             !await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-worm-credentials", ct)))
+        {
+            throw new InvalidOperationException(
+                "30-day WORM backup requires LFS and dedicated tenant backup credentials.");
         }
         // Apply Services before StatefulSets. A/B must remain in different nodes.
         foreach (var resource in declarations.Skip(1))
