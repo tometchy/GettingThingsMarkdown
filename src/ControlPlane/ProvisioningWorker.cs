@@ -10,6 +10,7 @@ public sealed class ProvisioningWorker(
     IServiceScopeFactory scopes, IConfiguration config,
     ILogger<ProvisioningWorker> logger) : BackgroundService
 {
+    private readonly Dictionary<Guid, DateTimeOffset> _lastCapacityCheck = new();
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!config.GetValue<bool>("GTM_KUBE_ENABLED")) return;
@@ -65,7 +66,17 @@ public sealed class ProvisioningWorker(
                     else if (state.Status == "Pending") state.Status = "Expired";
                     continue;
                 }
-                if (state.Status == "Ready") continue;
+                if (state.Status == "Ready")
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    if (!_lastCapacityCheck.TryGetValue(account.Id, out var checkedAt) ||
+                        now - checkedAt > TimeSpan.FromMinutes(10))
+                    {
+                        await ExpandExistingVolumesAsync(kube, account, ct);
+                        _lastCapacityCheck[account.Id] = now;
+                    }
+                    continue;
+                }
                 bool resuming = state.Status == "Suspended";
                 state.Status = "Provisioning";
                 await EnsureTenantAsync(kube, state.Namespace, account, ct);
@@ -98,6 +109,26 @@ public sealed class ProvisioningWorker(
                 state.UpdatedUtc = DateTimeOffset.UtcNow;
                 await stateDb.SaveChangesAsync(ct);
             }
+        }
+    }
+
+    private async Task ExpandExistingVolumesAsync(KubeApi kube, Account account,
+        CancellationToken ct)
+    {
+        var claims = TenantManifests.Build(account.Id, account.Plan,
+            config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
+            config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
+            config["GTM_HISTORY_IMAGE"] ?? "gtm/history:dev",
+            config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
+            config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
+            config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
+            account.QuotaOverrideBytes is long oldQuota
+                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null)
+            .Where(x => x.Kind == "PersistentVolumeClaim");
+        foreach (var claim in claims)
+        {
+            if (await kube.ExpandPvcIfNeededAsync(claim, ct))
+                logger.LogInformation("Expanded {Pvc} for tenant {Id}", claim.Name, account.Id);
         }
     }
 

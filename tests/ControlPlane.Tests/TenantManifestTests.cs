@@ -85,6 +85,14 @@ public class TenantManifestTests
         Assert.DoesNotContain("gtm-worm-credentials", sets["sync"]);
     }
 
+    [Theory]
+    [InlineData("10Gi", 10)]
+    [InlineData("8192Mi", 8)]
+    [InlineData("1Ti", 1024)]
+    [InlineData("1025Mi", 2)]
+    public void StorageQuantityReaderRoundsUpGiB(string quantity, long gib)
+        => Assert.Equal(gib, KubeApi.QuantityGiB(quantity));
+
     [Fact]
     public void TenantNamesAreDnsSafeAndStable()
     {

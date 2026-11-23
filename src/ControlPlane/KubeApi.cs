@@ -76,6 +76,40 @@ public sealed class KubeApi : IDisposable
         return status.TryGetProperty("readyReplicas", out var replicas) && replicas.GetInt32() == 1;
     }
 
+    public static long QuantityGiB(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("Empty Kubernetes storage quantity.");
+        long bytes;
+        if (value.EndsWith("Gi", StringComparison.Ordinal))
+            bytes = checked(long.Parse(value[..^2], System.Globalization.CultureInfo.InvariantCulture) *
+                1024L * 1024 * 1024);
+        else if (value.EndsWith("Mi", StringComparison.Ordinal))
+            bytes = checked(long.Parse(value[..^2], System.Globalization.CultureInfo.InvariantCulture) *
+                1024L * 1024);
+        else if (value.EndsWith("Ti", StringComparison.Ordinal))
+            bytes = checked(long.Parse(value[..^2], System.Globalization.CultureInfo.InvariantCulture) *
+                1024L * 1024 * 1024 * 1024);
+        else throw new ArgumentException("Unsupported Kubernetes storage quantity suffix.");
+        return (bytes + (1024L * 1024 * 1024 - 1)) / (1024L * 1024 * 1024);
+    }
+
+    public async Task<bool> ExpandPvcIfNeededAsync(KubeObject desired, CancellationToken ct)
+    {
+        if (desired.Kind != "PersistentVolumeClaim" ||
+            desired.Namespace is null) throw new ArgumentException("Expected namespaced PVC.");
+        using var current = await GetAsync(desired.Url, ct);
+        if (current is null) throw new InvalidOperationException("PVC not found.");
+        using var requested = JsonDocument.Parse(desired.Json);
+        string oldQuantity = current.RootElement.GetProperty("spec")
+            .GetProperty("resources").GetProperty("requests").GetProperty("storage").GetString()!;
+        string newQuantity = requested.RootElement.GetProperty("spec")
+            .GetProperty("resources").GetProperty("requests").GetProperty("storage").GetString()!;
+        if (QuantityGiB(newQuantity) <= QuantityGiB(oldQuantity))
+            return false; // Never shrink persistent encrypted filesystem: Kubernetes forbids it.
+        await ApplyAsync(desired, ct);
+        return true;
+    }
+
     public async Task<bool> ExistsAsync(string url, CancellationToken ct)
     {
         using var obj = await GetAsync(url, ct);
