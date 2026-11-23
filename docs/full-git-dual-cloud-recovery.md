@@ -165,6 +165,35 @@ be enforced by independent immutable storage/hardware (WORM) or independently
 controlled append-only service. Ordinary Git files, chmod, chattr immutable
 and Gitea branch protections are not equivalent to that guarantee.
 
+## Threat scenarios — independently reassessed for full Git
+
+| Scenario | Current effect | Residual risk / missing control |
+|---|---|---|
+| Ransomware modifies or removes live files on one trusted client | Ordinary Sync writes append new Git commits; old B/A history remains reachable | Not yet tested with prolonged encryption and restore UI; no guaranteed history quota |
+| Infection remains undetected beyond 7 days | There is NO rolling 7-day expiry of ordinary old commits; history is retained until an independently authorized erasure | A full history can fill both disks, freezing uploads and possibly recovery |
+| Malware steals user login token or password | Gitea not exposed to normal user; Sync Git writer cannot force-push or delete refs | Explicit deletion workflow with fresh MFA/passkey and 7-day revocation is not implemented; malware can keylog the password |
+| Malicious sync client produces terabytes of encrypted changes | Both full Git copies may grow rapidly | Hard per-tenant storage/history quota, upload rate limits, anti-abuse controls missing |
+| Tenant wants to erase one old file after 7 days | Protected old commits remain by default | Requires audited intent, intentional 7-day quarantine, authorized Git rewrite on both sites, correct GC and accurate billing; all pending |
+| API administrator account compromised | Doesn't directly have Gitea write access | Admin token currently static, not MFA-protected; ingress/VPN isolation required |
+| Sync pod compromised, Git collaborator password stolen | Gitea rejects force-push and ref deletion | A writer may append malicious history, exhaust disk or abuse other API routes; key rotation and immutable recovery absent |
+| Gitea pod compromised or OVH root compromised | Sync retains full local encrypted Git (including recovery branches) | Requires independent verification and safe rebootstrap; Gitea configs/SQLite may be altered |
+| Hetzner root compromised or Sync PVC destroyed | OVH full Git should contain prior acknowledged pushes and encrypted bootstrap branches | Up to last Git push data loss, operator-held recovery key and fresh PVC needed |
+| Both cloud credentials or common Kubernetes controller compromised | Same trust plane may reach both providers | Two clouds alone not an immutable boundary; separate admin identities, external witness and WORM needed for root-proof guarantees |
+| Three-party connectivity partition | Hard scheduling places roles on different workers | No fencing/quorum distributed failover; never start two writers just because peers seem unreachable |
+| Last file pushed but encrypted secret branch behind | Git history is restorable, but Syncthing may have an out-of-date cert or peer config | Export secrets whenever they rotate; verify age package revision against file state |
+| Server clock skew, grace/GC delay | Cannot safely promise exact seven-day physical erase | Signed authoritative timestamps, monotonic expiry, verified GC and no hidden stale ref needed |
+| User loses E2EE password or all trusted devices | Service cannot decrypt files | Add safe client-only recovery phrase/second trusted device |
+| Both servers lost, plus control-plane SQLite lost | Two full encrypted Git histories do not hold all account/subscription records | Separate encrypted multi-cloud replicated accounts DB and secrets; not yet implemented |
+| Key or secret manager quorum lost | Recovery key may be inaccessible while both Git copies intact | Two Raft voters insufficient: separate third witness and tested break-glass |
+| Two legal/provider administrators collude | Can destroy both full Git copies at storage layer | Only independently enforced immutable retention in a distinct trust domain meets administrator-proof deletion requirements |
+
+**Security guarantee we can plausibly target initially:** ordinary client-side
+ransomware cannot rewrite protected old commits if the server-side archive
+remains intact and the malware lacks privileged Git/cluster credentials.
+We cannot yet guarantee recovery from a simultaneous compromise of both
+providers, the shared Kubernetes administrator, or the user's endpoint and
+all recovery credentials.
+
 ## Economics
 
 Advertised quotas remain Mini 10GiB $1.99, Plus 75GiB $5.99, Pro 500GiB

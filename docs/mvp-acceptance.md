@@ -3,7 +3,7 @@
 Status: Engineering preview. The account/Stripe flow, browser/desktop Avalonia
 account screens, two-tenant kind provisioning, non-S3 E2EE -> encrypted Git ->
 HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
-**Production operation, paid S3 restore and Android/iOS are not yet proven.**
+**Production multi-cloud operation, hard history quotas, live storage migration, paid Stripe flows and Android/iOS are not yet proven.**
 
 ## Newly hardened, but still not production redundancy
 
@@ -25,12 +25,13 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 - [x] Optional, age-encrypted Syncthing identity/config snapshot pushed to
   Gitea on a separate Git branch, retained in local Sync Git too. CI must
   prove a cold decrypt + exact key/cert recovery. Offline key is operator-held.
-- [ ] Redundant signed/encrypted user settings + stable Syncthing identities
-  stored on both clouds, not merely the control-plane SQLite PVC.
-- [ ] Both provider copies contain all needed historical LFS bytes. Currently
-  two Git repositories do NOT imply two copies of offloaded Git LFS.
-- [ ] 7-day client-originated deletion rewrite/undo, quota accounting and
-  post-expiry LFS garbage collection. Current 30-day WORM backup conflicts
+- [ ] **Shared account/payment state**: Control Plane SQLite, Stripe event
+  reconciliation, JWT secrets and entitlement decisions independently backed
+  up on both providers. Per-tenant identity/config encrypted Git backups exist.
+- [ ] **Legacy LFS tenants only:** migrate all historical objects to native
+  full Git with verified checksums; LFS pointers do not store full bytes.
+- [ ] 7-day password/MFA-protected history erasure request/Undo, rewrite and
+  post-expiry native Git garbage collection on BOTH replicas. Current 30-day WORM backup conflicts
   with this policy: do not enable it for production.
 
 ## New full-Git direction
@@ -41,7 +42,7 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
 - [x] Operator-only encrypted secrets export to the `gtm-infra` branch
   in the same Git repo, under >=2 independent age public recipients.
   Each cloud must independently hold the matching private age key securely.
-- [ ] Cold full-Git Sync restore script uses operator-supplied private age key,
+- [x] Cold full-Git Sync restore script uses operator-supplied private age key,
   restores same Syncthing certificate and encrypted Git working directory;
   offline integration exercises A->B and B->A.
 
