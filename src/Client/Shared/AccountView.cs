@@ -64,6 +64,7 @@ public sealed class AccountView : UserControl
     private readonly Button _createMail = new();
     private readonly Button _refreshMail = new();
     private readonly Button _importMail = new();
+    private readonly Button _restoreMailArchive = new();
     private readonly Button _rotateMail = new();
     private readonly TextBox _mailPassword = new() { PasswordChar = '●', PlaceholderText = "Password to rotate inbox address" };
     private readonly Button _exportMailKey = new();
@@ -216,6 +217,15 @@ public sealed class AccountView : UserControl
             int imported = await _sync.ImportMailTasksAsync(_api, _current.Id, _folderPath.Text ?? "");
             _mailStatus.Text = T("Zaimportowano do lokalnego ToDo/: ",
                 "Imported into local ToDo/: ") + imported;
+        });
+        _restoreMailArchive.Click += async (_, _) => await ExecuteAsync(async () =>
+        {
+            if (_current is null || _sync is null)
+                throw new InvalidOperationException("Sign in on the trusted client first.");
+            var count = await _sync.RestoreArchivedMailTasksAsync(
+                _api, _current.Id, _folderPath.Text ?? "");
+            _mailStatus.Text = T("Odzyskano wiadomości z zaszyfrowanego archiwum: ",
+                "Recovered encrypted archived messages: ") + count;
         });
         _rotateMail.Click += async (_, _) => await ExecuteAsync(async () =>
         {
@@ -387,6 +397,7 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_refreshMail);
             layout.Children.Add(_mailStatus);
             layout.Children.Add(_importMail);
+            layout.Children.Add(_restoreMailArchive);
             layout.Children.Add(_mailPassword);
             layout.Children.Add(_rotateMail);
             layout.Children.Add(_exportMailKey);
@@ -453,6 +464,8 @@ public sealed class AccountView : UserControl
         _refreshMail.Content = T("Sprawdź adres i kolejkę wiadomości", "Check address and pending mail");
         _importMail.Content = T("Importuj wiadomości do ToDo teraz",
             "Import pending mail to local ToDo");
+        _restoreMailArchive.Content = T("Przywróć e-maile z archiwum (30 dni)",
+            "Restore encrypted inbox archive (30 days)");
         _rotateMail.Content = T("Zmień adres przekierowania (stary wyłączy się)",
             "Rotate forwarding address (disable old)");
         _exportMailKey.Content = T("Skopiuj prywatny klucz poczty do bezpiecznej kopii",
@@ -462,7 +475,7 @@ public sealed class AccountView : UserControl
         bool mailEligible = _sync is not null &&
             _current is { CanWrite: true } && _current.Plan is ("plus" or "pro");
         foreach (var button in new[] { _createMail, _refreshMail, _importMail,
-            _rotateMail, _exportMailKey, _restoreMailKey })
+            _restoreMailArchive, _rotateMail, _exportMailKey, _restoreMailKey })
             button.IsEnabled = mailEligible;
         _loadHistory.IsEnabled = _current is not null;
         _restoreHistory.IsEnabled = _current is not null;

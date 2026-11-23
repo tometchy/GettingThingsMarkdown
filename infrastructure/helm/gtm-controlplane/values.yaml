@@ -16,6 +16,8 @@ encryptedArchive:
 # One shared SMTP gateway for the entire installation; not per tenant.
 # Must have a real MX/A record, public port 25, STARTTLS cert and a private
 # ingress token shared only with the internal Control Plane.
+adminApi:
+  enabled: false # only enable behind a private SSO/MFA operator gateway
 mailIngress:
   enabled: false
   domain: "" # e.g. inbox.gettingthingsmarkdown.example

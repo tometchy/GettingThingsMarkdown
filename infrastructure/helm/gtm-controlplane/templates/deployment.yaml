@@ -58,6 +58,8 @@ spec:
               value: {{ .Values.syncImage | quote }}
             - name: GTM_HISTORY_IMAGE
               value: {{ .Values.historyImage | quote }}
+            - name: GTM_ADMIN_API_ENABLED
+              value: {{ .Values.adminApi.enabled | quote }}
             - name: GTM_DB
               value: "Data Source=/app/data/accounts.sqlite"
             - name: GTM_PROVISIONING_DB

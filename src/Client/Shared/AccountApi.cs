@@ -159,6 +159,11 @@ public sealed class AccountApi : IDisposable
         RequestAsync(HttpMethod.Get, "api/mail/messages", null,
             AccountJsonContext.Default.MailEnvelopeInfoArray);
 
+    public Task<MailEnvelopeInfo[]> MailArchivedMessagesAsync(int skip = 0,
+        CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "api/mail/messages/archived?skip=" + skip,
+            null, AccountJsonContext.Default.MailEnvelopeInfoArray);
+
     public async Task AckMailAsync(Guid messageId, CancellationToken ct = default)
     {
         using var response = await _http.DeleteAsync(

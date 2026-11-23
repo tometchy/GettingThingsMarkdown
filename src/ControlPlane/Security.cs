@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace GettingThingsMarkdown.ControlPlane;
 
@@ -45,6 +47,12 @@ public static class AdminSecurity
 {
     public static bool IsAuthorized(HttpContext context, IConfiguration configuration)
     {
+        // Production operator endpoints are OFF by default, regardless of a
+        // valid static token. Only enable behind private SSO/MFA ingress.
+        var env = context.RequestServices.GetService<IHostEnvironment>();
+        if (env?.IsDevelopment() != true &&
+            !configuration.GetValue<bool>("GTM_ADMIN_API_ENABLED"))
+            return false;
         var expected = configuration["GTM_ADMIN_TOKEN"];
         var provided = context.Request.Headers["X-Admin-Token"].ToString();
         if (string.IsNullOrEmpty(expected) || string.IsNullOrEmpty(provided))

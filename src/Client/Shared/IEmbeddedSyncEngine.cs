@@ -16,6 +16,8 @@ public interface IEmbeddedSyncEngine : IAsyncDisposable
     Task<string> EnsureMailPublicKeyAsync(Guid accountId, CancellationToken ct = default);
     Task<int> ImportMailTasksAsync(AccountApi api, Guid accountId, string workspaceRoot,
         CancellationToken ct = default);
+    Task<int> RestoreArchivedMailTasksAsync(AccountApi api, Guid accountId, string workspaceRoot,
+        CancellationToken ct = default);
     Task<string?> ExportMailPrivateKeyAsync(Guid accountId, CancellationToken ct = default);
     Task ImportMailPrivateKeyAsync(Guid accountId, string privateKeyPem, CancellationToken ct = default);
 }

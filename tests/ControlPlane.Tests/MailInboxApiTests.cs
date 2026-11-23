@@ -128,6 +128,22 @@ public sealed class MailInboxApiTests
             using (var ack = await plus.DeleteAsync("/api/mail/messages/" + message.Id))
                 Assert.Equal(HttpStatusCode.NoContent, ack.StatusCode);
             Assert.Empty((await plus.GetFromJsonAsync<MailEnvelope[]>("/api/mail/messages"))!);
+            // ACK is a receipt, not an immediate destructive delete.
+            var archive = await plus.GetFromJsonAsync<MailEnvelope[]>(
+                "/api/mail/messages/archived?skip=0");
+            Assert.NotNull(archive);
+            var archived = Assert.Single(archive);
+            Assert.Equal(message.Id, archived.Id);
+            Assert.Equal(message.Ciphertext, archived.Ciphertext);
+            using (var secondAck = await plus.DeleteAsync("/api/mail/messages/" + message.Id))
+                Assert.Equal(HttpStatusCode.NoContent, secondAck.StatusCode);
+            Assert.Single((await plus.GetFromJsonAsync<MailEnvelope[]>(
+                "/api/mail/messages/archived?skip=0"))!);
+            Assert.Empty((await mini.GetFromJsonAsync<MailEnvelope[]>(
+                "/api/mail/messages/archived?skip=0"))!);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await plus.GetAsync("/api/mail/messages/archived?skip=-2")).StatusCode);
+
         }
         finally
         {
