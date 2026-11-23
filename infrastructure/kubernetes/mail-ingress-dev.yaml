@@ -1,0 +1,53 @@
+# Local kind-only: requires gtm-mail-tls and gtm-mail-secret in gtm-system.
+# Does NOT expose public SMTP. Production uses the opt-in Helm gateway.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-ingress
+  namespace: gtm-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gtm-mail-ingress }
+  template:
+    metadata:
+      labels: { app: gtm-mail-ingress }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: smtp
+          image: gtm/mail-ingress:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: smtp, containerPort: 2525 }
+          env:
+            - { name: GTM_MAIL_DOMAIN, value: "inbox.test.invalid" }
+            - { name: GTM_SMTP_PORT, value: "2525" }
+            - { name: GTM_MAIL_API_URL, value: "http://controlplane.gtm-system.svc.cluster.local:8080/" }
+            - name: GTM_MAIL_INGRESS_TOKEN
+              valueFrom:
+                secretKeyRef: { name: gtm-mail-secret, key: mail-ingress-token }
+            - { name: GTM_SMTP_TLS_CERT, value: "/tls/tls.crt" }
+            - { name: GTM_SMTP_TLS_KEY, value: "/tls/tls.key" }
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: "1", memory: 256Mi }
+      volumes:
+        - name: tls
+          secret: { secretName: gtm-mail-tls }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-ingress
+  namespace: gtm-system
+spec:
+  type: ClusterIP
+  selector: { app: gtm-mail-ingress }
+  ports:
+    - { name: smtp, port: 2525, targetPort: 2525 }
