@@ -566,15 +566,16 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
     var domain = builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"];
     if (string.IsNullOrWhiteSpace(domain))
         return Results.Problem("Inbound mail domain is not configured.", statusCode: 503);
-    if (!MailEncryption.ValidatePublicKey(request.PublicKeyBase64 ?? ""))
+    var publicKey = request.PublicKeyBase64 ?? "";
+    if (!MailEncryption.ValidatePublicKey(publicKey))
         return Results.BadRequest(new { error = "Expected 3072/4096-bit RSA SPKI public key." });
     var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
-    if (inbox is not null && inbox.PublicKeyBase64 != request.PublicKeyBase64)
+    if (inbox is not null && inbox.PublicKeyBase64 != publicKey)
         return Results.Conflict(new { error = "Inbox has another public key; import the original private key on this device." });
     if (inbox is null)
     {
         inbox = new MailInbox {
-            AccountId = account.Id, PublicKeyBase64 = request.PublicKeyBase64,
+            AccountId = account.Id, PublicKeyBase64 = publicKey,
             LocalPart = MailInboxPolicy.NewLocalPart(), Enabled = true,
             CreatedUtc = clock.GetUtcNow()
         };
