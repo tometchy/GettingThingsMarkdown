@@ -69,6 +69,20 @@ The development backend applies a **100-year trial only when both** `ASPNETCORE_
 
 Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, `docs/affordable-infrastructure.md`, `docs/storage-economics.md`, and `docs/architecture-and-gaps.md` for limitations.
 
+## Plus / Pro: incoming e-mail → encrypted Markdown task (preview)
+
+A single optional, shared SMTP gateway receives newly forwarded Gmail/Outlook messages at long random recipient addresses. The server encrypts them with the mailbox **public key**, and only a trusted desktop with the **private key** decrypts and writes `ToDo/mail-<id>.md` into the ordinary Syncthing workspace. This is **not** direct writing to an untrusted Syncthing disk: that requires the folder secret, which never leaves trusted devices. The gateway transiently sees plaintext mail before encrypting it. Sender attachments are intentionally excluded.
+
+To run locally on rootless Podman/kind:
+
+```bash
+./dev.sh up
+./dev.sh mail-up
+./dev.sh desktop
+```
+
+The local alias domain `inbox.test.invalid` and SMTP port `127.0.0.1:2525` cannot receive real Gmail until public MX/DNS and TLS are configured. See the [SMTP E2EE design, Gmail forwarding procedure and production blockers](docs/smtp-encrypted-inbox.md). Mail ingress, the 7-day Git physical purge and automatic cross-cloud failover are **not production ready**.
+
 ## Runtime commands
 
 ```bash
