@@ -40,7 +40,7 @@ internal static class Program
             .Build();
         var services = new ServiceProvider();
         services.Add(new IngressMailStore(api));
-        services.Add(new IngressMailboxFilter(serverName));
+        services.Add(new IngressMailboxFilter(api, serverName));
         var server = new global::SmtpServer.SmtpServer(options, services);
         Console.WriteLine("SMTP encrypted inbound gateway ready (no plaintext spool).");
         await server.StartAsync(CancellationToken.None);
@@ -51,16 +51,35 @@ internal static class Program
             ? value : throw new InvalidOperationException(key + " is required.");
 }
 
-internal sealed class IngressMailboxFilter(string domain) : IMailboxFilter
+internal sealed class IngressMailboxFilter(HttpClient api, string domain) : IMailboxFilter
 {
     public Task<bool> CanAcceptFromAsync(ISessionContext context, IMailbox from,
-        int size, CancellationToken ct) => Task.FromResult(size is >= 0 and <= 256 * 1024);
+        int size, CancellationToken ct) =>
+        Task.FromResult(size < 0 || size <= 256 * 1024);
 
-    public Task<bool> CanDeliverToAsync(ISessionContext context, IMailbox to,
-        IMailbox from, CancellationToken ct) =>
-        Task.FromResult(to.Host.Equals(domain, StringComparison.OrdinalIgnoreCase) &&
-            to.User.Length == 49 && to.User[0] == 'r' &&
-            to.User.AsSpan(1).IndexOfAnyExcept("0123456789abcdef") == -1);
+    public async Task<bool> CanDeliverToAsync(ISessionContext context, IMailbox to,
+        IMailbox from, CancellationToken ct)
+    {
+        if (!to.Host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
+            to.User.Length != 49 || to.User[0] != 'r' ||
+            to.User.AsSpan(1).IndexOfAnyExcept("0123456789abcdef") != -1)
+            return false;
+        try
+        {
+            using var response = await api.GetAsync("internal/mail/recipient?recipient=" +
+                Uri.EscapeDataString(to.User + "@" + to.Host), ct);
+            if (response.IsSuccessStatusCode) return true;
+            if (response.StatusCode == HttpStatusCode.NotFound) return false;
+            // Transient outage must never turn into permanent SMTP 550.
+            throw new SmtpResponseException(new SmtpResponse(SmtpReplyCode.Aborted,
+                "Temporary recipient validation failure"));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            throw new SmtpResponseException(new SmtpResponse(SmtpReplyCode.Aborted,
+                "Recipient validation temporarily unavailable"));
+        }
+    }
 }
 
 internal sealed class IngressMailStore(HttpClient api) : MessageStore
