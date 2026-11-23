@@ -113,7 +113,12 @@ public class TenantManifestTests
         var sets = TenantManifests.Build(id, "basic", 0, null, "sync", "history")
             .Where(m => m.Kind == "StatefulSet").ToDictionary(m => m.Name);
         Assert.Contains("GTM_GIT_LFS_ENABLED", sets["sync"].Json);
-        Assert.Contains("\\\"false\\\"", sets["sync"].Json);
+        using var json = JsonDocument.Parse(sets["sync"].Json);
+        var env = json.RootElement.GetProperty("spec").GetProperty("template")
+            .GetProperty("spec").GetProperty("containers")[0].GetProperty("env");
+        Assert.Equal("false", env.EnumerateArray()
+            .Single(e => e.GetProperty("name").GetString() == "GTM_GIT_LFS_ENABLED")
+            .GetProperty("value").GetString());
     }
 
     [Fact]
