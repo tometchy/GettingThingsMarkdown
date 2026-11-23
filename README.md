@@ -83,6 +83,12 @@ To run locally on rootless Podman/kind:
 
 The local alias domain `inbox.test.invalid` and SMTP port `127.0.0.1:2525` cannot receive real Gmail until public MX/DNS and TLS are configured. See the [SMTP E2EE design, Gmail forwarding procedure and production blockers](docs/smtp-encrypted-inbox.md). Mail ingress, the 7-day Git physical purge and automatic cross-cloud failover are **not production ready**.
 
+## New durability and operator access guardrails
+
+Mail imports no longer immediately delete ciphertext after the trusted device saves a task. The recipient may restore recently imported mail from its encrypted inbox archive for 30 days (longer under an incident hold). Pending mail is never automatically expired. This is **not proof of cross-cloud durability**: the Control Plane SQLite disk is still a single failure domain.
+
+The operator API is **disabled by default in Production**, even when `GTM_ADMIN_TOKEN` is present. Only set `GTM_ADMIN_API_ENABLED=true` behind a private operator gateway with SSO/MFA and independent controls. It does not grant the SaaS operator shell access, but infrastructure root access remains outside this restriction.
+
 ## Runtime commands
 
 ```bash
