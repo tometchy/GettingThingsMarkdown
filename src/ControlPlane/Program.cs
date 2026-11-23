@@ -119,12 +119,43 @@ using (var scope = app.Services.CreateScope())
         if (!columns.Contains(field.Item1))
             await accountsDb.Database.ExecuteSqlRawAsync(
                 $"ALTER TABLE Accounts ADD COLUMN {field.Item1} {field.Item2} NULL");
+    if (!columns.Contains("HistoryHoldUntilUtc"))
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE Accounts ADD COLUMN HistoryHoldUntilUtc TEXT NULL");
+    // EnsureCreated does not add new tables to existing installations.
+    // This durable intent table stores only opaque encrypted paths and no passwords.
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "HistoryDeletionIntents" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_HistoryDeletionIntents" PRIMARY KEY,
+            "AccountId" TEXT NOT NULL,
+            "OpaquePath" TEXT NOT NULL,
+            "State" TEXT NOT NULL,
+            "RequestedUtc" TEXT NOT NULL,
+            "PurgeNotBeforeUtc" TEXT NOT NULL,
+            "CanceledUtc" TEXT NULL
+        )
+        """);
+    await accountsDb.Database.ExecuteSqlRawAsync("""
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_HistoryDeletionIntents_AccountId_OpaquePath"
+        ON "HistoryDeletionIntents" ("AccountId", "OpaquePath")
+        """);
     await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
 
 var clock = TimeProvider.System;
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/healthz", () => Results.Ok(new { status = "alive" }));
+// Liveness must not be mistaken for a database-backed readiness signal.
+app.MapGet("/readyz", async (AppDb accounts, ProvisioningDb tenants, CancellationToken ct) =>
+{
+    try
+    {
+        var ready = await accounts.Database.CanConnectAsync(ct) &&
+                    await tenants.Database.CanConnectAsync(ct);
+        return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
+    }
+    catch (Exception) { return Results.StatusCode(503); }
+});
 app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Tiers.Values.Select(p =>
     new { id = p.Id, name = p.Name, quotaBytes = p.QuotaBytes,
         currency = "usd", monthlyCents = p.MonthlyUsdCents,
@@ -359,6 +390,100 @@ authenticated.MapGet("/history/blob/{sha}", (ClaimsPrincipal user, string sha,
     ProvisioningDb states, CancellationToken ct) =>
     GetHistoryAsync(user, sha, "blob", states, ct));
 
+
+//// HISTORY PROTECTION (fail-closed: intent/undo only; no privileged Git rewrite yet).
+// The frontend supplies the encrypted Git-relative path, never a plaintext name.
+// Access to historical ciphertext remains independent of paid entitlement.
+authenticated.MapGet("/history/deletion-requests", async (
+    ClaimsPrincipal user, AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    var intents = await db.HistoryDeletionIntents.AsNoTracking()
+        .Where(x => x.AccountId == account.Id).ToListAsync(ct);
+    return Results.Ok(new {
+        tenantHoldUntilUtc = account.HistoryHoldUntilUtc,
+        physicalPurgeAvailable = false,
+        notice = "Removal from Git history is NOT yet implemented. No automatic purge occurs.",
+        requests = intents.OrderByDescending(x => x.RequestedUtc).Take(100).Select(x =>
+            new HistoryDeletionView(x.Id, x.OpaquePath, x.State, x.RequestedUtc,
+                x.PurgeNotBeforeUtc,
+                HistoryProtectionPolicy.EffectiveNotBefore(x, account), false))
+    });
+});
+
+authenticated.MapPost("/history/deletion-requests", async (
+    RequestHistoryDeletion request, ClaimsPrincipal user, AppDb db,
+    IPasswordHasher<Account> hasher, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var account = await db.Accounts.FindAsync([id.Value], ct);
+    if (account is null) return Results.NotFound();
+    // Every request requires fresh verification; a 12-hour bearer alone is
+    // insufficient. Neither password nor decrypted name is ever persisted.
+    if (request.Password is null || request.Password.Length > 1024 ||
+        hasher.VerifyHashedPassword(account, account.PasswordHash, request.Password)
+            == PasswordVerificationResult.Failed)
+        return Results.Unauthorized();
+    if (!HistoryProtectionPolicy.ValidOpaquePath(request.OpaquePath))
+        return Results.BadRequest(new { error = "Provide a valid encrypted relative path." });
+    var existing = await db.HistoryDeletionIntents.SingleOrDefaultAsync(x =>
+        x.AccountId == id.Value && x.OpaquePath == request.OpaquePath, ct);
+    var now = clock.GetUtcNow();
+    if (existing is null)
+    {
+        if (await db.HistoryDeletionIntents.CountAsync(x =>
+            x.AccountId == id.Value && x.State == "Pending", ct) >= 100)
+            return Results.Problem("Maximum 100 pending requests per account.", statusCode: 429);
+        existing = HistoryProtectionPolicy.New(account.Id, request.OpaquePath, now);
+        db.HistoryDeletionIntents.Add(existing);
+    }
+    else if (existing.State == "Canceled")
+        HistoryProtectionPolicy.RestartCanceled(existing, now);
+    else if (existing.State != "Pending")
+        return Results.Conflict(new { error = "Path already processed." });
+    else
+        return Results.Accepted($"/api/history/deletion-requests/{existing.Id}",
+            new HistoryDeletionView(existing.Id, existing.OpaquePath, existing.State,
+                existing.RequestedUtc, existing.PurgeNotBeforeUtc,
+                HistoryProtectionPolicy.EffectiveNotBefore(existing, account), false));
+
+    db.Audit.Add(new AuditEntry { AccountId = account.Id,
+        Action = "history-deletion-intent", Actor = "account-password",
+        OccurredUtc = now,
+        Details = $"intent={existing.Id};encryptedPathSha256Prefix={HistoryProtectionPolicy.Fingerprint(existing.OpaquePath)};notBefore={existing.PurgeNotBeforeUtc:O}" });
+    try { await db.SaveChangesAsync(ct); }
+    catch (DbUpdateException)
+    {
+        return Results.Conflict(new { error = "Concurrent request; reload history protection status." });
+    }
+    return Results.Accepted($"/api/history/deletion-requests/{existing.Id}",
+        new HistoryDeletionView(existing.Id, existing.OpaquePath, existing.State,
+            existing.RequestedUtc, existing.PurgeNotBeforeUtc,
+            HistoryProtectionPolicy.EffectiveNotBefore(existing, account), false));
+}).RequireRateLimiting("auth");
+
+authenticated.MapDelete("/history/deletion-requests/{requestId:guid}", async (
+    Guid requestId, ClaimsPrincipal user, AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var intent = await db.HistoryDeletionIntents.SingleOrDefaultAsync(x =>
+        x.Id == requestId && x.AccountId == id.Value, ct);
+    if (intent is null) return Results.NotFound();
+    if (intent.State != "Pending")
+        return Results.Conflict(new { error = "Request is not pending." });
+    var now = clock.GetUtcNow();
+    HistoryProtectionPolicy.Cancel(intent, now);
+    db.Audit.Add(new AuditEntry { AccountId = id.Value,
+        Action = "history-deletion-undone", Actor = "account",
+        OccurredUtc = now, Details = $"intent={intent.Id}" });
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+});
+
 authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,
     ClaimsPrincipal user, AppDb db, StripeGateway stripe, CancellationToken ct) =>
 {
@@ -472,6 +597,91 @@ app.MapDelete("/api/admin/accounts/{id:guid}/temporary-quota", async (
     TemporaryQuotaPolicy.Revoke(account);
     await db.SaveChangesAsync(ct);
     return Results.Ok(PlanCatalog.View(account, now));
+});
+
+
+//// OPERATIONS: administrators see aggregate status, not ciphertext or tenant
+// filesystem access. Incident holds can only be extended, never shortened.
+app.MapGet("/api/admin/observability", async (
+    HttpContext context, AppDb accounts, ProvisioningDb states, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    var now = clock.GetUtcNow();
+    var tenants = await states.Tenants.AsNoTracking()
+        .Select(t => new { t.Status, t.UpdatedUtc }).ToListAsync(ct);
+    var pendingTimes = await accounts.HistoryDeletionIntents.AsNoTracking()
+        .Where(x => x.State == "Pending").Select(x => x.PurgeNotBeforeUtc).ToListAsync(ct);
+    var holds = await accounts.Accounts.AsNoTracking()
+        .Where(a => a.HistoryHoldUntilUtc != null)
+        .Select(a => a.HistoryHoldUntilUtc).ToListAsync(ct);
+    return Results.Ok(new {
+        checkedUtc = now,
+        accounts = await accounts.Accounts.CountAsync(ct),
+        tenants = new {
+            total = tenants.Count,
+            ready = tenants.Count(t => t.Status == "Ready"),
+            failed = tenants.Count(t => t.Status == "Failed"),
+            provisioning = tenants.Count(t => t.Status is "Pending" or "Provisioning"),
+            suspended = tenants.Count(t => t.Status == "Suspended"),
+            staleReconciliation = tenants.Count(t => t.UpdatedUtc < now.AddMinutes(-5))
+        },
+        historyProtection = new {
+            pendingDeletionIntents = pendingTimes.Count,
+            deadlinesElapsedWithoutPurge = pendingTimes.Count(t => t < now),
+            activeIncidentHolds = holds.Count(t => t > now),
+            physicalPurgeEnabled = false,
+            immutableRetentionVerified = false
+        },
+        resilience = new {
+            kubernetesConfigured = builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED"),
+            automaticCrossCloudFailoverEnabled = false,
+            controlPlaneCrossCloudReplicationVerified = false
+        }
+    });
+});
+
+app.MapGet("/api/admin/accounts/{id:guid}/history-protection", async (
+    Guid id, HttpContext context, AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    var account = await db.Accounts.FindAsync([id], ct);
+    if (account is null) return Results.NotFound();
+    var pending = await db.HistoryDeletionIntents.AsNoTracking()
+        .Where(x => x.AccountId == id && x.State == "Pending")
+        .Select(x => new { x.Id, x.RequestedUtc, x.PurgeNotBeforeUtc }).ToListAsync(ct);
+    return Results.Ok(new {
+        accountId = id, holdUntilUtc = account.HistoryHoldUntilUtc,
+        pendingRequests = pending.Select(x => new { x.Id, x.RequestedUtc,
+            effectiveNotBeforeUtc = account.HistoryHoldUntilUtc > x.PurgeNotBeforeUtc
+                ? account.HistoryHoldUntilUtc : x.PurgeNotBeforeUtc }),
+        physicalPurgeEnabled = false
+    });
+});
+
+app.MapPost("/api/admin/accounts/{id:guid}/history-hold", async (
+    Guid id, HistoryProtectionHoldRequest request, HttpContext context,
+    AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    if (request.Days is < 1 or > HistoryProtectionPolicy.MaxIncidentHoldDays ||
+        string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length is < 5 or > 200)
+        return Results.BadRequest(new { error = "Provide 1..365 days and a 5..200 character reason." });
+    var account = await db.Accounts.FindAsync([id], ct);
+    if (account is null) return Results.NotFound();
+    var now = clock.GetUtcNow();
+    var previous = account.HistoryHoldUntilUtc;
+    var until = HistoryProtectionPolicy.ExtendTenantHold(account, now, request.Days);
+    db.Audit.Add(new AuditEntry {
+        AccountId = id, Action = "history-incident-hold-extended", Actor = "admin-token",
+        OccurredUtc = now,
+        Details = $"before={previous:O};after={until:O};days={request.Days};reason={request.Reason.Replace(';', ',')}"
+    });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new {
+        accountId = id, holdUntilUtc = until,
+        physicalPurgeEnabled = false,
+        notice = "The hold is persisted; physical Git erasure is currently disabled."
+    });
 });
 
 // Webhooks are authoritative only after signature verification. Do not trust redirect success URLs.
