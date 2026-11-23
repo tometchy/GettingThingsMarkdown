@@ -163,13 +163,28 @@ using (var scope = app.Services.CreateScope())
             "Nonce" BLOB NOT NULL,
             "Tag" BLOB NOT NULL,
             "Ciphertext" BLOB NOT NULL,
-            "ReceivedUtc" TEXT NOT NULL
+            "ReceivedUtc" TEXT NOT NULL,
+            "AcknowledgedUtc" TEXT NULL
         )
         """);
     await accountsDb.Database.ExecuteSqlRawAsync("""
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_EncryptedInboundMails_AccountId_DedupSha256"
         ON "EncryptedInboundMails" ("AccountId", "DedupSha256")
         """);
+    // Existing SQLite databases must retain queued encrypted mail when
+    // introducing the non-destructive ACK and recovery archive.
+    bool hasMailAckColumn = false;
+    using (var inspect = connection.CreateCommand())
+    {
+        inspect.CommandText = "PRAGMA table_info('EncryptedInboundMails')";
+        using var reader = await inspect.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            hasMailAckColumn |= string.Equals(reader.GetString(1), "AcknowledgedUtc",
+                StringComparison.OrdinalIgnoreCase);
+    }
+    if (!hasMailAckColumn)
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE EncryptedInboundMails ADD COLUMN AcknowledgedUtc TEXT NULL");
     await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
@@ -533,7 +548,8 @@ authenticated.MapGet("/mail/inbox", async (ClaimsPrincipal user, AppDb db,
     var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
     if (inbox is null)
         return Results.Ok(new MailInboxView(false, "", 0, false));
-    var pending = await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct);
+    var pending = await db.EncryptedInboundMails.CountAsync(x =>
+        x.AccountId == account.Id && x.AcknowledgedUtc == null, ct);
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain, pending, true));
 });
@@ -570,7 +586,8 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
     }
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain,
-        await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct),
+        await db.EncryptedInboundMails.CountAsync(x =>
+            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct),
         true));
 }).RequireRateLimiting("auth");
 
@@ -596,7 +613,8 @@ authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress req
     await db.SaveChangesAsync(ct);
     return Results.Ok(new MailInboxView(true,
         inbox.LocalPart + "@" + builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"],
-        await db.EncryptedInboundMails.CountAsync(x => x.AccountId == account.Id, ct), true));
+        await db.EncryptedInboundMails.CountAsync(x =>
+            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct), true));
 }).RequireRateLimiting("auth");
 
 authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
@@ -608,8 +626,24 @@ authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
     if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
         return Results.StatusCode(403);
     var messages = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == account.Id).Take(50).ToListAsync(ct);
+        .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null)
+        .Take(50).ToListAsync(ct);
     return Results.Ok(messages.Select(MailEncryption.View).ToArray());
+});
+
+// A device can re-import mail after losing its local folder during the
+// recovery window. Archived bodies remain ciphertext and are tenant-scoped.
+authenticated.MapGet("/mail/messages/archived", async (
+    int? skip, ClaimsPrincipal user, AppDb db, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    if (skip is < 0 or > MailInboxPolicy.MaxRetainedMessages)
+        return Results.BadRequest(new { error = "Invalid archive offset." });
+    var mails = await db.EncryptedInboundMails.AsNoTracking()
+        .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null)
+        .OrderBy(x => x.Id).Skip(skip ?? 0).Take(50).ToListAsync(ct);
+    return Results.Ok(mails.Select(MailEncryption.View).ToArray());
 });
 
 authenticated.MapDelete("/mail/messages/{messageId:guid}", async (Guid messageId,
@@ -620,8 +654,14 @@ authenticated.MapDelete("/mail/messages/{messageId:guid}", async (Guid messageId
     var message = await db.EncryptedInboundMails.SingleOrDefaultAsync(x =>
         x.Id == messageId && x.AccountId == id.Value, ct);
     if (message is null) return Results.NoContent(); // Retry after ACK is safe.
-    db.EncryptedInboundMails.Remove(message);
-    await db.SaveChangesAsync(ct);
+    // Do NOT erase a message merely because it was written to a local disk.
+    // The Syncthing/Git replicas may still be offline. Acknowledgement moves
+    // it into the recoverable encrypted archive, without changing ciphertext.
+    if (message.AcknowledgedUtc is null)
+    {
+        message.AcknowledgedUtc = clock.GetUtcNow();
+        await db.SaveChangesAsync(ct);
+    }
     return Results.NoContent();
 });
 
@@ -687,7 +727,10 @@ app.MapPost("/internal/mail/receive", async (
     var messages = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == account.Id)
         .Select(x => x.ReceivedUtc).ToListAsync(ct);
-    if (messages.Count >= MailInboxPolicy.MaxPendingMessages ||
+    if (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
+        await db.EncryptedInboundMails.CountAsync(x =>
+            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct)
+            >= MailInboxPolicy.MaxPendingMessages ||
         messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
         return Results.StatusCode(429);
     EncryptedInboundMail encrypted;
