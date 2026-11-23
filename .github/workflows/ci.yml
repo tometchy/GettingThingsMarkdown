@@ -103,6 +103,11 @@ jobs:
           helm lint infrastructure/helm/gtm-controlplane
           helm template gtm infrastructure/helm/gtm-controlplane > /tmp/gtm-helm-manifest.yaml
           grep -q 'kind: Deployment' /tmp/gtm-helm-manifest.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set billing.existingSecret=ci-billing \
+            --set mail.existingSecret=ci-mail > /tmp/gtm-helm-with-billing.yaml
+          grep -q 'GTM_STRIPE_PRICE_BASIC_YEAR' /tmp/gtm-helm-with-billing.yaml
+          grep -q 'GTM_SMTP_PASSWORD' /tmp/gtm-helm-with-billing.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0

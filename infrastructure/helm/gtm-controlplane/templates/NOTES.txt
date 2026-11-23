@@ -9,3 +9,8 @@ cert-manager ClusterIssuer only after reviewing network + TLS policies.
 {{- end }}
 Tenant image pulls require an appropriate image registry and imagePullSecrets.
 Do not accept production users until E2EE, quotas and backups are verified.
+
+Before commercial launch, configure mail.existingSecret and billing.existingSecret.
+The startup refuses Production without SMTP so that unpaid trial account spam
+cannot allocate tenant resources. Subscription Checkout fails closed until
+matching Stripe recurring Price IDs are configured (all six USD values).
