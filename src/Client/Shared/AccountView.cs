@@ -71,7 +71,7 @@ public sealed class AccountView : UserControl
             "Plus · 75 GiB · $5.99/mo",
             "Pro · 500 GiB · $24.99/mo"
         };
-        _billingInterval.ItemsSource = new[] { "Miesięcznie · Monthly", "Rocznie · Annual (-20–25%)" };
+        _billingInterval.ItemsSource = new[] { "Miesięcznie · Monthly", "Rocznie · Annual (-17–25%)" };
         _billingInterval.SelectedIndex = 0;
         _plan.SelectedIndex = 0;
 

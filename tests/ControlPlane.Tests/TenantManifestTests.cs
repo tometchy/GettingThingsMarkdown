@@ -125,6 +125,24 @@ public class TenantManifestTests
             .GetProperty("whenUnsatisfiable").GetString());
     }
 
+    [Theory]
+    [InlineData("basic", "25m", "128Mi")]
+    [InlineData("plus", "25m", "192Mi")]
+    [InlineData("pro", "100m", "256Mi")]
+    public void PerPlanResourcesHaveLowIdleRequestsButSafeBurstLimits(
+        string plan, string cpu, string memory)
+    {
+        var id = Guid.NewGuid();
+        var set = TenantManifests.Build(id, plan, 2, null, "sync", "history")
+            .Single(x => x.Kind == "StatefulSet" && x.Name == "sync");
+        using var json = JsonDocument.Parse(set.Json);
+        var resources = json.RootElement.GetProperty("spec").GetProperty("template")
+            .GetProperty("spec").GetProperty("containers")[0].GetProperty("resources");
+        Assert.Equal(cpu, resources.GetProperty("requests").GetProperty("cpu").GetString());
+        Assert.Equal(memory, resources.GetProperty("requests").GetProperty("memory").GetString());
+        Assert.Equal("1", resources.GetProperty("limits").GetProperty("cpu").GetString());
+    }
+
     [Fact]
     public void S3OffloadIsOptionalAndDoesNotExposeKeysToSync()
     {

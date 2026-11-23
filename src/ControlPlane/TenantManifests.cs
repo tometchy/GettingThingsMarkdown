@@ -221,7 +221,12 @@ public static class TenantManifests
                                 name = role, image = role == "sync" ? syncImage : historyImage,
                                 imagePullPolicy = "IfNotPresent",
                                 env, volumeMounts = mounts,
-                                resources = new { requests = new { cpu = "100m", memory = "256Mi" },
+                                resources = new { requests = new {
+                                    // Burst-aware reservation: not a CPU usage cap.
+                                    // Requires production load testing at realistic tenant density.
+                                    cpu = plan == "pro" ? "100m" : "25m",
+                                    memory = plan == "basic" ? "128Mi" :
+                                             plan == "plus" ? "192Mi" : "256Mi" },
                                     limits = new { cpu = "1", memory = "1Gi" } },
                                 ports = role == "sync"
                                     ? new[] { new { name = "api", containerPort = 8384 }, new { name = "tcp", containerPort = 22000 } }
