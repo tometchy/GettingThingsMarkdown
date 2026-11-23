@@ -93,7 +93,7 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/api/plans", () => Results.Ok(PlanCatalog.Tiers.Values.Select(p =>
     new { id = p.Id, name = p.Name, quotaBytes = p.QuotaBytes,
         currency = "usd", monthlyCents = p.MonthlyUsdCents,
-        annualCents = p.AnnualUsdCents, trialDays = 30 })));
+        annualCents = p.AnnualUsdCents, trialMonths = 1 })));
 
 app.MapPost("/api/auth/register", async (RegisterRequest input, AppDb db,
     IPasswordHasher<Account> hasher, TokenService tokens, CancellationToken ct) =>

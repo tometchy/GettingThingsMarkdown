@@ -35,6 +35,7 @@ class StorageEconomics:
     cpu_request_per_pod_cores: float = 0.10
     ram_request_per_pod_gib: float = 0.25
     controlplane_cost_eur: float = 30.0
+    usd_to_eur: float = 0.9093  # Nov 23 indicative rate; adjustable in stress tests
 
     def fleet(self, customers: int, storage_gib: int, gross_eur: float) -> dict[str, float]:
         """Finite fleet, *two* pods per tenant and a minimum of two physical hosts.
@@ -79,6 +80,69 @@ class StorageEconomics:
             "total_cost_eur": round(monthly_cost, 2),
             "monthly_profit_eur": round(net_revenue - monthly_cost, 2),
             "margin": round((net_revenue - monthly_cost) / net_revenue, 3),
+        }
+
+    def mixed_fleet(self, mini: int, plus: int, pro: int,
+                    annual_share: float = 0.0) -> dict[str, float]:
+        """Worst case: every account uses all advertised GiB quota.
+        Costs in EUR, gross prices in USD, with FX and buyer VAT modeled.
+        Two resident pods per account on at least two independent HDD nodes.
+        """
+        if min(mini, plus, pro) < 0 or mini + plus + pro < 1:
+            raise ValueError("Provide at least one nonnegative tenant count.")
+        if not 0 <= annual_share <= 1:
+            raise ValueError("Annual share must be 0..1.")
+        if self.usd_to_eur <= 0:
+            raise ValueError("USD/EUR rate must be positive.")
+        tiers = {
+            "basic": (mini, 10, 1.99, 1.49, .025, .125),
+            "plus": (plus, 75, 5.99, 4.99, .025, .1875),
+            "pro": (pro, 500, 24.99, 19.99, .100, .250)
+        }
+        customers = mini + plus + pro
+        gib = sum(n * quota for n, quota, _, _, _, _ in tiers.values())
+        history_tb = gib * GIB_IN_GB / 1000 * self.history_multiplier
+        cpu = sum(n * 2 * cores for n, _, _, _, cores, _ in tiers.values())
+        ram = sum(n * 2 * memory for n, _, _, _, _, memory in tiers.values())
+        nodes = max(
+            2,
+            math.ceil(cpu / (self.hdd_node_cpu_cores * self.schedulable_cpu_fraction)),
+            math.ceil(ram / (self.hdd_node_ram_gib * self.schedulable_ram_fraction)),
+            math.ceil(gib * GIB_IN_GB / 1000 /
+                (self.hdd_usable_tb_before_reserve * self.utilization))
+        )
+        net_revenue = 0.0
+        payment = 0.0
+        for n, _, monthly, annually_equivalent, _, _ in tiers.values():
+            monthly_share = 1 - annual_share
+            gross_usd = n * (monthly * monthly_share +
+                             annually_equivalent * annual_share)
+            net_revenue += gross_usd * self.usd_to_eur / (1 + self.vat)
+            # The fixed card fee for annual contracts is amortized over 12
+            # months; annual money is received upfront, this is accrual.
+            payment += n * (self.payment_fixed_eur *
+                            (monthly_share + annual_share / 12))
+            payment += gross_usd * self.usd_to_eur * self.payment_variable
+
+        # StorageBox capacities are billed per whole 10TB box. These are not
+        # WORM buckets themselves; provider-compatible WORM cost needs pricing.
+        boxes = max(1, math.ceil(history_tb / 10))
+        cost = nodes * self.hdd_node_eur +                max(1, history_tb) * self.archive_eur_per_tb +                boxes * self.backup_box_eur_per_10tb +                customers * self.monitoring_support_eur_per_tenant +                payment + self.controlplane_cost_eur
+        return {
+            "users": customers,
+            "mini": mini,
+            "plus": plus,
+            "pro": pro,
+            "nodes": nodes,
+            "history_tb": round(history_tb, 2),
+            "gross_sales_usd_equivalent": round(
+                sum(n * (monthly * (1 - annual_share) +
+                         annually_equivalent * annual_share)
+                    for n, _, monthly, annually_equivalent, _, _ in tiers.values()), 2),
+            "net_revenue_eur": round(net_revenue, 2),
+            "cost_eur": round(cost, 2),
+            "profit_eur": round(net_revenue - cost, 2),
+            "margin": round((net_revenue - cost) / net_revenue, 3)
         }
 
     def model(self, storage_gib: int, gross_eur: float) -> dict[str, float]:
@@ -157,6 +221,20 @@ def main() -> None:
                   f"{result['workers']} workers, "
                   f"EUR {result['monthly_profit_eur']:8.2f} profit/mo, "
                   f"{100*result['margin']:5.1f}% margin")
+    print("\nSuggested public offers, gross USD/month (yearly effective in parentheses):")
+    for name, gb, monthly, yearly in [
+        ("mini", 10, 1.99, 1.49), ("plus", 75, 5.99, 4.99),
+        ("pro", 500, 24.99, 19.99)
+    ]:
+        print(f"{name:5}: {gb:>3} GiB for ${monthly:5.2f}/month "
+              f"(${yearly:5.2f}/month paid annually)")
+    print("\nBlended tenant stress scenario: 20% Mini, 60% Plus, 20% Pro")
+    for count in (20, 50, 100, 150, 300, 500, 1000):
+        n_mini, n_plus = count // 5, count * 3 // 5
+        n_pro = count - n_mini - n_plus
+        r = economy.mixed_fleet(n_mini, n_plus, n_pro)
+        print(f"{count:4} accounts: {r['nodes']:2} workers, "
+              f"EUR {r['profit_eur']:8.2f}/month, {100*r['margin']:5.1f}% margin")
     print("IMPORTANT: not validated against real provider invoices, subscriptions,")
     print("backup versions retained >30 days, refunds, heavy churn or load tests.")
 

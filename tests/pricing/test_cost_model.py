@@ -52,6 +52,30 @@ class TestUnitEconomics(unittest.TestCase):
         self.assertLess(heavy.fleet(150, 200, 15.99)["margin"],
                         baseline.fleet(150, 200, 15.99)["margin"])
 
+    def test_three_tier_blend_not_profitable_at_tiny_scale(self):
+        e = model.StorageEconomics()
+        tiny = e.mixed_fleet(10, 30, 10)
+        self.assertLess(tiny["profit_eur"], 0)
+
+    def test_three_tier_blend_contribution_positive_but_not_guaranteed(self):
+        e = model.StorageEconomics()
+        spread = e.mixed_fleet(100, 300, 100)
+        self.assertGreater(spread["profit_eur"], 0)
+        self.assertLess(spread["margin"], .30)
+        self.assertEqual(spread["nodes"], 8)
+
+    def test_annual_discount_does_not_improve_revenue(self):
+        e = model.StorageEconomics()
+        monthly = e.mixed_fleet(100, 300, 100, annual_share=0)
+        yearly = e.mixed_fleet(100, 300, 100, annual_share=1)
+        self.assertLess(yearly["net_revenue_eur"], monthly["net_revenue_eur"])
+
+    def test_expensive_storage_churn_worsens_blend(self):
+        e1 = model.StorageEconomics()
+        e2 = model.StorageEconomics(history_multiplier=3, utilization=.4)
+        self.assertLess(e2.mixed_fleet(100, 300, 100)["margin"],
+                        e1.mixed_fleet(100, 300, 100)["margin"])
+
     def test_invalid_assumptions_fail(self):
         with self.assertRaises(ValueError):
             model.StorageEconomics(utilization=0).model(200, 9.99)

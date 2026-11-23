@@ -102,6 +102,22 @@ public sealed class AccountView : UserControl
             Render();
         });
         _language.Click += (_, _) => { _polish = !_polish; Render(); };
+        _billingInterval.SelectionChanged += (_, _) =>
+        {
+            var current = _plan.SelectedIndex;
+            _plan.ItemsSource = BillingInterval == "year"
+                ? new[] {
+                    "Mini · 10 GiB · $17.88/year",
+                    "Plus · 75 GiB · $59.88/year",
+                    "Pro · 500 GiB · $239.88/year"
+                }
+                : new[] {
+                    "Mini · 10 GiB · $1.99/mo",
+                    "Plus · 75 GiB · $5.99/mo",
+                    "Pro · 500 GiB · $24.99/mo"
+                };
+            _plan.SelectedIndex = current < 0 ? 0 : current;
+        };
         _tenantRefresh.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var tenant = await _api.TenantAsync();

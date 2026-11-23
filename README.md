@@ -81,6 +81,23 @@ Inspect `infrastructure/kubernetes/README.md`, `docs/desktop-e2ee.md`, `docs/aff
 
 `./dev.sh up` is intended to be re-runnable; `down` is non-destructive. Kind's storage is **not production-grade disaster recovery**.
 
+## Three consumer price tiers (USD, proposal, not active payments)
+
+| Tier | Live encrypted quota | Monthly | Yearly paid upfront | Effective monthly |
+|---|---:|---:|---:|---:|
+| Mini | 10 GiB | $1.99 | $17.88 | $1.49 |
+| Plus | 75 GiB | $5.99 | $59.88 | $4.99 |
+| Pro | 500 GiB | $24.99 | $239.88 | $19.99 |
+
+The original 15/200/1024 GiB allowances for **existing** accounts are
+preserved by an idempotent SQLite schema migration. Monthly/yearly checkout
+price IDs are validated server-side against Stripe's official USD amounts.
+More detail, operational caveats and actual profitability scenarios are in
+`docs/pricing.md` and `scripts/cost_model.py`. The reduced-volume plans
+cannot be sold as unlimited historical archive capacity; backup and Git
+retention costs scale with actual version history. No production Stripe
+prices have been activated.
+
 ## Payment configuration
 
 Stripe is **directly** integrated (not via EasyTools). To test real Stripe sandbox workflows, configure in the backend environment: `GTM_STRIPE_SECRET_KEY`, `GTM_STRIPE_WEBHOOK_SECRET`, `GTM_STRIPE_PRICE_BASIC`, `GTM_STRIPE_PRICE_PLUS`, `GTM_STRIPE_PRICE_PRO`, `GTM_PUBLIC_URL`. Never put production keys into repo, client, Docker image or CI logs. Webhook events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. Payment redirects alone never authorize access.
