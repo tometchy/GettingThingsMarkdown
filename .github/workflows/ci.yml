@@ -19,6 +19,7 @@ jobs:
       - run: dotnet restore tests/ControlPlane.Tests/ControlPlane.Tests.csproj
       - run: dotnet test tests/ControlPlane.Tests/ControlPlane.Tests.csproj --no-restore --configuration Release
       - run: dotnet build src/Client/Desktop/GettingThingsMarkdown.Client.Desktop.csproj --configuration Release
+      - run: dotnet build src/MailIngress/GettingThingsMarkdown.MailIngress.csproj --configuration Release
   browser:
     runs-on: ubuntu-latest
     steps:
@@ -47,6 +48,8 @@ jobs:
         run: bash tests/security/worm-fail-closed.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
+      - name: Build standalone shared SMTP gateway image
+        run: docker build -f src/MailIngress/Dockerfile -t gtm/mail-ingress:ci .
       - name: Build encrypted Sync/Git image
         run: docker build -f server/sync/Dockerfile -t gtm/sync:ci .
       - name: Build Gitea History image
@@ -112,6 +115,13 @@ jobs:
             --set mail.existingSecret=ci-mail > /tmp/gtm-helm-with-billing.yaml
           grep -q 'GTM_STRIPE_PRICE_BASIC_YEAR' /tmp/gtm-helm-with-billing.yaml
           grep -q 'GTM_SMTP_PASSWORD' /tmp/gtm-helm-with-billing.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set mailIngress.enabled=true \
+            --set mailIngress.domain=inbox.example.test \
+            --set mailIngress.tlsSecret=existing-smtp-tls \
+            --set mailIngress.tokenSecret=existing-inbound-token > /tmp/gtm-mail.yaml
+          grep -q 'name: mail-ingress' /tmp/gtm-mail.yaml
+          grep -q 'GTM_INBOUND_MAIL_DOMAIN' /tmp/gtm-mail.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0
