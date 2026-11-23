@@ -33,6 +33,23 @@ HTTPS Gitea -> native offline decrypt have passed selected GitHub Actions jobs.
   post-expiry LFS garbage collection. Current 30-day WORM backup conflicts
   with this policy: do not enable it for production.
 
+## New full-Git direction
+
+- [x] New tenants default to **full local Git** without S3/LFS; when production-sized,
+  Sync PVC requests 3× plan GiB and Gitea/History PVC requests 2× to reserve
+  space for active encrypted data and independently complete Git history.
+  These are reserve assumptions; Git history must have an enforced cap.
+- [x] Admin-gift model: audited, optional free 1..1024 GiB bonus expiring in
+  1..30 days, visible in shared Avalonia account view and editable from
+  administrator page; existing paid plan and Stripe price are unchanged.
+- [ ] Test no-LFS recovery of both pods from one surviving provider, with
+  complete Git refs and encrypted service secrets.
+- [ ] Existing LFS tenants need validated `git lfs migrate export` and
+  cross-provider verification before turning off legacy LFS; never silently
+  point new plain Git at LFS pointer-only history.
+- [ ] Physical quotas must include history and reserve space; currently
+  gift changes the declared PVC size, but does not enforce a logical cap.
+
 ## Release acceptance checks
 
 - [x] Backend with 1-month trial, admin extension, Stripe test-mode Checkout

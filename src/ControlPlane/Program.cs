@@ -106,6 +106,13 @@ using (var scope = app.Services.CreateScope())
         await accountsDb.Database.ExecuteSqlRawAsync(
             "UPDATE Accounts SET EmailVerifiedUtc = CreatedUtc WHERE EmailVerifiedUtc IS NULL");
     }
+    // Idempotent migration of optional, expiring bonus quota; old users start
+    // with zero gift. Never alter their existing base allowance.
+    foreach (var field in new[] { ("GiftQuotaGiB", "INTEGER NOT NULL DEFAULT 0"),
+                                  ("GiftQuotaExpiresUtc", "TEXT") })
+        if (!columns.Contains(field.Item1))
+            await accountsDb.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE Accounts ADD COLUMN {field.Item1} {field.Item2}");
     foreach (var field in new[] {
         ("VerificationTokenHash", "TEXT"), ("VerificationExpiresUtc", "TEXT"),
         ("VerificationSentUtc", "TEXT") })
@@ -424,6 +431,45 @@ app.MapPost("/api/admin/accounts/{id:guid}/extend-trial", async (
         OccurredUtc = now,
         Details = $"days={request.Days};before={before:O};after={account.TrialUntilUtc:O};reason={request.Reason?.Replace(';', ',').Substring(0, Math.Min(request.Reason.Length, 120))}"
     });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(PlanCatalog.View(account, now));
+});
+
+// A temporary discretionary capacity gift is independent of the Stripe price,
+// must be audited and never rewrites a paid plan or the original quota.
+app.MapPost("/api/admin/accounts/{id:guid}/temporary-quota", async (
+    Guid id, TemporaryQuotaRequest request, HttpContext context,
+    AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    if (request.ExtraGiB is < 1 or > TemporaryQuotaPolicy.MaxGiftGiB ||
+        request.Days is < 1 or > TemporaryQuotaPolicy.MaxDays ||
+        string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 200)
+        return Results.BadRequest(new { error = "Provide 1..1024 GiB, 1..30 days and a reason (max 200 chars)." });
+    var account = await db.Accounts.FindAsync([id], ct);
+    if (account is null) return Results.NotFound();
+    var now = clock.GetUtcNow();
+    try { TemporaryQuotaPolicy.Grant(account, request.ExtraGiB, request.Days, now); }
+    catch (ArgumentOutOfRangeException) { return Results.BadRequest(new { error = "Invalid quota allowance." }); }
+    db.Audit.Add(new AuditEntry {
+        AccountId = id, Action = "temporary-quota-granted", Actor = "admin-token",
+        OccurredUtc = now, Details = $"extraGiB={request.ExtraGiB};days={request.Days};until={account.GiftQuotaExpiresUtc:O};reason={request.Reason.Replace(';', ',')}"
+    });
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(PlanCatalog.View(account, now));
+});
+
+app.MapDelete("/api/admin/accounts/{id:guid}/temporary-quota", async (
+    Guid id, HttpContext context, AppDb db, CancellationToken ct) =>
+{
+    if (!AdminSecurity.IsAuthorized(context, builder.Configuration)) return Results.Unauthorized();
+    var account = await db.Accounts.FindAsync([id], ct);
+    if (account is null) return Results.NotFound();
+    var now = clock.GetUtcNow();
+    db.Audit.Add(new AuditEntry { AccountId = id, Action = "temporary-quota-revoked",
+        Actor = "admin-token", OccurredUtc = now,
+        Details = $"previousGiB={account.GiftQuotaGiB};previousUntil={account.GiftQuotaExpiresUtc:O}" });
+    TemporaryQuotaPolicy.Revoke(account);
     await db.SaveChangesAsync(ct);
     return Results.Ok(PlanCatalog.View(account, now));
 });

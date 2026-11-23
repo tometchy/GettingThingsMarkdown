@@ -27,11 +27,13 @@ public static class TenantManifests
             throw new ArgumentOutOfRangeException(nameof(quotaGiBOverride));
         int baseGiB = devVolumeGi > 0 ? devVolumeGi :
             quotaGiBOverride ?? checked((int)(PlanCatalog.Quotas[plan] / (1024L * 1024 * 1024)));
-        // Retain the *complete encrypted LFS cache* on A even after successful
-        // push to B/S3. This is a capacity reservation, NOT history quota
-        // enforcement: an unbounded version log can still exceed 2x.
-        string size = baseGiB + "Gi";
-        string syncHistorySize = checked(baseGiB * 2) + "Gi";
+        // Full encrypted Git (no LFS): A keeps current Syncthing ciphertext
+        // PLUS Git archive; B keeps the entire bare Git archive. Storage must
+        // be provisioned for both and measured. Unbounded history remains a
+        // separate *unimplemented* byte quota/garbage-collection challenge.
+        string syncSize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 3)) + "Gi";
+        string historySize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 2)) + "Gi";
+        string legacyLfsSyncSize = checked(baseGiB * 2) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
             apiVersion = "v1", kind = "Namespace",
@@ -57,7 +59,7 @@ public static class TenantManifests
                 ["resources"] = new { requests = new Dictionary<string, string> {
                     ["storage"] = lfsEnabled && role == "history"
                         ? (devVolumeGi > 0 ? "2Gi" : "8Gi")
-                        : lfsEnabled && role == "sync" ? syncHistorySize : size
+                        : lfsEnabled ? legacyLfsSyncSize : role == "sync" ? syncSize : historySize
                 } }
             };
             if (!string.IsNullOrWhiteSpace(storageClass))

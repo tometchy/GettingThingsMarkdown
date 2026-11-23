@@ -81,7 +81,21 @@ public class TenantManifestTests
         var production = TenantManifests.Build(id, "pro", 0, null, "sync", "history")
             .First(x => x.Kind == "PersistentVolumeClaim");
         Assert.Contains("2Gi", local.Json);
-        Assert.Contains("500Gi", production.Json);
+        Assert.Contains("1500Gi", production.Json);
+    }
+
+    [Fact]
+    public void FullGitReservesIndependentCompleteHistoryVolumes()
+    {
+        var id = Guid.NewGuid();
+        var manifests = TenantManifests.Build(id, "plus", 0, null, "sync", "history");
+        var pvcs = manifests.Where(m => m.Kind == "PersistentVolumeClaim").ToDictionary(m => m.Name);
+        Assert.Contains("225Gi", pvcs["sync-data"].Json);
+        Assert.Contains("150Gi", pvcs["history-data"].Json);
+        var sets = TenantManifests.Build(id, "basic", 0, null, "sync", "history")
+            .Where(m => m.Kind == "StatefulSet").ToDictionary(m => m.Name);
+        Assert.Contains("GTM_GIT_LFS_ENABLED", sets["sync"].Json);
+        Assert.Contains("\\\"false\\\"", sets["sync"].Json);
     }
 
     [Fact]
@@ -97,7 +111,7 @@ public class TenantManifestTests
         Assert.Contains("150Gi", pvcs["sync-data"].Json);
         var noLfs = TenantManifests.Build(id, "plus", 0, null, "sync", "history")
             .Single(x => x.Kind == "PersistentVolumeClaim" && x.Name == "history-data");
-        Assert.Contains("75Gi", noLfs.Json);
+        Assert.Contains("150Gi", noLfs.Json);
     }
 
     [Fact]

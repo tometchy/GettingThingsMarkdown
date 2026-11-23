@@ -358,6 +358,11 @@ public sealed class AccountView : UserControl
             ? T("Zaloguj się lub utwórz konto.", "Sign in or create an account.")
             : $"{_current.Email}\n{T("Plan", "Plan")}: {_current.Plan}\n" +
               $"{T("Uprawnienia", "Entitlement")}: {_current.Entitlement}\n" +
+              $"{T("Limit", "Quota")}: {_current.QuotaBytes / (1024.0 * 1024 * 1024):0.#} GiB\n" +
+              (_current.GiftQuotaBytes > 0 ?
+                  $"{T("Dodatkowy limit od administratora", "Admin bonus quota")}: {_current.GiftQuotaBytes / (1024.0 * 1024 * 1024):0.#} GiB {T("do", "until")} {_current.GiftQuotaExpiresUtc?.ToLocalTime():yyyy-MM-dd}\n" : "") +
+              T("Jeżeli usunięty plik zajmuje miejsce w historii, skontaktuj się z pomocą — administrator może czasowo zwiększyć limit bez opłat.\n",
+                "If a deleted file still uses history space, contact support for a temporary free storage allowance.\n") +
               (_current.EmailVerified ? $"{T("Trial do", "Trial ends")}: {_current.TrialUntilUtc.ToLocalTime():yyyy-MM-dd}\n" : T("Potwierdź e-mail przed rozpoczęciem triala.\n", "Verify your email to start the trial.\n")) +
               $"{T("Dostęp do zapisu", "Write access")}: {_current.CanWrite}\n" +
               $"{T("E-mail potwierdzony", "Email verified")}: {_current.EmailVerified}";

@@ -41,6 +41,10 @@ public sealed class LegacyQuotaMigrationTests
                 // Simulate a valid historical app schema before the new column existed.
                 await db.Database.ExecuteSqlRawAsync(
                     "ALTER TABLE Accounts DROP COLUMN QuotaOverrideBytes");
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE Accounts DROP COLUMN GiftQuotaGiB");
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE Accounts DROP COLUMN GiftQuotaExpiresUtc");
             }
             Environment.SetEnvironmentVariable("GTM_DB", "Data Source=" + file);
             Environment.SetEnvironmentVariable("GTM_PROVISIONING_DB", "Data Source=" + provFile);

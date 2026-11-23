@@ -63,6 +63,23 @@ public sealed class RegistrationTests
             Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
             var extended = await granted.Content.ReadFromJsonAsync<AccountView>();
             Assert.True(extended!.TrialUntilUtc > own.TrialUntilUtc.AddDays(4));
+            var giftResponse = await client.PostAsJsonAsync(
+                $"/api/admin/accounts/{own.Id}/temporary-quota",
+                new { extraGiB = 1, days = 7, reason = "accidental large upload" });
+            Assert.Equal(HttpStatusCode.OK, giftResponse.StatusCode);
+            var gifted = await giftResponse.Content.ReadFromJsonAsync<AccountView>();
+            Assert.NotNull(gifted);
+            Assert.Equal(76L * 1024 * 1024 * 1024, gifted.QuotaBytes);
+            Assert.Equal(1L * 1024 * 1024 * 1024, gifted.GiftQuotaBytes);
+            Assert.True(gifted.GiftQuotaExpiresUtc > DateTimeOffset.UtcNow.AddDays(6));
+            var invalid = await client.PostAsJsonAsync(
+                $"/api/admin/accounts/{own.Id}/temporary-quota",
+                new { extraGiB = 9999, days = 365, reason = "not allowed" });
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            var canceled = await client.DeleteAsync($"/api/admin/accounts/{own.Id}/temporary-quota");
+            Assert.Equal(HttpStatusCode.OK, canceled.StatusCode);
+            Assert.Equal(75L * 1024 * 1024 * 1024,
+                (await canceled.Content.ReadFromJsonAsync<AccountView>())!.QuotaBytes);
         }
         finally
         {

@@ -125,8 +125,7 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-            account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"])
             .Where(x => x.Kind == "PersistentVolumeClaim");
@@ -157,8 +156,7 @@ public sealed class ProvisioningWorker(
             config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
             config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
             config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-            account.QuotaOverrideBytes is long oldQuota
-                ? checked((int)(oldQuota / (1024L * 1024 * 1024))) : null,
+            PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"]).ToList();
         await kube.ApplyAsync(declarations[0], ct);
@@ -172,8 +170,7 @@ public sealed class ProvisioningWorker(
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-                account.QuotaOverrideBytes is long initialQuota
-                    ? checked((int)(initialQuota / (1024L * 1024 * 1024))) : null,
+                PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
                 config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"]);
             await kube.ApplyAsync(initial.Single(x => x.Kind == "Secret"), ct);
@@ -191,8 +188,7 @@ public sealed class ProvisioningWorker(
                 config.GetValue<bool>("GTM_GIT_LFS_ENABLED"),
                 config.GetValue<bool>("GTM_WORM_BACKUP_ENABLED"),
                 config["GTM_SYNC_STORAGE_CLASS"], config["GTM_HISTORY_STORAGE_CLASS"],
-                account.QuotaOverrideBytes is long previous
-                    ? checked((int)(previous / (1024L * 1024 * 1024))) : null,
+                PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
                 config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"]);
             await kube.ApplyAsync(migration.Single(x => x.Kind == "Secret"), ct);
