@@ -18,6 +18,7 @@ while :; do
       if ! git push origin HEAD:refs/heads/main; then
         echo "Git HTTPS push pending; retry on next cycle" >&2
       else
+        : # Intentionally retain every local encrypted Git LFS object.
         # DO NOT prune the local Git LFS objects. The second cloud's
         # Gitea stores pointers while opaque LFS bytes live in S3. Local
         # retained objects form the independent encrypted historical copy.
