@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Validate storage pricing assumptions
+        run: python3 -m unittest discover -s tests/pricing -p 'test_*.py' -v
       - name: Validate local scripts
         run: |
           bash -n dev.sh tests/integration/kind-smoke.sh packaging/linux/bundle-syncthing.sh
