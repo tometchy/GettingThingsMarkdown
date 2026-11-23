@@ -164,3 +164,22 @@ with node CPU capacity and real utilization. It is **not correct to sell
 
 No prices have been changed in Stripe. Only an actual load test, hardware
 quote and provider invoice can establish a defensible commercial price.
+
+## Current offer replaces earlier illustrations
+
+The scenarios elsewhere in this document mentioning €3.99/€9.99/€39.99
+and 15/200/1024 GiB are historical comparisons. They **are not** public
+plans and must not be copied into Stripe. The new proposed actual catalog is
+10 GiB at $1.99/mo, 75 GiB at $5.99/mo, and 500 GiB at $24.99/mo;
+annually $17.88/$59.88/$239.88. Refer to `docs/pricing.md`.
+
+The `mixed_fleet` scenario uses a plausible but unverified mix of
+20% Mini, 60% Plus, 20% Pro, two pod requests per tenant and indicative
+USD-to-EUR rate 0.9093 as at November 23, 2026. Under these assumptions,
+50 customers lose money because two always-on HDD workers and shared
+control-plane dominate. At 100 clients contribution is only slightly positive;
+at 500 clients simulated gross contribution margin is about 19%. This is
+**before salaries, taxes on profit, unexpected bandwidth, abuse, refunds,
+contract downtime and full WORM retention costs**. Success in a calculation
+is not proof of sustainable SaaS margins. Perform physical workload and
+occupancy tests before quoting profits or charging users.

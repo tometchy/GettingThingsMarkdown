@@ -102,7 +102,9 @@ prices have been activated.
 
 Stripe is **directly** integrated (not via EasyTools). To test real Stripe sandbox workflows, configure in the backend environment: `GTM_STRIPE_SECRET_KEY`, `GTM_STRIPE_WEBHOOK_SECRET`, `GTM_STRIPE_PRICE_BASIC`, `GTM_STRIPE_PRICE_PLUS`, `GTM_STRIPE_PRICE_PRO`, `GTM_PUBLIC_URL`. Never put production keys into repo, client, Docker image or CI logs. Webhook events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. Payment redirects alone never authorize access.
 
-Before charging users, complete Stripe reconciliation, pricing/VAT, email verification, storage enforcement, cancellation and grace periods, and app-store billing policy validation.
+Before charging users, complete Stripe reconciliation, pricing/VAT, email verification, storage enforcement, cancellation and grace periods, and app-store billing policy validation. Existing subscriber quota migration is tested in `tests/ControlPlane.Tests/LegacyQuotaMigrationTests.cs`.
+
+`/api/plans` is the canonical machine-readable public catalog; the one-calendar-month trial is represented as `trialMonths=1`. Annual Checkout reuses the same account and API as monthly billing. Stripe checkout verifies live Price objects against the configured USD totals before redirecting.
 
 ## Release blockers
 
