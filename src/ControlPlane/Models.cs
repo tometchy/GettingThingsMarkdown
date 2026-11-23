@@ -13,6 +13,8 @@ public sealed class Account
     // Temporary administrator-granted relief; no payment or plan change.
     public int GiftQuotaGiB { get; set; }
     public DateTimeOffset? GiftQuotaExpiresUtc { get; set; }
+    // Incident hold applies to the entire tenant and can only be extended.
+    public DateTimeOffset? HistoryHoldUntilUtc { get; set; }
     public DateTimeOffset? EmailVerifiedUtc { get; set; }
     public string? VerificationTokenHash { get; set; }
     public DateTimeOffset? VerificationExpiresUtc { get; set; }
@@ -46,6 +48,7 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<AuditEntry> Audit => Set<AuditEntry>();
     public DbSet<HandledStripeEvent> HandledStripeEvents => Set<HandledStripeEvent>();
+    public DbSet<HistoryDeletionIntent> HistoryDeletionIntents => Set<HistoryDeletionIntent>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -54,6 +57,8 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
         model.Entity<Account>().HasIndex(x => x.StripeSubscriptionId).IsUnique();
         model.Entity<AuditEntry>().HasKey(x => x.Id);
         model.Entity<HandledStripeEvent>().HasKey(x => x.Id);
+        model.Entity<HistoryDeletionIntent>().HasKey(x => x.Id);
+        model.Entity<HistoryDeletionIntent>().HasIndex(x => new { x.AccountId, x.OpaquePath }).IsUnique();
     }
 }
 
