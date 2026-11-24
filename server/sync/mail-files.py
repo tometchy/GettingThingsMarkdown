@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private, ciphertext-only ingress to the existing tenant Git repository."""
-import hmac, http.server, json, os, pathlib, re, subprocess, tempfile
+import hmac, http.server, json, os, pathlib, re, subprocess, tempfile, sys
 
 ROOT = pathlib.Path(os.environ.get("GTM_MAIL_DATA_ROOT", "/data"))
 GIT = ROOT / "git"
@@ -16,7 +16,7 @@ def git(*args, data=None, index=None, check=True):
         env["GIT_SSL_CAINFO"] = "/tls/tls.crt"
     if index: env["GIT_INDEX_FILE"] = index
     return subprocess.run(["git", *args], input=data, env=env,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           check=check, timeout=90)
 
 def store_file(path, body, immutable=True):
@@ -42,6 +42,9 @@ def store_file(path, body, immutable=True):
             if parent_id: args += ["-p", parent_id]
             commit = git(*args).stdout.decode().strip()
             git("update-ref", REF, commit, parent_id or "0" * 40)
+    # Push the default branch first for a brand-new empty Gitea repository.
+    # A's main must exist even if no device has synced any notes yet.
+    git("push", "origin", "refs/heads/main:refs/heads/main")
     # No checkout and no writes to Syncthing. Only Git objects and the
     # separate ref are changed. SMTP is confirmed after the second replica.
     git("push", "origin", REF + ":" + REF)
@@ -78,19 +81,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-    def do_GET(self):
-        if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
-            self.send_error(403); return
-        match = re.fullmatch(r"/mail/([0-9A-Fa-f]{64})", self.path)
-        if not match:
-            self.send_error(404); return
-        try:
-            body = git("show", REF + ":.gtmd/inbox/" + match.group(1).lower() + ".json", check=False)
-            if body.returncode:
-                self.send_error(404); return
-            self.send_body(body.stdout)
-        except (OSError, subprocess.SubprocessError):
-            self.send_error(503)
     def do_POST(self):
         self.connection.settimeout(120)
         if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
@@ -116,7 +106,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not all(k in envelope for k in ("id","wrappedKey","nonce","tag","ciphertext","receivedUtc")):
                 raise ValueError("not an envelope")
             result = store(match.group(1).lower(), body)
-        except (ValueError, OSError, subprocess.SubprocessError):
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            # Log only the operation and exit status, never SMTP content,
+            # tenant paths, addresses, keys or subprocess arguments.
+            print('mail Git write failed:', type(exc).__name__,
+                  getattr(exc, 'returncode', ''), file=sys.stderr, flush=True)
             self.send_error(503); return
         self.send_body(result)
 

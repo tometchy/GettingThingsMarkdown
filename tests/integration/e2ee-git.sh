@@ -70,9 +70,9 @@ for _ in $(seq 1 90); do
   if kubectl -n "$ns" exec sync-0 -- \
       sh -c 'find /data/files -type f | grep -v .stfolder | grep -q .' >/dev/null 2>&1 && \
      kubectl -n "$ns" exec sync-0 -- \
-      env GIT_DIR=/data/git GIT_WORK_TREE=/data/files git rev-parse --verify HEAD >/dev/null 2>&1 && \
+      env GIT_DIR=/data/git GIT_WORK_TREE=/data/files sh -ec 'git ls-tree -r --name-only HEAD | grep -q .' >/dev/null 2>&1 && \
      kubectl -n "$ns" exec history-0 -- \
-      git --git-dir=/var/lib/gitea/git/repositories/archive/history.git rev-parse --verify main >/dev/null 2>&1; then
+      git --git-dir=/var/lib/gitea/git/repositories/archive/history.git ls-tree -r --name-only main | grep -q .; then
     succeeded=1; break
   fi
   sleep 3

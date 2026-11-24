@@ -24,6 +24,8 @@ public sealed class EncryptedInboundMail
     public byte[] Tag { get; set; } = [];
     public byte[] Ciphertext { get; set; } = [];
     public DateTimeOffset ReceivedUtc { get; set; }
+    // Git is authoritative; this row only accounts for SMTP retry/rate limits.
+    public bool StoredInGit { get; set; }
     // ACK is an import receipt, NOT permission to destroy the only queued copy.
     // ACK never authorizes deletion of user mail history.
     public DateTimeOffset? AcknowledgedUtc { get; set; }

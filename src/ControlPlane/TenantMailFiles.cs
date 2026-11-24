@@ -23,19 +23,6 @@ public static class TenantMailFiles
         result.EnsureSuccessStatusCode();
     }
 
-    public static async Task<MailEnvelope> FetchAsync(Guid accountId, string digest,
-        CancellationToken ct)
-    {
-        string ns = TenantNames.Namespace(accountId);
-        using var kube = new KubeApi();
-        var secrets = await kube.SecretAsync(ns, "gtm-credentials", ct)
-            ?? throw new InvalidOperationException("Tenant storage is not available.");
-        using var http = new HttpClient { BaseAddress = new Uri($"http://sync.{ns}.svc.cluster.local:8385/"),
-            Timeout = TimeSpan.FromSeconds(180) };
-        http.DefaultRequestHeaders.Add("X-API-Key", secrets["sync-api-key"]);
-        return await http.GetFromJsonAsync<MailEnvelope>("mail/" + digest, ct)
-            ?? throw new InvalidOperationException("Missing durable Git envelope.");
-    }
     public static async Task<MailEnvelope> PersistAsync(Guid accountId, string digest,
         MailEnvelope envelope, CancellationToken ct)
     {

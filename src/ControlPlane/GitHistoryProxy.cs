@@ -39,7 +39,7 @@ public sealed class GitHistoryProxy : IDisposable
             RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
 
     public Task<string> RecentCommitsAsync(CancellationToken ct) =>
-        GetAsync("api/v1/repos/archive/history/commits?page=1&limit=20", 2 * 1024 * 1024, ct);
+        GetAsync("api/v1/repos/archive/history/commits?sha=main&page=1&limit=20", 2 * 1024 * 1024, ct);
 
     public Task<string> TreeAsync(string sha, CancellationToken ct) =>
         ValidGitOid(sha) ? GetAsync("api/v1/repos/archive/history/git/trees/" + sha + "?recursive=true", 4 * 1024 * 1024, ct)

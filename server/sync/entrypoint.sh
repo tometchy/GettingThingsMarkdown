@@ -29,6 +29,11 @@ if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
   printf '%s\n' '* filter=lfs diff=lfs merge=lfs -text' > /data/git/info/attributes
 fi
 git config --local user.email 'archive@localhost.invalid'
+# Make the default branch available before receiving the first mail, even
+# if no client has paired yet. No files are added in this bootstrap commit.
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+  git commit -q --allow-empty -m 'Initialize encrypted archive'
+fi
 # Git's exclusion metadata lives outside the Syncthing folder.
 printf '%s\n' '.stfolder' '.stversions/' '.stignore' '.syncthing.*' > /data/git/info/exclude
 if git remote get-url origin >/dev/null 2>&1; then

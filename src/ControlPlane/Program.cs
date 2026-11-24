@@ -166,7 +166,8 @@ using (var scope = app.Services.CreateScope())
             "Tag" BLOB NOT NULL,
             "Ciphertext" BLOB NOT NULL,
             "ReceivedUtc" TEXT NOT NULL,
-            "AcknowledgedUtc" TEXT NULL
+            "AcknowledgedUtc" TEXT NULL,
+            "StoredInGit" INTEGER NOT NULL DEFAULT 0
         )
         """);
     await accountsDb.Database.ExecuteSqlRawAsync("""
@@ -175,18 +176,30 @@ using (var scope = app.Services.CreateScope())
         """);
     // Existing SQLite databases must retain queued encrypted mail when
     // introducing the non-destructive ACK and recovery archive.
-    bool hasMailAckColumn = false;
+    bool hasMailAckColumn = false, hasStoredInGitColumn = false;
     using (var inspect = connection.CreateCommand())
     {
         inspect.CommandText = "PRAGMA table_info('EncryptedInboundMails')";
         using var reader = await inspect.ExecuteReaderAsync();
         while (await reader.ReadAsync())
+        {
             hasMailAckColumn |= string.Equals(reader.GetString(1), "AcknowledgedUtc",
                 StringComparison.OrdinalIgnoreCase);
+            hasStoredInGitColumn |= string.Equals(reader.GetString(1), "StoredInGit",
+                StringComparison.OrdinalIgnoreCase);
+        }
     }
     if (!hasMailAckColumn)
         await accountsDb.Database.ExecuteSqlRawAsync(
             "ALTER TABLE EncryptedInboundMails ADD COLUMN AcknowledgedUtc TEXT NULL");
+    if (!hasStoredInGitColumn)
+    {
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "ALTER TABLE EncryptedInboundMails ADD COLUMN StoredInGit INTEGER NOT NULL DEFAULT 0");
+        // A previous draft stored Git-only rows with empty ciphertext.
+        await accountsDb.Database.ExecuteSqlRawAsync(
+            "UPDATE EncryptedInboundMails SET StoredInGit = 1 WHERE length(Ciphertext) = 0");
+    }
     await accountsDb.Database.CloseConnectionAsync();
     await scope.ServiceProvider.GetRequiredService<ProvisioningDb>().Database.EnsureCreatedAsync();
 }
@@ -563,7 +576,7 @@ authenticated.MapGet("/mail/inbox", async (ClaimsPrincipal user, AppDb db,
     if (inbox is null)
         return Results.Ok(new MailInboxView(false, "", 0, false));
     var pending = await db.EncryptedInboundMails.CountAsync(x =>
-        x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct);
+        x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct);
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain, pending, true));
 });
@@ -614,7 +627,7 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain,
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct),
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct),
         true));
 }).RequireRateLimiting("auth");
 
@@ -643,7 +656,7 @@ authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress req
     return Results.Ok(new MailInboxView(true,
         inbox.LocalPart + "@" + builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"],
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct), true));
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct), true));
 }).RequireRateLimiting("auth");
 
 // Discover new mail directly from the same tenant Git history used for notes.
@@ -702,7 +715,7 @@ authenticated.MapGet("/mail/messages", async (int? skip, ClaimsPrincipal user, A
         return Results.StatusCode(403);
     if (skip is < 0 or > MailInboxPolicy.MaxPendingMessages) return Results.BadRequest();
     var messages = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0)
+        .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit)
         .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
     return Results.Ok(messages.Select(MailEncryption.View).ToArray());
 });
@@ -717,7 +730,7 @@ authenticated.MapGet("/mail/messages/archived", async (
     if (skip is < 0)
         return Results.BadRequest(new { error = "Invalid archive offset." });
     var mails = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null && x.Ciphertext.Length > 0)
+        .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null && !x.StoredInGit)
         .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
     return Results.Ok(mails.Select(MailEncryption.View).ToArray());
 });
@@ -806,7 +819,7 @@ app.MapPost("/internal/mail/receive", async (
     bool gitBacked = builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED");
     if ((!gitBacked && (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct)
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct)
             >= MailInboxPolicy.MaxPendingMessages)) ||
         messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
         return Results.StatusCode(429);
@@ -833,6 +846,7 @@ app.MapPost("/internal/mail/receive", async (
             encrypted.Nonce = [];
             encrypted.Tag = [];
             encrypted.Ciphertext = [];
+            encrypted.StoredInGit = true;
             encrypted.ReceivedUtc = durable.ReceivedUtc;
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
@@ -979,9 +993,10 @@ app.MapGet("/api/admin/observability", async (
         .Where(a => a.HistoryHoldUntilUtc != null)
         .Select(a => a.HistoryHoldUntilUtc).ToListAsync(ct);
     var mail = await accounts.EncryptedInboundMails.AsNoTracking()
-        .Select(m => new { m.AccountId, m.ReceivedUtc, m.AcknowledgedUtc })
+        .Select(m => new { m.AccountId, m.ReceivedUtc, m.AcknowledgedUtc, m.StoredInGit })
         .ToListAsync(ct);
-    var mailPending = mail.Where(m => m.AcknowledgedUtc is null).ToList();
+    var legacyMail = mail.Where(m => !m.StoredInGit).ToList();
+    var mailPending = legacyMail.Where(m => m.AcknowledgedUtc is null).ToList();
     return Results.Ok(new {
         checkedUtc = now,
         accounts = await accounts.Accounts.CountAsync(ct),
@@ -997,13 +1012,14 @@ app.MapGet("/api/admin/observability", async (
             awaitingTrustedImport = mailPending.Count,
             oldestPendingHours = mailPending.Count == 0 ? (double?)null :
                 mailPending.Max(m => Math.Max(0, (now - m.ReceivedUtc).TotalHours)),
-            recoverableAfterImport = mail.Count(m => m.AcknowledgedUtc is not null),
-            accountsApproachingArchiveLimit = mail.GroupBy(m => m.AccountId)
+            recoverableAfterImport = legacyMail.Count(m => m.AcknowledgedUtc is not null),
+            gitMailReceipts = mail.Count(m => m.StoredInGit),
+            accountsApproachingArchiveLimit = legacyMail.GroupBy(m => m.AccountId)
                 .Count(g => g.Count() >= MailInboxPolicy.MaxRetainedMessages * 9 / 10),
             accountsAtPendingLimit = mailPending.GroupBy(m => m.AccountId)
                 .Count(g => g.Count() >= MailInboxPolicy.MaxPendingMessages),
             automaticMailExpiryEnabled = false,
-            queueIndependentlyReplicated = false
+            legacyQueueIndependentlyReplicated = false
         },
         historyProtection = new {
             pendingDeletionIntents = pendingTimes.Count,
