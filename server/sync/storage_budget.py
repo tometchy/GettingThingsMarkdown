@@ -37,6 +37,8 @@ def usage(root, limit, incoming=0):
     if live >= limit: reasons.append("live-limit")
     if history + projected >= history_limit: reasons.append("history-limit")
     if free - projected <= reserve: reasons.append("disk-reserve")
+    live_fs = os.statvfs(root / "files")
+    if live_fs.f_bavail * live_fs.f_frsize <= 0: reasons.append("live-volume-full")
     return dict(liveBytes=live, historyBytes=history, quotaBytes=limit,
         historyBudgetBytes=history_limit, freeBytes=free,
         reserveBytes=reserve, blocked=bool(reasons), reasons=reasons)

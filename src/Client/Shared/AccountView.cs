@@ -153,7 +153,7 @@ public sealed class AccountView : UserControl
                     $"{usage.LiveBytes/gib:0.##}/{usage.QuotaBytes/gib:0.##} GiB; " +
                     T("Historia: ", "History: ") +
                     $"{usage.HistoryBytes/gib:0.##}/{usage.HistoryBudgetBytes/gib:0.##} GiB" +
-                    (usage.Blocked ? T(" — limit przestrzeni", " — storage limit") : "");
+                    (usage.Blocked ? T(" — limit przestrzeni; nowe dane mogą nie zostać zapisane", " — storage limit; new writes may fail") : "");
             }
             catch (HttpRequestException) { _storageState.Text = T("Pomiar przestrzeni niedostępny", "Storage usage unavailable"); }
             _tenantState.Text = T("Serwer: ", "Server: ") + tenant.Status +

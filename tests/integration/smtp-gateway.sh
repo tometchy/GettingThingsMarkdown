@@ -69,4 +69,7 @@ cmp "$tmp/local.json" "$tmp/api.json"
 # No additional Syncthing mailbox peer or plaintext workspace injection.
 kubectl -n "$ns" exec sync-0 -- sh -ec 'test ! -e /data/mail-syncthing/config.xml; test ! -e /data/files/.gtmd/inbox'
 curl -fsS "$GTM_API_URL/api/mail/messages" -H "Authorization: Bearer $bearer" | jq -e 'length == 0' >/dev/null
+# Query the actual read-only account storage API. Fixed-length request bodies
+# are also used by the reconciler updating quota before SMTP delivery.
+curl -fsS "$GTM_API_URL/api/storage" -H "Authorization: Bearer $bearer" | jq -e '.quotaBytes > 0 and .historyBytes > 0' >/dev/null
 echo "PASS: SMTP STARTTLS -> both Git replicas -> authenticated read-only Git file (no mailbox peer or queue)"

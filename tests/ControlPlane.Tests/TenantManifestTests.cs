@@ -114,6 +114,29 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void IsolatedLiveVolumeKeepsTwoWorkloadsAndSameTotalReservation()
+    {
+        var manifests = TenantManifests.Build(Guid.NewGuid(), "plus", 0, null,
+            "sync", "history", isolatedLiveVolume: true).ToList();
+        var claims = manifests.Where(x => x.Kind == "PersistentVolumeClaim").ToDictionary(x => x.Name);
+        Assert.Equal(3, claims.Count);
+        Assert.Contains("75Gi", claims["sync-live"].Json);
+        Assert.Contains("150Gi", claims["sync-data"].Json);
+        Assert.Contains("150Gi", claims["history-data"].Json);
+        var workloads = manifests.Where(x => x.Kind == "StatefulSet").ToList();
+        Assert.Equal(2, workloads.Count);
+        using var sync = JsonDocument.Parse(workloads.Single(x => x.Name == "sync").Json);
+        var pod = sync.RootElement.GetProperty("spec").GetProperty("template").GetProperty("spec");
+        Assert.Contains(pod.GetProperty("containers")[0].GetProperty("volumeMounts").EnumerateArray(),
+            x => x.GetProperty("name").GetString() == "live" &&
+                 x.GetProperty("mountPath").GetString() == "/data/files");
+        Assert.Contains(pod.GetProperty("initContainers")[0].GetProperty("volumeMounts").EnumerateArray(),
+            x => x.GetProperty("name").GetString() == "live");
+        Assert.Throws<ArgumentException>(() => TenantManifests.Build(Guid.NewGuid(), "plus", 0, null,
+            "sync", "history", lfsEnabled: true, isolatedLiveVolume: true).ToList());
+    }
+
+    [Fact]
     public void FullGitReservesIndependentCompleteHistoryVolumes()
     {
         var id = Guid.NewGuid();

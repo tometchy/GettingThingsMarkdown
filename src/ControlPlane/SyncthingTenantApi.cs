@@ -73,6 +73,28 @@ public sealed class SyncthingTenantApi : IDisposable
         save.EnsureSuccessStatusCode();
     }
 
+    // Filesystem allocation rejects new writes without deliberately pausing
+    // the folder. Separate live capacity keeps metadata and Git space available.
+    public async Task ConfigureStoragePolicyAsync(bool isolatedLiveVolume, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("rest/config/folders/" + TenantNames.FolderId, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
+        var folder = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))!.AsObject();
+        if (folder["type"]?.ToString() != "receiveencrypted")
+            throw new InvalidOperationException("Refusing to alter a non-encrypted folder.");
+        bool changed = folder["paused"]?.GetValue<bool>() == true;
+        folder["paused"] = false;
+        if (isolatedLiveVolume && (folder["minDiskFree"]?["value"]?.GetValue<double>() != 0))
+        {
+            folder["minDiskFree"] = new JsonObject { ["value"] = 0, ["unit"] = "%" };
+            changed = true;
+        }
+        if (!changed) return;
+        using var save = await _http.PutAsJsonAsync("rest/config/folders/" + TenantNames.FolderId, folder, ct);
+        save.EnsureSuccessStatusCode();
+    }
+
     public async Task SetFolderPausedAsync(bool paused, CancellationToken ct)
     {
         using var response = await _http.GetAsync(

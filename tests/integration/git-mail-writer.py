@@ -45,6 +45,18 @@ class GitMailWriterTests(unittest.TestCase):
             self.assertEqual(list(work.iterdir()), [work / "opaque"])
             self.assertEqual((work / "opaque").read_bytes(), b"original notes")
             self.assertEqual(git("status", "--porcelain"), b"")
+            # An already accepted message can retry even above rate/quota.
+            from unittest.mock import patch
+            original_git = writer.git
+            def full_rate(*args, **kwargs):
+                if args[0] == "rev-list":
+                    return subprocess.CompletedProcess(args, 0, b"x\n" * 100, b"")
+                return original_git(*args, **kwargs)
+            with patch.object(writer, "git", side_effect=full_rate):
+                self.assertEqual(writer.store(digest, b"retry again"), payload)
+                with self.assertRaises(writer.RateExceeded):
+                    writer.store("b"*64, b"new message")
+            self.assertEqual(first, git("rev-parse", "gtm-mail"))
 
 if __name__ == "__main__":
     unittest.main()

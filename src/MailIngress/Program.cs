@@ -105,6 +105,7 @@ internal sealed class IngressMailStore(HttpClient api) : MessageStore
                 return SmtpResponse.MailboxUnavailable;
             if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)
                 return SmtpResponse.SizeLimitExceeded;
+            Console.Error.WriteLine($"SMTP durable delivery not accepted: HTTP {(int)response.StatusCode}");
             // Do not confirm SMTP DATA unless encrypted bytes are committed.
             // 4xx causes senders to retry on temporary storage/rate failures.
             return new SmtpResponse(SmtpReplyCode.Aborted,

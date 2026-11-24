@@ -90,13 +90,17 @@ public sealed class ProvisioningWorker(
                         {
                             await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, now), ct);
                             var usage = await storage.UsageAsync(ct);
-                            await sync.SetFolderPausedAsync(usage.Blocked, ct);
+                            if (usage.Blocked)
+                                logger.LogWarning("Tenant storage limit reached for {Namespace}; no folder-wide pause", state.Namespace);
                         }
                         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
                         {
-                            await sync.SetFolderPausedAsync(true, ct);
-                            logger.LogWarning("Tenant storage unavailable; sync paused for {Namespace}", state.Namespace);
+                            logger.LogWarning("Tenant storage meter unavailable for {Namespace}; filesystem capacity remains the safety boundary", state.Namespace);
                         }
+                        // Unpause accounts paused by the previous quota policy.
+                        // Expired subscriptions never reach this code.
+                        await sync.ConfigureStoragePolicyAsync(
+                            await IsolatedLiveVolumeAsync(kube, state.Namespace, ct), ct);
                         _lastUsageCheck[account.Id] = now;
                     }
                     continue;
@@ -114,8 +118,9 @@ public sealed class ProvisioningWorker(
                     if (resuming)
                     {
                         using var storage = new TenantStorage(state.Namespace, secret["sync-api-key"]);
-                        await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, DateTimeOffset.UtcNow), ct);
-                        await sync.SetFolderPausedAsync((await storage.UsageAsync(ct)).Blocked, ct);
+                        try { await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, DateTimeOffset.UtcNow), ct); }
+                        catch (HttpRequestException) { logger.LogWarning("Quota update pending for {Namespace}", state.Namespace); }
+                        await sync.ConfigureStoragePolicyAsync(await IsolatedLiveVolumeAsync(kube, state.Namespace, ct), ct);
                     }
                     var serverId = await sync.DeviceIdAsync(ct);
                     if (await GiteaTenantApi.RepositoryReadyAsync(state.Namespace,
@@ -141,9 +146,19 @@ public sealed class ProvisioningWorker(
         }
     }
 
+    private async Task<bool> IsolatedLiveVolumeAsync(KubeApi kube, string ns, CancellationToken ct)
+    {
+        string claims = $"/api/v1/namespaces/{ns}/persistentvolumeclaims/";
+        if (await kube.ExistsAsync(claims + "sync-live", ct)) return true;
+        if (await kube.ExistsAsync(claims + "sync-data", ct)) return false;
+        return config.GetValue<bool>("GTM_ISOLATE_LIVE_VOLUME") &&
+               !config.GetValue<bool>("GTM_GIT_LFS_ENABLED");
+    }
+
     private async Task ExpandExistingVolumesAsync(KubeApi kube, Account account,
         CancellationToken ct)
     {
+        bool isolated = await IsolatedLiveVolumeAsync(kube, TenantNames.Namespace(account.Id), ct);
         var claims = TenantManifests.Build(account.Id, account.Plan,
             config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
             config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
@@ -154,7 +169,7 @@ public sealed class ProvisioningWorker(
             PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"],
-            config["GTM_FAILOVER_TARGET_CLOUD"])
+            config["GTM_FAILOVER_TARGET_CLOUD"], isolated)
             .Where(x => x.Kind == "PersistentVolumeClaim");
         foreach (var claim in claims)
         {
@@ -179,6 +194,7 @@ public sealed class ProvisioningWorker(
             throw new InvalidOperationException(
                 "No quota-capable HDD Sync StorageClass configured; do not fall back to pricey default SSD PVC.");
         // Create the namespace first; later objects live inside it.
+        bool isolated = await IsolatedLiveVolumeAsync(kube, ns, ct);
         var declarations = TenantManifests.Build(account.Id, account.Plan,
             config.GetValue<int>("GTM_DEV_VOLUME_GI"), null,
             config["GTM_SYNC_IMAGE"] ?? "gtm/sync:dev",
@@ -189,7 +205,7 @@ public sealed class ProvisioningWorker(
             PlanCatalog.EffectiveQuotaGiB(account, DateTimeOffset.UtcNow),
             config["GTM_SYNC_CLOUD"], config["GTM_HISTORY_CLOUD"],
             config["GTM_RECOVERY_AGE_RECIPIENT"],
-            config["GTM_FAILOVER_TARGET_CLOUD"]).ToList();
+            config["GTM_FAILOVER_TARGET_CLOUD"], isolated).ToList();
         await kube.ApplyAsync(declarations[0], ct);
 
         if (!await kube.ExistsAsync($"/api/v1/namespaces/{ns}/secrets/gtm-credentials", ct))
@@ -255,7 +271,12 @@ public sealed class ProvisioningWorker(
         }
         // Apply Services before StatefulSets. A/B must remain in different nodes.
         foreach (var resource in declarations.Skip(1))
-            await kube.ApplyAsync(resource, ct);
+        {
+            if (resource.Kind == "PersistentVolumeClaim" && await kube.ExistsAsync(resource.Url, ct))
+                await kube.ExpandPvcIfNeededAsync(resource, ct);
+            else
+                await kube.ApplyAsync(resource, ct);
+        }
     }
 }
 
