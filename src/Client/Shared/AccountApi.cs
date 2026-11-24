@@ -16,6 +16,8 @@ public record ResendVerificationPayload(string Email);
 public record LoginPayload(string Email, string Password);
 public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
+public record StorageInfo(long LiveBytes, long HistoryBytes, long QuotaBytes, long HistoryBudgetBytes,
+    long FreeBytes, long ReserveBytes, bool Blocked, string[] Reasons);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
 public record GitMailPageInfo(string? Revision, string[] Digests, bool HasMore);
@@ -37,6 +39,7 @@ public record MailMessagePayload(string Subject, string From, string Body, DateT
 [JsonSerializable(typeof(CheckoutPayload))]
 [JsonSerializable(typeof(PairDevicePayload))]
 [JsonSerializable(typeof(TenantStatusInfo))]
+[JsonSerializable(typeof(StorageInfo))]
 [JsonSerializable(typeof(MailInboxInfo))]
 [JsonSerializable(typeof(GitMailPageInfo))]
 [JsonSerializable(typeof(RegisterMailInboxPayload))]
@@ -114,6 +117,8 @@ public sealed class AccountApi : IDisposable
         return new Uri(result.Url);
     }
 
+    public Task<StorageInfo> StorageAsync() =>
+        RequestAsync(HttpMethod.Get, "api/storage", null, AccountJsonContext.Default.StorageInfo);
     public Task<TenantStatusInfo> TenantAsync() =>
         RequestAsync(HttpMethod.Get, "api/tenant", null, AccountJsonContext.Default.TenantStatusInfo);
 

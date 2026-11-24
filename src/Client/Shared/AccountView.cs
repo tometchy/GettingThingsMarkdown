@@ -33,6 +33,7 @@ public sealed class AccountView : UserControl
     private readonly Button _openLink = new();
     private readonly IEmbeddedSyncEngine? _sync = ClientRuntime.EmbeddedSyncEngineFactory?.Invoke();
     private readonly TextBlock _tenantState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock _storageState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBlock _syncState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBox _folderPath = new() { PlaceholderText = "Path to notes folder" };
     private readonly TextBox _syncAddress = new() { PlaceholderText = "tcp://127.0.0.1:22000",
@@ -144,6 +145,17 @@ public sealed class AccountView : UserControl
         _tenantRefresh.Click += async (_, _) => await ExecuteAsync(async () =>
         {
             var tenant = await _api.TenantAsync();
+            try
+            {
+                var usage = await _api.StorageAsync();
+                const double gib = 1024.0 * 1024 * 1024;
+                _storageState.Text = T("Pliki: ", "Files: ") +
+                    $"{usage.LiveBytes/gib:0.##}/{usage.QuotaBytes/gib:0.##} GiB; " +
+                    T("Historia: ", "History: ") +
+                    $"{usage.HistoryBytes/gib:0.##}/{usage.HistoryBudgetBytes/gib:0.##} GiB" +
+                    (usage.Blocked ? T(" — limit przestrzeni", " — storage limit") : "");
+            }
+            catch (HttpRequestException) { _storageState.Text = T("Pomiar przestrzeni niedostępny", "Storage usage unavailable"); }
             _tenantState.Text = T("Serwer: ", "Server: ") + tenant.Status +
                 (tenant.ServerDeviceId is null ? "" : "\nSyncthing: " + tenant.ServerDeviceId) +
                 (tenant.Detail is null ? "" : "\n" + tenant.Detail);
@@ -388,6 +400,7 @@ public sealed class AccountView : UserControl
             layout.Children.Add(_recoveryImport);
             layout.Children.Add(_importRecovery);
             layout.Children.Add(_syncState);
+            layout.Children.Add(_storageState);
             layout.Children.Add(new TextBlock { Text = "Email → ToDo (Plus / Pro)",
                 FontSize = 21, FontWeight = Avalonia.Media.FontWeight.SemiBold });
             layout.Children.Add(new TextBlock { Text =

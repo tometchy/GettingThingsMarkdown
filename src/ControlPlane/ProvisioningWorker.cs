@@ -11,6 +11,7 @@ public sealed class ProvisioningWorker(
     ILogger<ProvisioningWorker> logger) : BackgroundService
 {
     private readonly Dictionary<Guid, DateTimeOffset> _lastCapacityCheck = new();
+    private readonly Dictionary<Guid, DateTimeOffset> _lastUsageCheck = new();
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!config.GetValue<bool>("GTM_KUBE_ENABLED")) return;
@@ -77,6 +78,26 @@ public sealed class ProvisioningWorker(
                         await EnsureTenantAsync(kube, state.Namespace, account, ct);
                         await ExpandExistingVolumesAsync(kube, account, ct);
                         _lastCapacityCheck[account.Id] = now;
+                    }
+                    if (!_lastUsageCheck.TryGetValue(account.Id, out var measured) ||
+                        now - measured > TimeSpan.FromMinutes(1))
+                    {
+                        var creds = await kube.SecretAsync(state.Namespace, "gtm-credentials", ct)
+                            ?? throw new InvalidOperationException("Missing storage credentials.");
+                        using var storage = new TenantStorage(state.Namespace, creds["sync-api-key"]);
+                        using var sync = new SyncthingTenantApi(state.Namespace, creds["sync-api-key"]);
+                        try
+                        {
+                            await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, now), ct);
+                            var usage = await storage.UsageAsync(ct);
+                            await sync.SetFolderPausedAsync(usage.Blocked, ct);
+                        }
+                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                        {
+                            await sync.SetFolderPausedAsync(true, ct);
+                            logger.LogWarning("Tenant storage unavailable; sync paused for {Namespace}", state.Namespace);
+                        }
+                        _lastUsageCheck[account.Id] = now;
                     }
                     continue;
                 }

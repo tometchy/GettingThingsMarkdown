@@ -79,7 +79,9 @@ jobs:
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
       - name: Verify Git-only mailbox commit and failed push retry
-        run: python3 tests/integration/git-mail-writer.py
+        run: |
+          python3 tests/integration/git-mail-writer.py
+          python3 tests/integration/storage-budget.py
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &

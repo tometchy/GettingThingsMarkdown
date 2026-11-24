@@ -23,7 +23,7 @@ public static class TenantMailFiles
         result.EnsureSuccessStatusCode();
     }
 
-    public static async Task<MailEnvelope> PersistAsync(Guid accountId, string digest,
+    public static async Task<MailEnvelope> PersistAsync(Guid accountId, long quotaBytes, string digest,
         MailEnvelope envelope, CancellationToken ct)
     {
         string ns = TenantNames.Namespace(accountId);
@@ -33,6 +33,8 @@ public static class TenantMailFiles
         using var http = new HttpClient { BaseAddress = new Uri($"http://sync.{ns}.svc.cluster.local:8385/"),
             Timeout = TimeSpan.FromSeconds(180) };
         http.DefaultRequestHeaders.Add("X-API-Key", secrets["sync-api-key"]);
+        using (var quota = await http.PostAsJsonAsync("quota", new { quotaBytes }, ct))
+            quota.EnsureSuccessStatusCode();
         using var result = await http.PostAsJsonAsync("mail/" + digest, envelope, ct);
         result.EnsureSuccessStatusCode();
         return await result.Content.ReadFromJsonAsync<MailEnvelope>(cancellationToken: ct)
