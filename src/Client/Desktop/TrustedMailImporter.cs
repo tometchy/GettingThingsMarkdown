@@ -104,7 +104,7 @@ public static class TrustedMailImporter
         int imported = 0;
         // Page through the archive without downloading all ciphertext at once.
         // A deterministic mail ID makes retries and multi-device imports safe.
-        for (int skip = 0; skip < 3000; skip += 50)
+        for (int skip = 0; skip < 3000; skip++)
         {
             var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
                 : await api.MailMessagesAsync(ct);
@@ -113,18 +113,26 @@ public static class TrustedMailImporter
                 ct.ThrowIfCancellationRequested();
                 string relative = MailTaskFormatter.FileName(mail.Id);
                 var path = workspace.Resolve(relative);
-                if (!File.Exists(path))
+                var message = Decrypt(mail, privateKey);
+                await workspace.SaveBinaryIfAbsentAsync($".gtmd/inbox/{mail.Id:N}.json",
+                    JsonSerializer.SerializeToUtf8Bytes(mail, AccountJsonContext.Default.MailEnvelopeInfo), ct);
+                string receipt = $".gtmd/imported/{mail.Id:N}.receipt";
+                bool completed = File.Exists(workspace.ResolveFile(receipt)) ||
+                    File.Exists(workspace.Resolve("Archive/" + Path.GetFileName(relative)));
+                if (!File.Exists(path) && (!completed || archive))
                 {
-                    var message = Decrypt(mail, privateKey);
+                    string attachments = await MailAttachmentImporter.SaveAsync(
+                        workspace, mail.Id, message.RawMimeBase64, ct);
                     await workspace.SaveAsync(relative, MailTaskFormatter.Render(
-                        message.Subject, message.From, message.Body, message.ReceivedUtc), ct);
+                        message.Subject, message.From, message.Body, message.ReceivedUtc) + attachments, ct);
                     imported++;
                 }
+                await workspace.SaveBinaryIfAbsentAsync(receipt, "imported"u8.ToArray(), ct);
                 // ACK is never issued on archived recoveries, and on pending
                 // deliveries happens only after the atomic local write.
                 if (!archive) await api.AckMailAsync(mail.Id, ct);
             }
-            if (!archive || messages.Length < 50) break;
+            if (messages.Length == 0 || !archive) break;
         }
         return imported;
     }
@@ -135,9 +143,20 @@ public static class TrustedMailImporter
         var iv = Convert.FromBase64String(mail.Nonce);
         var tag = Convert.FromBase64String(mail.Tag);
         var ciphertext = Convert.FromBase64String(mail.Ciphertext);
-        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 128 * 1024)
+        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 60 * 1024 * 1024)
             throw new CryptographicException("Invalid encrypted mail envelope.");
-        var aesKey = privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+        byte[]? aesKey = null;
+        if (wrapped.Length is 384 or 512)
+            aesKey = privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+        else
+        {
+            foreach (var candidate in JsonSerializer.Deserialize<byte[][]>(wrapped) ?? [])
+            {
+                try { aesKey = privateKey.Decrypt(candidate, RSAEncryptionPadding.OaepSHA256); break; }
+                catch (CryptographicException) { }
+            }
+        }
+        if (aesKey is null) throw new CryptographicException("Mail was not encrypted for this device.");
         var plain = new byte[ciphertext.Length];
         try
         {

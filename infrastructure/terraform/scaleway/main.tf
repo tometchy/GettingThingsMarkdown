@@ -12,6 +12,20 @@ resource "scaleway_vpc_private_network" "gtm" {
   name = "${var.name}-private-network"
 }
 
+resource "scaleway_vpc_public_gateway" "egress" {
+  name = "${var.name}-egress"
+  type = "VPC-GW-S"
+}
+
+resource "scaleway_vpc_gateway_network" "egress" {
+  gateway_id         = scaleway_vpc_public_gateway.egress.id
+  private_network_id = scaleway_vpc_private_network.gtm.id
+  enable_masquerade  = true
+  ipam_config {
+    push_default_route = true
+  }
+}
+
 resource "scaleway_k8s_cluster" "gtm" {
   name                        = var.name
   type                        = "kapsule"
@@ -30,7 +44,10 @@ resource "scaleway_k8s_pool" "zone_a" {
   min_size    = 1
   max_size    = var.max_nodes_per_zone
   autoscaling = true
-  autohealing = true
+  autohealing        = true
+  public_ip_disabled = true
+
+  depends_on = [scaleway_vpc_gateway_network.egress]
 }
 
 resource "scaleway_k8s_pool" "zone_b" {
@@ -42,5 +59,8 @@ resource "scaleway_k8s_pool" "zone_b" {
   min_size    = 1
   max_size    = var.max_nodes_per_zone
   autoscaling = true
-  autohealing = true
+  autohealing        = true
+  public_ip_disabled = true
+
+  depends_on = [scaleway_vpc_gateway_network.egress]
 }

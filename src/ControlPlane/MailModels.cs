@@ -8,6 +8,7 @@ public sealed class MailInbox
 {
     public Guid AccountId { get; set; }
     public string LocalPart { get; set; } = "";
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
     public string PublicKeyBase64 { get; set; } = "";
     public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedUtc { get; set; }
@@ -28,7 +29,7 @@ public sealed class EncryptedInboundMail
     public DateTimeOffset? AcknowledgedUtc { get; set; }
 }
 
-public sealed record RegisterMailInbox(string PublicKeyBase64);
+public sealed record RegisterMailInbox(string PublicKeyBase64, string? Password = null);
 public sealed record RotateMailAddress(string Password);
 public sealed record MailInboxView(bool Enabled, string Address, int Pending,
     bool PublicKeyRegistered);

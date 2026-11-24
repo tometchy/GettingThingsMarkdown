@@ -66,7 +66,7 @@ public sealed class AccountView : UserControl
     private readonly Button _importMail = new();
     private readonly Button _restoreMailArchive = new();
     private readonly Button _rotateMail = new();
-    private readonly TextBox _mailPassword = new() { PasswordChar = '●', PlaceholderText = "Password to rotate inbox address" };
+    private readonly TextBox _mailPassword = new() { PasswordChar = '●', PlaceholderText = "Password to add device or rotate inbox address" };
     private readonly Button _exportMailKey = new();
     private readonly TextBox _importMailKey = new() {
         AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
@@ -198,7 +198,8 @@ public sealed class AccountView : UserControl
         {
             if (_current is null || _sync is null) throw new InvalidOperationException("Sign in on a trusted client.");
             var publicKey = await _sync.EnsureMailPublicKeyAsync(_current.Id);
-            var inbox = await _api.RegisterMailInboxAsync(publicKey);
+            var inbox = await _api.RegisterMailInboxAsync(publicKey, _mailPassword.Text);
+            _mailPassword.Text = "";
             _mailStatus.Text = T("Przekieruj NOWE wiadomości na: ",
                 "Forward NEW messages to: ") + inbox.Address +
                 T("\nW Gmailu potwierdź przekierowanie, a następnie importuj wiadomość weryfikacyjną.",
@@ -464,8 +465,8 @@ public sealed class AccountView : UserControl
         _refreshMail.Content = T("Sprawdź adres i kolejkę wiadomości", "Check address and pending mail");
         _importMail.Content = T("Importuj wiadomości do ToDo teraz",
             "Import pending mail to local ToDo");
-        _restoreMailArchive.Content = T("Przywróć e-maile z archiwum (30 dni)",
-            "Restore encrypted inbox archive (30 days)");
+        _restoreMailArchive.Content = T("Przywróć e-maile z archiwum",
+            "Restore encrypted inbox archive");
         _rotateMail.Content = T("Zmień adres przekierowania (stary wyłączy się)",
             "Rotate forwarding address (disable old)");
         _exportMailKey.Content = T("Skopiuj prywatny klucz poczty do bezpiecznej kopii",

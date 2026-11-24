@@ -19,7 +19,7 @@ public record PairDevicePayload(string DeviceId, string Name);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
 public record MailInboxInfo(bool Enabled, string Address, int Pending, bool PublicKeyRegistered);
-public record RegisterMailInboxPayload(string PublicKeyBase64);
+public record RegisterMailInboxPayload(string PublicKeyBase64, string? Password = null);
 public record RotateMailAddressPayload(string Password);
 public record MailEnvelopeInfo(Guid Id, string WrappedKey, string Nonce,
     string Tag, string Ciphertext, DateTimeOffset ReceivedUtc);
@@ -40,6 +40,8 @@ public record MailMessagePayload(string Subject, string From, string Body, DateT
 [JsonSerializable(typeof(RegisterMailInboxPayload))]
 [JsonSerializable(typeof(RotateMailAddressPayload))]
 [JsonSerializable(typeof(MailEnvelopeInfo[]))]
+[JsonSerializable(typeof(MailEnvelopeInfo))]
+[JsonSerializable(typeof(byte[][]))]
 [JsonSerializable(typeof(MailMessagePayload))]
 [JsonSerializable(typeof(ServerPairing))]
 [JsonSerializable(typeof(string[]))]
@@ -147,9 +149,9 @@ public sealed class AccountApi : IDisposable
             AccountJsonContext.Default.MailInboxInfo);
 
     public async Task<MailInboxInfo> RegisterMailInboxAsync(
-        string publicKey, CancellationToken ct = default)
+        string publicKey, string? password = null, CancellationToken ct = default)
     {
-        using var body = JsonContent.Create(new RegisterMailInboxPayload(publicKey),
+        using var body = JsonContent.Create(new RegisterMailInboxPayload(publicKey, password),
             AccountJsonContext.Default.RegisterMailInboxPayload);
         return await RequestAsync(HttpMethod.Post, "api/mail/inbox", body,
             AccountJsonContext.Default.MailInboxInfo);

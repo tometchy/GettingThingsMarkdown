@@ -34,7 +34,8 @@ public static class MailEncryption
         Guid accountId, string key, byte[] rawMessage, DateTimeOffset now,
         CancellationToken ct)
     {
-        if (!ValidatePublicKey(key) || rawMessage.Length is 0 or > MailInboxPolicy.MaxRawMailBytes)
+        if (MailKeySet.Read(key).Length is < 1 or > MailKeySet.MaximumKeys ||
+            !MailKeySet.Read(key).All(ValidatePublicKey) || rawMessage.Length is 0 or > MailInboxPolicy.MaxRawMailBytes)
             throw new ArgumentException("Invalid key or message size.");
         await using var input = new MemoryStream(rawMessage, writable: false);
         var email = await MimeMessage.LoadAsync(input, ct);
@@ -60,9 +61,7 @@ public static class MailEncryption
         byte[] wrapped;
         try
         {
-            using var rsa = RSA.Create();
-            rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(key), out _);
-            wrapped = rsa.Encrypt(keyMaterial, RSAEncryptionPadding.OaepSHA256);
+            wrapped = MailKeySet.Wrap(key, keyMaterial);
             using var aes = new AesGcm(keyMaterial, 16);
             aes.Encrypt(nonce, plaintext, encrypted, tag, DomainSeparator);
         }
@@ -85,7 +84,7 @@ public static class MailEncryption
 
     public static InboundMailPayload DecryptForTestOnly(EncryptedInboundMail message, RSA privateKey)
     {
-        var aesKey = privateKey.Decrypt(message.WrappedKey, RSAEncryptionPadding.OaepSHA256);
+        var aesKey = MailKeySet.Unwrap(message.WrappedKey, privateKey);
         var plaintext = new byte[message.Ciphertext.Length];
         try
         {

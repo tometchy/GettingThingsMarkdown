@@ -557,7 +557,7 @@ authenticated.MapGet("/mail/inbox", async (ClaimsPrincipal user, AppDb db,
 });
 
 authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPrincipal user,
-    AppDb db, CancellationToken ct) =>
+    AppDb db, IPasswordHasher<Account> hasher, CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
     var account = id is null ? null : await db.Accounts.FindAsync([id.Value], ct);
@@ -571,8 +571,18 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
     if (!MailEncryption.ValidatePublicKey(publicKey))
         return Results.BadRequest(new { error = "Expected 3072/4096-bit RSA SPKI public key." });
     var inbox = await db.MailInboxes.FindAsync([account.Id], ct);
-    if (inbox is not null && inbox.PublicKeyBase64 != publicKey)
-        return Results.Conflict(new { error = "Inbox has another public key; import the original private key on this device." });
+    if (inbox is not null && !MailKeySet.Read(inbox.PublicKeyBase64).Contains(publicKey, StringComparer.Ordinal))
+    {
+        if (string.IsNullOrEmpty(request.Password) || request.Password.Length > 1024 ||
+            hasher.VerifyHashedPassword(account, account.PasswordHash, request.Password) == PasswordVerificationResult.Failed)
+            return Results.Conflict(new { error = "Reauthenticate to add this device's independent key." });
+        try { inbox.PublicKeyBase64 = MailKeySet.Append(inbox.PublicKeyBase64, publicKey); }
+        catch (InvalidOperationException) { return Results.Conflict(new { error = "Mailbox device limit reached." }); }
+        db.Audit.Add(new AuditEntry { AccountId = account.Id, Action = "mail-device-key-added",
+            Actor = "account-password", OccurredUtc = clock.GetUtcNow(), Details = "Independent public key" });
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException) { return Results.Conflict(new { error = "Concurrent key registration; retry." }); }
+    }
     if (inbox is null)
     {
         inbox = new MailInbox {
@@ -630,7 +640,7 @@ authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
         return Results.StatusCode(403);
     var messages = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null)
-        .Take(50).ToListAsync(ct);
+        .OrderBy(x => x.Id).Take(1).ToListAsync(ct);
     return Results.Ok(messages.Select(MailEncryption.View).ToArray());
 });
 
@@ -645,7 +655,7 @@ authenticated.MapGet("/mail/messages/archived", async (
         return Results.BadRequest(new { error = "Invalid archive offset." });
     var mails = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null)
-        .OrderBy(x => x.Id).Skip(skip ?? 0).Take(50).ToListAsync(ct);
+        .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
     return Results.Ok(mails.Select(MailEncryption.View).ToArray());
 });
 

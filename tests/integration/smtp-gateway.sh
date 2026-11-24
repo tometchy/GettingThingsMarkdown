@@ -16,6 +16,13 @@ registration="$(curl --fail-with-body -fsS "$GTM_API_URL/api/auth/register"   -H
     email:$email,password:"long test password for mail",plan:"plus"
   }')")"
 bearer="$(jq -r '.accessToken' <<< "$registration")"
+account="$(jq -r '.account.id' <<< "$registration")"
+for i in $(seq 1 60); do
+  status="$(curl -fsS -H "Authorization: Bearer $bearer" "$GTM_API_URL/api/tenant" | jq -r '.status')"
+  [ "$status" = Ready ] && break
+  sleep 5
+done
+[ "$status" = Ready ]
 [ "$bearer" != null ] && [ -n "$bearer" ]
 inbox="$(curl --fail-with-body -fsS "$GTM_API_URL/api/mail/inbox"   -H "Authorization: Bearer $bearer" -H 'Content-Type: application/json'   -d "$(jq -nc --arg publicKeyBase64 "$public" '{publicKeyBase64:$publicKeyBase64}')")"
 recipient="$(jq -r '.address' <<< "$inbox")"
@@ -51,6 +58,9 @@ if grep -q 'mail.google.com/confirm-gtm-ci' <<< "$messages"; then
   exit 1
 fi
 id="$(jq -r '.[0].id' <<< "$messages")"
+ns="gtm-${account//-/}"
+kubectl -n "$ns" exec sync-0 -- git --git-dir=/data/git ls-tree -r --name-only gtm-mail | grep -q '^.gtmd/inbox/'
+kubectl -n "$ns" exec history-0 -- git --git-dir=/var/lib/gitea/git/repositories/archive/history.git ls-tree -r --name-only gtm-mail | grep -q '^.gtmd/inbox/'
 curl --fail-with-body -fsS -X DELETE "$GTM_API_URL/api/mail/messages/$id"   -H "Authorization: Bearer $bearer" >/dev/null
 curl --fail-with-body -fsS "$GTM_API_URL/api/mail/messages"   -H "Authorization: Bearer $bearer" | jq -e 'length == 0' >/dev/null
 echo "SMTP STARTTLS -> encrypted queue -> authenticated ACK PASS"
