@@ -349,7 +349,7 @@ public sealed class AccountView : UserControl
             _documents.ItemsSource = _workspace.List();
         });
         _previewDocument.Click += (_, _) =>
-            _previewContent.Content = MarkdownPreview.Create(_editor.Text ?? "");
+            _previewContent.Content = MarkdownPreview.Create(_editor.Text ?? "", _workspace, _openedDocument);
         _openLink.Click += async (_, _) =>
         {
             if (_pendingUrl is not null) await OpenAsync(_pendingUrl);

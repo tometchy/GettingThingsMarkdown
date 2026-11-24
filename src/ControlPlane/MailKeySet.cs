@@ -26,7 +26,7 @@ public static class MailKeySet
     }
     public static byte[] Unwrap(byte[] wrapped, RSA privateKey)
     {
-        if (wrapped.Length is 384 or 512)
+        if (wrapped.Length is >= 384 and <= 512)
             return privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
         foreach (var candidate in JsonSerializer.Deserialize<byte[][]>(wrapped) ?? [])
         {

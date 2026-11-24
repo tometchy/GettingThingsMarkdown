@@ -64,3 +64,10 @@ resource "scaleway_k8s_pool" "zone_b" {
 
   depends_on = [scaleway_vpc_gateway_network.egress]
 }
+
+# No public Kubernetes API access after bootstrap. Deploy automation from a
+# private network using a dedicated scoped identity, not owner kubeconfig.
+resource "scaleway_k8s_acl" "gtm" {
+  cluster_id    = scaleway_k8s_cluster.gtm.id
+  no_ip_allowed = true
+}

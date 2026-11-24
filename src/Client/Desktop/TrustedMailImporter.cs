@@ -104,16 +104,20 @@ public static class TrustedMailImporter
         int imported = 0;
         // Page through the archive without downloading all ciphertext at once.
         // A deterministic mail ID makes retries and multi-device imports safe.
-        for (int skip = 0; skip < 3000; skip++)
+        for (int skip = 0, scanned = 0; scanned < (archive ? 10000 : 200); scanned++)
         {
             var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
-                : await api.MailMessagesAsync(ct);
+                : await api.MailMessagesAsync(skip, ct);
             foreach (var mail in messages)
             {
                 ct.ThrowIfCancellationRequested();
                 string relative = MailTaskFormatter.FileName(mail.Id);
                 var path = workspace.Resolve(relative);
-                var message = Decrypt(mail, privateKey);
+                // A new device may lack keys for old envelopes; do not ACK
+                // them, and continue to messages addressed to the new key.
+                MailMessagePayload message;
+                try { message = Decrypt(mail, privateKey); }
+                catch (CryptographicException) { skip++; continue; }
                 await workspace.SaveBinaryIfAbsentAsync($".gtmd/inbox/{mail.Id:N}.json",
                     JsonSerializer.SerializeToUtf8Bytes(mail, AccountJsonContext.Default.MailEnvelopeInfo), ct);
                 string receipt = $".gtmd/imported/{mail.Id:N}.receipt";
@@ -131,8 +135,9 @@ public static class TrustedMailImporter
                 // ACK is never issued on archived recoveries, and on pending
                 // deliveries happens only after the atomic local write.
                 if (!archive) await api.AckMailAsync(mail.Id, ct);
+                else skip++;
             }
-            if (messages.Length == 0 || !archive) break;
+            if (messages.Length == 0) break;
         }
         return imported;
     }
@@ -143,10 +148,10 @@ public static class TrustedMailImporter
         var iv = Convert.FromBase64String(mail.Nonce);
         var tag = Convert.FromBase64String(mail.Tag);
         var ciphertext = Convert.FromBase64String(mail.Ciphertext);
-        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 60 * 1024 * 1024)
+        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 70 * 1024 * 1024)
             throw new CryptographicException("Invalid encrypted mail envelope.");
         byte[]? aesKey = null;
-        if (wrapped.Length is 384 or 512)
+        if (wrapped.Length is >= 384 and <= 512)
             aesKey = privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
         else
         {

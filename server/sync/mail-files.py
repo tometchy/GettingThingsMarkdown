@@ -6,7 +6,7 @@ ROOT = pathlib.Path(os.environ.get("GTM_MAIL_DATA_ROOT", "/data"))
 GIT = ROOT / "git"
 WORK = ROOT / "mail"
 REF = "refs/heads/gtm-mail"
-LIMIT = 100 * 1024 * 1024
+LIMIT = 120 * 1024 * 1024
 TOKEN = os.environ["GTM_SYNCTHING_API_KEY"]
 
 def git(*args, data=None, index=None, check=True):
@@ -61,6 +61,25 @@ def store(digest, body):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_): pass
+    def send_body(self, body):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
+            self.send_error(403); return
+        match = re.fullmatch(r"/mail/([0-9A-Fa-f]{64})", self.path)
+        if not match:
+            self.send_error(404); return
+        try:
+            body = git("show", REF + ":.gtmd/inbox/" + match.group(1).lower() + ".json", check=False)
+            if body.returncode:
+                self.send_error(404); return
+            self.send_body(body.stdout)
+        except (OSError, subprocess.SubprocessError):
+            self.send_error(503)
     def do_POST(self):
         self.connection.settimeout(120)
         if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
@@ -83,11 +102,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             result = store(match.group(1).lower(), body)
         except (ValueError, OSError, subprocess.SubprocessError):
             self.send_error(503); return
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(result)))
-        self.end_headers()
-        self.wfile.write(result)
+        self.send_body(result)
 
 if __name__ == "__main__":
     http.server.HTTPServer(("0.0.0.0", 8385), Handler).serve_forever()

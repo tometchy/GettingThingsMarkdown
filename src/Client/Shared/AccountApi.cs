@@ -157,8 +157,8 @@ public sealed class AccountApi : IDisposable
             AccountJsonContext.Default.MailInboxInfo);
     }
 
-    public Task<MailEnvelopeInfo[]> MailMessagesAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "api/mail/messages", null,
+    public Task<MailEnvelopeInfo[]> MailMessagesAsync(int skip = 0, CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "api/mail/messages?skip=" + skip, null,
             AccountJsonContext.Default.MailEnvelopeInfoArray);
 
     public Task<MailEnvelopeInfo[]> MailArchivedMessagesAsync(int skip = 0,

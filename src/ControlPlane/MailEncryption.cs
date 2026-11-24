@@ -53,7 +53,8 @@ public static class MailEncryption
             Limit(email.From.ToString(), 254),
             Limit(text, 32768), now, Convert.ToBase64String(rawMessage));
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(normalized,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         var keyMaterial = RandomNumberGenerator.GetBytes(32);
         var nonce = RandomNumberGenerator.GetBytes(12);
         var encrypted = new byte[plaintext.Length];

@@ -630,7 +630,21 @@ authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress req
             x.AccountId == account.Id && x.AcknowledgedUtc == null, ct), true));
 }).RequireRateLimiting("auth");
 
-authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
+// SQLite is a delivery index only for Kubernetes-backed new envelopes.
+async Task<IResult> ReadMailEnvelopeAsync(EncryptedInboundMail[] rows, CancellationToken ct)
+{
+    try
+    {
+        var result = new List<MailEnvelope>();
+        foreach (var row in rows)
+            result.Add(row.Ciphertext.Length > 0 ? MailEncryption.View(row) :
+                await TenantMailFiles.FetchAsync(row.AccountId, row.DedupSha256, ct));
+        return Results.Ok(result.ToArray());
+    }
+    catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+    { return Results.StatusCode(503); }
+}
+authenticated.MapGet("/mail/messages", async (int? skip, ClaimsPrincipal user, AppDb db,
     CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
@@ -638,10 +652,11 @@ authenticated.MapGet("/mail/messages", async (ClaimsPrincipal user, AppDb db,
     if (account is null) return Results.NotFound();
     if (!MailInboxPolicy.IsEligible(account, clock.GetUtcNow()))
         return Results.StatusCode(403);
+    if (skip is < 0 or > MailInboxPolicy.MaxPendingMessages) return Results.BadRequest();
     var messages = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null)
-        .OrderBy(x => x.Id).Take(1).ToListAsync(ct);
-    return Results.Ok(messages.Select(MailEncryption.View).ToArray());
+        .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
+    return await ReadMailEnvelopeAsync(messages.ToArray(), ct);
 });
 
 // A device can re-import mail after losing its local folder during the
@@ -651,12 +666,12 @@ authenticated.MapGet("/mail/messages/archived", async (
 {
     var id = AdminSecurity.UserId(user);
     if (id is null) return Results.Unauthorized();
-    if (skip is < 0 or > MailInboxPolicy.MaxRetainedMessages)
+    if (skip is < 0)
         return Results.BadRequest(new { error = "Invalid archive offset." });
     var mails = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null)
         .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
-    return Results.Ok(mails.Select(MailEncryption.View).ToArray());
+    return await ReadMailEnvelopeAsync(mails.ToArray(), ct);
 });
 
 authenticated.MapDelete("/mail/messages/{messageId:guid}", async (Guid messageId,
@@ -740,7 +755,8 @@ app.MapPost("/internal/mail/receive", async (
     var messages = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == account.Id)
         .Select(x => x.ReceivedUtc).ToListAsync(ct);
-    if (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
+    if ((!builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED") &&
+         messages.Count >= MailInboxPolicy.MaxRetainedMessages) ||
         await db.EncryptedInboundMails.CountAsync(x =>
             x.AccountId == account.Id && x.AcknowledgedUtc == null, ct)
             >= MailInboxPolicy.MaxPendingMessages ||
@@ -763,10 +779,11 @@ app.MapPost("/internal/mail/receive", async (
                 MailEncryption.View(encrypted), ct);
             // A retry after a lost response must index the identical envelope.
             encrypted.Id = durable.Id;
-            encrypted.WrappedKey = Convert.FromBase64String(durable.WrappedKey);
-            encrypted.Nonce = Convert.FromBase64String(durable.Nonce);
-            encrypted.Tag = Convert.FromBase64String(durable.Tag);
-            encrypted.Ciphertext = Convert.FromBase64String(durable.Ciphertext);
+            // Do not keep a third resident ciphertext copy in SQLite.
+            encrypted.WrappedKey = [];
+            encrypted.Nonce = [];
+            encrypted.Tag = [];
+            encrypted.Ciphertext = [];
             encrypted.ReceivedUtc = durable.ReceivedUtc;
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
