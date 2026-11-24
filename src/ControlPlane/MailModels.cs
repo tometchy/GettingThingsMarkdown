@@ -44,21 +44,10 @@ public static class MailInboxPolicy
     public const int MaxPendingMessages = 200;
     public const int MaxDailyMessages = 100;
     public const int MaxRetainedMessages = 3000;
-    public const int RecoveryDays = 30;
-
-    public static DateTimeOffset RecoveryDeadline(EncryptedInboundMail item, Account account)
-    {
-        if (item.AcknowledgedUtc is null)
-            throw new InvalidOperationException("An unacknowledged message must never expire.");
-        var earliest = item.AcknowledgedUtc.Value.AddDays(RecoveryDays);
-        return account.HistoryHoldUntilUtc is { } hold && hold > earliest
-            ? hold : earliest;
-    }
-
+    // Import acknowledgement is not a history deletion request. No time-based
+    // expiry is allowed, including legacy messages still stored in SQLite.
     public static bool EligibleForPurge(EncryptedInboundMail item, Account account,
-        DateTimeOffset now) =>
-        item.AcknowledgedUtc is not null && now >= RecoveryDeadline(item, account);
-
+        DateTimeOffset now) => false;
 
     public static bool IsEligible(Account account, DateTimeOffset now) =>
         account.Plan is "plus" or "pro" && PlanCatalog.View(account, now).CanWrite;

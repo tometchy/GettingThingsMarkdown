@@ -17,35 +17,31 @@ public sealed class MailArchiveRetentionTests
             AccountId = account.Id, ReceivedUtc = Now.AddYears(-1)
         };
         Assert.False(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddYears(10)));
-        Assert.Throws<InvalidOperationException>(() =>
-            MailInboxPolicy.RecoveryDeadline(mail, account));
     }
 
     [Fact]
-    public void AcknowledgementBeginsThirtyDayRecoveryWindow()
+    public void AcknowledgementNeverStartsAnExpiryWindow()
     {
         var account = new Account();
         var mail = new EncryptedInboundMail {
             AccountId = account.Id, AcknowledgedUtc = Now
         };
-        Assert.Equal(Now.AddDays(30), MailInboxPolicy.RecoveryDeadline(mail, account));
         Assert.False(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddDays(29)));
-        Assert.True(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddDays(30)));
+        Assert.False(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddYears(10)));
     }
 
     [Fact]
-    public void AdministratorHoldExtendsGracePeriodForAllMailInAccount()
+    public void ExpiryOfHoldDoesNotDeleteMail()
     {
         var account = new Account { HistoryHoldUntilUtc = Now.AddDays(120) };
         var mail = new EncryptedInboundMail { AccountId = account.Id,
             AcknowledgedUtc = Now };
-        Assert.Equal(Now.AddDays(120), MailInboxPolicy.RecoveryDeadline(mail, account));
         Assert.False(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddDays(100)));
-        Assert.True(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddDays(121)));
+        Assert.False(MailInboxPolicy.EligibleForPurge(mail, account, Now.AddDays(121)));
     }
 
     [Fact]
-    public async Task WorkerOnlyDeletesExpiredAckedCiphertextAndRespectsHolds()
+    public async Task LegacyWorkerCannotDeleteAnyMessages()
     {
         string database = Path.Combine(Path.GetTempPath(),
             "gtm-mail-sweep-" + Guid.NewGuid() + ".db");
@@ -78,15 +74,15 @@ public sealed class MailArchiveRetentionTests
             using (services)
             {
                 var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
-                Assert.Equal(1,
+                Assert.Equal(0,
                     await MailArchiveRetentionWorker.SweepAsync(scopeFactory, Now, default));
                 using var db = new AppDb(options);
-                Assert.Equal(2, await db.EncryptedInboundMails.CountAsync());
+                Assert.Equal(3, await db.EncryptedInboundMails.CountAsync());
                 Assert.True(await db.EncryptedInboundMails.AnyAsync(x => x.DedupSha256 == "B"));
                 Assert.True(await db.EncryptedInboundMails.AnyAsync(x => x.DedupSha256 == "C"));
                 Assert.Equal(0,
                     await MailArchiveRetentionWorker.SweepAsync(scopeFactory, Now, default));
-                Assert.Equal(1,
+                Assert.Equal(0,
                     await MailArchiveRetentionWorker.SweepAsync(
                         scopeFactory, Now.AddDays(61), default));
             }
