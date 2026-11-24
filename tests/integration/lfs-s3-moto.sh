@@ -103,7 +103,7 @@ ok=0
 for i in $(seq 1 75); do
   if docker exec "$history" git \
       --git-dir=/var/lib/gitea/git/repositories/archive/history.git \
-      rev-parse --verify main >/dev/null 2>&1; then ok=1; break; fi
+      cat-file -e main:opaque.bin >/dev/null 2>&1; then ok=1; break; fi
   sleep 2
 done
 if [ "$ok" != 1 ]; then
