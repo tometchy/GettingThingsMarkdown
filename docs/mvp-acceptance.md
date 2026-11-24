@@ -149,3 +149,10 @@ See [Git-only mail design](gtmd-mail-files.md). Previous 30-day archive and addi
 - [ ] Provider-enforced hard quotas, immutable seven-day retention, serialized hold/purge authorization and dual-replica cutover/retired-storage destruction, independently fenced failover, Android/iOS and real production acceptance remain mandatory.
 
 See [storage and recovery operations](storage-recovery-operations.md).
+
+## Selective quota and mail ledger (PR #11)
+
+- [x] Remove quota-triggered whole-folder pause for eligible accounts; existing quota-paused accounts are resumed during reconciliation. Subscription expiry behavior unchanged.
+- [x] Fresh full-Git tenants can use separate bounded live PVC without additional pods or increased nominal total reservation; existing PVC layout retained; no automatic migration.
+- [x] New Kubernetes SMTP deliveries no longer write SQLite mail receipt rows; deterministic Git digest and serialized commit history enforce retry/rate policy.
+- [ ] Verify real CSI physical capacity and native Syncthing deletion/download at full live volume, history-budget admission and safe downgrade/gift expiry. Shared PVC legacy migration, actual failover/purge and mobile apps remain open.

@@ -9,3 +9,7 @@ The client reads /api/history/mail (paginated Git tree, pinned to one revision) 
 The mailbox public-key registry and alias are age-encrypted in .gtmd/settings.json.age on gtm-mail when independent recovery recipients are configured. No private device key is included. Later-added keys cannot decrypt older envelopes without an existing private key or future rewrap support.
 
 Production access: private Scaleway workers, outbound NAT, no public Kubernetes API, dedicated observability-only IAM role. No standing owner/root credentials for daily operation; cloud owner can explicitly escalate. No resources applied. Real provider IAM validation, cross-cloud failover, recovery of control-plane metadata, mobile clients, key revocation, physical protected purge and hard quotas remain release gates.
+
+## Revision: Git is also the delivery ledger
+
+New Kubernetes mail deliveries no longer create SQLite receipt/deduplication rows. The single tenant Git writer uses the deterministic digest filename and recent Git commits touching the inbox path for the 100/day cap, checks capacity and acknowledges only after successful replication. Retries re-push the previously committed envelope without consuming another daily slot. Existing legacy rows are retained, not deleted. Account and alias/public-key lookup still use the shared control-plane registry with an encrypted Git backup. The Git writer's private HTTP interface uses explicit Content-Length.

@@ -118,7 +118,8 @@ public sealed class ProvisioningWorker(
                     if (resuming)
                     {
                         using var storage = new TenantStorage(state.Namespace, secret["sync-api-key"]);
-                        await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, DateTimeOffset.UtcNow), ct);
+                        try { await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, DateTimeOffset.UtcNow), ct); }
+                        catch (HttpRequestException) { logger.LogWarning("Quota update pending for {Namespace}", state.Namespace); }
                         await sync.ConfigureStoragePolicyAsync(await IsolatedLiveVolumeAsync(kube, state.Namespace, ct), ct);
                     }
                     var serverId = await sync.DeviceIdAsync(ct);
