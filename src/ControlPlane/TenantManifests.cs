@@ -83,8 +83,6 @@ public static class TenantManifests
                 ["gtm.io/tenant"] = ns, ["gtm.io/role"] = "sync" },
                 ports = new object[] { new { name = "api", port = 8384, targetPort = 8384 },
                     new { name = "mail", port = 8385, targetPort = 8385 },
-                    new { name = "mail-api", port = 8386, targetPort = 8386 },
-                    new { name = "mail-sync", port = 22001, targetPort = 22001 },
                     new { name = "tcp", port = 22000, targetPort = 22000 } } }
         });
         yield return KubeObject.From("v1", "Service", "history", ns, new
@@ -139,7 +137,6 @@ public static class TenantManifests
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
                     new { name = "GTM_GIT_USERNAME", value = "sync" },
                     new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" },
-                    new { name = "GTM_MAIL_PEER_ENABLED", value = plan is "plus" or "pro" ? "true" : "false" },
                     new { name = "GTM_RECOVERY_AGE_RECIPIENT", value = recoveryRecipient ?? "" }
                 }
                 : new object[]
@@ -264,7 +261,7 @@ public static class TenantManifests
                                              plan == "plus" ? "192Mi" : "256Mi" },
                                     limits = new { cpu = "1", memory = "1Gi" } },
                                 ports = role == "sync"
-                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "mail", containerPort = 8385 }, new { name = "mail-api", containerPort = 8386 }, new { name = "mail-sync", containerPort = 22001 }, new { name = "tcp", containerPort = 22000 } }
+                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "mail", containerPort = 8385 }, new { name = "tcp", containerPort = 22000 } }
                                     : new[] { new { name = "https", containerPort = 3000 } },
                                 readinessProbe = role == "sync"
                                     ? new { tcpSocket = (object)new { port = 8384 }, initialDelaySeconds = 15, periodSeconds = 10 }
@@ -294,10 +291,9 @@ public static class TenantManifests
                 policyTypes = new[] { "Ingress" },
                 ingress = new object[] {
                     new { from = new object[] { controlPlane },
-                          ports = new object[] { new { protocol = "TCP", port = 8384 }, new { protocol = "TCP", port = 8385 }, new { protocol = "TCP", port = 8386 } } },
+                          ports = new object[] { new { protocol = "TCP", port = 8384 }, new { protocol = "TCP", port = 8385 } } },
                     new { ports = new object[] {
                         new { protocol = "TCP", port = 22000 },
-                        new { protocol = "TCP", port = 22001 },
                         new { protocol = "UDP", port = 22000 }
                     } }
                 }

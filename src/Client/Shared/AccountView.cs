@@ -171,17 +171,6 @@ public sealed class AccountView : UserControl
                 ? remote.Address : _syncAddress.Text ?? "";
             await _sync.ConfigureFolderAsync(_folderPath.Text ?? "", remote.FolderId,
                 remote.ServerDeviceId, address);
-            if (!string.IsNullOrWhiteSpace(remote.MailDeviceId))
-            {
-                string mailAddress = remote.MailAddress ?? "";
-                if (string.IsNullOrWhiteSpace(mailAddress))
-                {
-                    var endpoint = new UriBuilder(address);
-                    endpoint.Port++;
-                    mailAddress = endpoint.Uri.ToString();
-                }
-                await _sync.ConfigureMailFolderAsync(_folderPath.Text ?? "", remote.MailDeviceId, mailAddress);
-            }
             _syncState.Text = T("Urządzenie połączone: ", "Device paired: ") + id +
                 "\n" + await _sync.StatusAsync(remote.FolderId);
         });

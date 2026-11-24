@@ -149,41 +149,6 @@ public sealed class LocalSyncthingEngine : IEmbeddedSyncEngine
         await StartAutomationWatcherAsync(path, ct);
     }
 
-    public async Task ConfigureMailFolderAsync(string path, string remoteId, string remoteAddress,
-        CancellationToken ct = default)
-    {
-        var api = _api ?? throw new InvalidOperationException("Syncthing not started.");
-        var workspace = new MarkdownWorkspace(path);
-        // The nested mailbox is handled ONLY by a different peer/folder.
-        // Keep the native E2EE notes folder from scanning it.
-        string ignorePath = workspace.ResolveFile(".stignore");
-        var ignores = File.Exists(ignorePath) ? await File.ReadAllTextAsync(ignorePath, ct) : "";
-        const string pattern = "/.gtmd/inbox";
-        if (!ignores.Replace("\r\n", "\n").Split('\n').Contains(pattern))
-            await File.AppendAllTextAsync(ignorePath, "\n" + pattern + "\n", ct);
-        var local = workspace.ResolveFile(".gtmd/inbox");
-        Directory.CreateDirectory(local);
-        var device = await api.GetFromJsonAsync<JsonObject>("rest/config/defaults/device", ct)
-            ?? throw new InvalidOperationException("No Syncthing defaults.");
-        device["deviceID"] = remoteId;
-        device["name"] = "GTMD ciphertext-only mail transport";
-        device["untrusted"] = false;
-        device["addresses"] = new JsonArray(remoteAddress);
-        using (var response = await api.PostAsJsonAsync("rest/config/devices", device, ct))
-            if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.Conflict)
-                response.EnsureSuccessStatusCode();
-        var folder = await api.GetFromJsonAsync<JsonObject>("rest/config/defaults/folder", ct)
-            ?? throw new InvalidOperationException("No Syncthing folder defaults.");
-        folder["id"] = "gtmd-mail";
-        folder["label"] = "GTMD encrypted mail";
-        folder["path"] = local;
-        folder["type"] = "receiveonly";
-        folder["devices"] = new JsonArray(new JsonObject { ["deviceID"] = await DeviceIdAsync(ct) },
-            new JsonObject { ["deviceID"] = remoteId });
-        using var saved = await api.PutAsJsonAsync("rest/config/folders/gtmd-mail", folder, ct);
-        saved.EnsureSuccessStatusCode();
-    }
-
     private async Task StartAutomationWatcherAsync(string workspace, CancellationToken ct)
     {
         _watcher?.Dispose();

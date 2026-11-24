@@ -45,23 +45,13 @@ else
 fi
 # Rotating recipients must re-encrypt the same Syncthing identity, even if
 # the config/certificate/key bytes themselves did not change.
-mailhome=/data/mail-syncthing
-fingerprint="$( (cd "$home" && sha256sum config.xml cert.pem key.pem; if [ -s "$mailhome/config.xml" ]; then (cd "$mailhome" && sha256sum config.xml cert.pem key.pem); fi; printf '%s\\n' "$recipients") | sha256sum | awk '{print $1}')"
+fingerprint="$( (cd "$home" && sha256sum config.xml cert.pem key.pem; printf '%s\\n' "$recipients") | sha256sum | awk '{print $1}')"
 previous="$(cat "$repo/fingerprint.sha256" 2>/dev/null || true)"
 if [ "$fingerprint" != "$previous" ] || [ ! -s "$repo/identity.tar.gz.age" ]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT HUP INT TERM
   chmod 0700 "$tmp"
-  mkdir -p "$tmp/stage"
-  cp "$home"/config.xml "$home"/cert.pem "$home"/key.pem "$tmp/stage/"
-  if [ -s "$mailhome/config.xml" ]; then
-    mkdir -p "$tmp/stage/mail-syncthing"
-    cp "$mailhome"/config.xml "$mailhome"/cert.pem "$mailhome"/key.pem "$tmp/stage/mail-syncthing/"
-    tar -czf "$tmp/identity.tar.gz" -C "$tmp/stage" config.xml cert.pem key.pem \
-      mail-syncthing/config.xml mail-syncthing/cert.pem mail-syncthing/key.pem
-  else
-    tar -czf "$tmp/identity.tar.gz" -C "$tmp/stage" config.xml cert.pem key.pem
-  fi
+  tar -czf "$tmp/identity.tar.gz" -C "$home" config.xml cert.pem key.pem
   tar -tzf "$tmp/identity.tar.gz" >/dev/null
   age "$@" -o "$tmp/identity.tar.gz.age" "$tmp/identity.tar.gz"
   mv "$tmp/identity.tar.gz.age" "$repo/identity.tar.gz.age"

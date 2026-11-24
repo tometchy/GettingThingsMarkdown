@@ -142,6 +142,6 @@ This project cannot be presented as a complete or production-ready MVP until the
 
 Own source files are released under MPL-2.0; dependencies retain their licenses. Full dependency and packaging audit is pending.
 
-### File-based inbound mail (development preview)
+### Git-only inbound mail (development preview)
 
-The newer design is described in [docs/gtmd-mail-files.md](docs/gtmd-mail-files.md). Incoming mail is encrypted once for all registered device keys, written to the tenant's existing two Git replicas on the gtm-mail branch, then delivered by a separate Syncthing identity into .gtmd/inbox; the ordinary notes folder stays native receiveencrypted. Full MIME and attachments are preserved, and import does not expire history. SQLite is a compatibility delivery index, not a third resident ciphertext store for new Kubernetes deliveries. The production gates in MVP acceptance still apply.
+See [docs/gtmd-mail-files.md](docs/gtmd-mail-files.md). SMTP encrypts full MIME and commits it to the existing two Git archives on the gtm-mail branch. Clients discover and read those files through authenticated Git history, then write local Markdown/attachments for normal Syncthing E2EE. No second Syncthing identity, no mail checkout or new SQLite mail bodies, and no automatic mail expiry. Production gates remain.

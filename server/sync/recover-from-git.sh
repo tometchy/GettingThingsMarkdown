@@ -29,25 +29,15 @@ age -d -i "$GTM_RECOVERY_AGE_IDENTITY_PATH" \
 # Only extract expected filenames; never run arbitrary scripts from the bundle.
 tar -tzf "$tmp/identity.tar.gz" | sort > "$tmp/list.txt"
 printf '%s\n' cert.pem config.xml key.pem | sort > "$tmp/expected.txt"
-if grep -qx mail-syncthing/config.xml "$tmp/list.txt"; then
-  printf '%s\n' cert.pem config.xml key.pem mail-syncthing/config.xml mail-syncthing/cert.pem mail-syncthing/key.pem | sort > "$tmp/expected.txt"
-fi
 cmp "$tmp/list.txt" "$tmp/expected.txt" >/dev/null || {
   echo 'Unexpected files in recovery identity bundle' >&2; exit 1;
 }
 tar -xzf "$tmp/identity.tar.gz" -C /data/syncthing config.xml cert.pem key.pem
 chmod 0600 /data/syncthing/key.pem
-if grep -qx mail-syncthing/config.xml "$tmp/list.txt"; then
-  tar -xzf "$tmp/identity.tar.gz" -C /data mail-syncthing/config.xml mail-syncthing/cert.pem mail-syncthing/key.pem
-  chmod 0600 /data/mail-syncthing/key.pem
-fi
 git reset -q --hard refs/remotes/origin/main
-# gtm-mail is optional for tenants created before SMTP. Restore the encrypted
-# mail branch on the same repo and materialize its independent working tree.
+# Restore the optional Git-only mail branch without checking it out.
 if git ls-remote --exit-code origin refs/heads/gtm-mail >/dev/null 2>&1; then
   git fetch -q origin 'refs/heads/gtm-mail:refs/heads/gtm-mail'
-  mkdir -p /data/mail
-  git archive refs/heads/gtm-mail | tar -xf - -C /data/mail
 fi
 # Git global GIT_DIR settings would force recovery branch commands to operate
 # on the main Git directory. Remove them before cloning separate branches.

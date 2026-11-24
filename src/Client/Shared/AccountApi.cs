@@ -18,6 +18,7 @@ public record CheckoutPayload(string Plan, string BillingInterval = "month");
 public record PairDevicePayload(string DeviceId, string Name);
 public record TenantStatusInfo(string Status, string? ServerDeviceId, string? Detail,
     string FolderId, string? LocalSyncAddress);
+public record GitMailPageInfo(string? Revision, string[] Digests, bool HasMore);
 public record MailInboxInfo(bool Enabled, string Address, int Pending, bool PublicKeyRegistered);
 public record RegisterMailInboxPayload(string PublicKeyBase64, string? Password = null);
 public record RotateMailAddressPayload(string Password);
@@ -37,6 +38,7 @@ public record MailMessagePayload(string Subject, string From, string Body, DateT
 [JsonSerializable(typeof(PairDevicePayload))]
 [JsonSerializable(typeof(TenantStatusInfo))]
 [JsonSerializable(typeof(MailInboxInfo))]
+[JsonSerializable(typeof(GitMailPageInfo))]
 [JsonSerializable(typeof(RegisterMailInboxPayload))]
 [JsonSerializable(typeof(RotateMailAddressPayload))]
 [JsonSerializable(typeof(MailEnvelopeInfo[]))]
@@ -155,6 +157,26 @@ public sealed class AccountApi : IDisposable
             AccountJsonContext.Default.RegisterMailInboxPayload);
         return await RequestAsync(HttpMethod.Post, "api/mail/inbox", body,
             AccountJsonContext.Default.MailInboxInfo);
+    }
+
+    public async Task<GitMailPageInfo> GitMailPageAsync(int page, string? revision,
+        CancellationToken ct = default)
+    {
+        using var response = await _http.GetAsync("api/history/mail?page=" + page +
+            (revision is null ? "" : "&revision=" + Uri.EscapeDataString(revision)), ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync(AccountJsonContext.Default.GitMailPageInfo, ct)
+            ?? throw new InvalidOperationException("Missing Git mail listing.");
+    }
+
+    public async Task<MailEnvelopeInfo> GitMailFileAsync(string revision, string digest,
+        CancellationToken ct = default)
+    {
+        using var response = await _http.GetAsync("api/history/mail/" + Uri.EscapeDataString(digest) +
+            "?revision=" + Uri.EscapeDataString(revision), HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync(AccountJsonContext.Default.MailEnvelopeInfo, ct)
+            ?? throw new InvalidOperationException("Missing Git mail file.");
     }
 
     public Task<MailEnvelopeInfo[]> MailMessagesAsync(int skip = 0, CancellationToken ct = default) =>

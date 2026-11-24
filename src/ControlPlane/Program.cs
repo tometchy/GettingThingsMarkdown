@@ -330,7 +330,7 @@ authenticated.MapGet("/tenant", async (ClaimsPrincipal user, ProvisioningDb db, 
 });
 
 authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal user,
-    ProvisioningDb db, AppDb accounts, CancellationToken ct) =>
+    ProvisioningDb db, CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
     var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
@@ -345,19 +345,10 @@ authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal
     try
     {
         await syncthing.AddDeviceAsync(input.DeviceId, input.Name, ct);
-        var account = await accounts.Accounts.FindAsync([id!.Value], ct);
-        string? mailDevice = null;
-        if (account?.Plan is "plus" or "pro")
-        {
-            using var mailPeer = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"], true);
-            await mailPeer.AddDeviceAsync(input.DeviceId, input.Name, ct);
-            mailDevice = await mailPeer.DeviceIdAsync(ct);
-        }
         return Results.Ok(new PairResponse(TenantNames.FolderId,
             tenant.ServerDeviceId ?? await syncthing.DeviceIdAsync(ct),
             builder.Configuration["GTM_SYNC_PUBLIC_ADDRESS"] ?? "",
-            "Syncthing Untrusted Device Encryption; key remains on trusted clients",
-            mailDevice, builder.Configuration["GTM_MAIL_SYNC_PUBLIC_ADDRESS"]));
+            "Syncthing Untrusted Device Encryption; key remains on trusted clients"));
     }
     catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
     catch (HttpRequestException) { return Results.Problem("Syncthing pairing failed.", statusCode: 503); }
@@ -379,7 +370,7 @@ authenticated.MapGet("/devices", async (ClaimsPrincipal user,
 });
 
 authenticated.MapDelete("/devices/{deviceId}", async (string deviceId,
-    ClaimsPrincipal user, ProvisioningDb db, AppDb accounts, CancellationToken ct) =>
+    ClaimsPrincipal user, ProvisioningDb db, CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
     var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
@@ -390,16 +381,7 @@ authenticated.MapDelete("/devices/{deviceId}", async (string deviceId,
     var credentials = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
     if (credentials is null) return Results.Problem("Tenant unavailable.", statusCode: 503);
     using var sync = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"]);
-    try
-    {
-        var account = await accounts.Accounts.FindAsync([id!.Value], ct);
-        if (account?.Plan is "plus" or "pro")
-        {
-            using var mailPeer = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"], true);
-            await mailPeer.RemoveDeviceAsync(deviceId, ct);
-        }
-        await sync.RemoveDeviceAsync(deviceId, ct);
-    }
+    try { await sync.RemoveDeviceAsync(deviceId, ct); }
     catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
     return Results.NoContent();
 });
@@ -581,7 +563,7 @@ authenticated.MapGet("/mail/inbox", async (ClaimsPrincipal user, AppDb db,
     if (inbox is null)
         return Results.Ok(new MailInboxView(false, "", 0, false));
     var pending = await db.EncryptedInboundMails.CountAsync(x =>
-        x.AccountId == account.Id && x.AcknowledgedUtc == null, ct);
+        x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct);
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain, pending, true));
 });
@@ -632,7 +614,7 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain,
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct),
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct),
         true));
 }).RequireRateLimiting("auth");
 
@@ -661,23 +643,55 @@ authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress req
     return Results.Ok(new MailInboxView(true,
         inbox.LocalPart + "@" + builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"],
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct), true));
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct), true));
 }).RequireRateLimiting("auth");
 
-// SQLite is a delivery index only for Kubernetes-backed new envelopes.
-async Task<IResult> ReadMailEnvelopeAsync(EncryptedInboundMail[] rows, CancellationToken ct)
+// Discover new mail directly from the same tenant Git history used for notes.
+// The authenticated account determines the repository; clients never receive
+// Git writer credentials or read an arbitrary tenant/path.
+async Task<IResult> ReadGitMailAsync(ClaimsPrincipal user, ProvisioningDb states,
+    string? revision, int page, string? digest, CancellationToken ct)
 {
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    if (page < 1 || page > 100000 ||
+        (revision is not null && !GitHistoryProxy.ValidGitOid(revision)) ||
+        (digest is not null && (!GitHistoryProxy.ValidMailDigest(digest) || revision is null)))
+        return Results.BadRequest();
+    if (!builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED"))
+        return builder.Environment.IsDevelopment() && digest is null
+            ? Results.Ok(new GitMailPage(null, [], false))
+            : Results.StatusCode(503);
+    var tenant = await states.Tenants.FindAsync([id.Value], ct);
+    if (tenant is null || tenant.Status is not ("Ready" or "Suspended"))
+        return Results.StatusCode(409);
+    if (!KubeApi.Available) return Results.StatusCode(503);
+    using var kube = new KubeApi();
+    var cert = await kube.SecretAsync(tenant.Namespace, "history-ca", ct);
+    var secrets = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (cert is null || secrets is null) return Results.StatusCode(503);
+    using var history = new GitHistoryProxy(tenant.Namespace, cert["tls.crt"], secrets["reader-pass"]);
     try
     {
-        var result = new List<MailEnvelope>();
-        foreach (var row in rows)
-            result.Add(row.Ciphertext.Length > 0 ? MailEncryption.View(row) :
-                await TenantMailFiles.FetchAsync(row.AccountId, row.DedupSha256, ct));
-        return Results.Ok(result.ToArray());
+        if (digest is null)
+            return Results.Ok(await history.MailPageAsync(revision, page, ct));
+        return Results.Content(await history.MailFileAsync(revision!, digest, ct), "application/json");
     }
-    catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+    catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+    { return Results.NotFound(); }
+    catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or
+        System.Text.Json.JsonException or TaskCanceledException)
     { return Results.StatusCode(503); }
 }
+
+authenticated.MapGet("/history/mail", (ClaimsPrincipal user, ProvisioningDb states,
+    string? revision, int? page, CancellationToken ct) =>
+    ReadGitMailAsync(user, states, revision, page ?? 1, null, ct));
+authenticated.MapGet("/history/mail/{digest}", (ClaimsPrincipal user, ProvisioningDb states,
+    string digest, string? revision, CancellationToken ct) =>
+    ReadGitMailAsync(user, states, revision, 1, digest, ct));
+
+// Legacy SQLite envelopes only. New deliveries are discovered via Git.
 authenticated.MapGet("/mail/messages", async (int? skip, ClaimsPrincipal user, AppDb db,
     CancellationToken ct) =>
 {
@@ -688,9 +702,9 @@ authenticated.MapGet("/mail/messages", async (int? skip, ClaimsPrincipal user, A
         return Results.StatusCode(403);
     if (skip is < 0 or > MailInboxPolicy.MaxPendingMessages) return Results.BadRequest();
     var messages = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null)
+        .Where(x => x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0)
         .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
-    return await ReadMailEnvelopeAsync(messages.ToArray(), ct);
+    return Results.Ok(messages.Select(MailEncryption.View).ToArray());
 });
 
 // A device can re-import mail after losing its local folder during the
@@ -703,9 +717,9 @@ authenticated.MapGet("/mail/messages/archived", async (
     if (skip is < 0)
         return Results.BadRequest(new { error = "Invalid archive offset." });
     var mails = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null)
+        .Where(x => x.AccountId == id.Value && x.AcknowledgedUtc != null && x.Ciphertext.Length > 0)
         .OrderBy(x => x.Id).Skip(skip ?? 0).Take(1).ToListAsync(ct);
-    return await ReadMailEnvelopeAsync(mails.ToArray(), ct);
+    return Results.Ok(mails.Select(MailEncryption.View).ToArray());
 });
 
 authenticated.MapDelete("/mail/messages/{messageId:guid}", async (Guid messageId,
@@ -789,11 +803,11 @@ app.MapPost("/internal/mail/receive", async (
     var messages = await db.EncryptedInboundMails.AsNoTracking()
         .Where(x => x.AccountId == account.Id)
         .Select(x => x.ReceivedUtc).ToListAsync(ct);
-    if ((!builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED") &&
-         messages.Count >= MailInboxPolicy.MaxRetainedMessages) ||
+    bool gitBacked = builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED");
+    if ((!gitBacked && (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
         await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null, ct)
-            >= MailInboxPolicy.MaxPendingMessages ||
+            x.AccountId == account.Id && x.AcknowledgedUtc == null && x.Ciphertext.Length > 0, ct)
+            >= MailInboxPolicy.MaxPendingMessages)) ||
         messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
         return Results.StatusCode(429);
     EncryptedInboundMail encrypted;
@@ -829,7 +843,7 @@ app.MapPost("/internal/mail/receive", async (
     db.EncryptedInboundMails.Add(encrypted);
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException) { return Results.Conflict(new { error = "Retry mail delivery." }); }
-    return Results.Ok(new { queued = true });
+    return Results.Ok(new { stored = true });
 });
 
 authenticated.MapPost("/billing/checkout", async (CheckoutRequest request,

@@ -8,8 +8,6 @@ public interface IEmbeddedSyncEngine : IAsyncDisposable
     Task<string> DeviceIdAsync(CancellationToken ct = default);
     Task ConfigureFolderAsync(string path, string folderId, string remoteId,
         string remoteAddress, CancellationToken ct = default);
-    Task ConfigureMailFolderAsync(string path, string remoteId, string remoteAddress,
-        CancellationToken ct = default);
     Task<string> StatusAsync(string folderId, CancellationToken ct = default);
     Task<string?> ExportRecoverySecretAsync(string folderId, CancellationToken ct = default);
     Task<string> RestoreSnapshotAsync(AccountApi api, string revisionSha,
@@ -30,4 +28,4 @@ public static class ClientRuntime
 }
 
 public record ServerPairing(string FolderId, string ServerDeviceId, string Address,
-    string EncryptionMode, string? MailDeviceId = null, string? MailAddress = null);
+    string EncryptionMode);

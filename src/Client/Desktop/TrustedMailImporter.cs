@@ -102,50 +102,34 @@ public static class TrustedMailImporter
         privateKey.ImportFromPem(await File.ReadAllTextAsync(key, ct));
         var workspace = new MarkdownWorkspace(workspaceRoot);
         int imported = 0;
-        var inbox = workspace.ResolveFile(".gtmd/inbox");
-        // A native receive-only Syncthing folder has its own marker. Import
-        // only files that have actually arrived, even when the API is offline.
-        if (Directory.Exists(inbox) && File.Exists(Path.Combine(inbox, ".stfolder")) ||
-            Directory.Exists(Path.Combine(inbox, ".stfolder")))
+        // Git is the authoritative inbox. Page through a pinned revision;
+        // a receipt synchronized with ordinary notes prevents repeat imports.
+        string? revision = null;
+        for (int page = 1; ; page++)
         {
-            foreach (var file in Directory.EnumerateFiles(inbox, "*.json").OrderBy(x => x))
+            var listing = await api.GitMailPageAsync(page, revision, ct);
+            if (listing.Revision is null) break;
+            revision ??= listing.Revision;
+            if (!string.Equals(revision, listing.Revision, StringComparison.Ordinal))
+                throw new InvalidOperationException("Git mailbox revision changed during scan.");
+            foreach (string digest in listing.Digests)
             {
                 ct.ThrowIfCancellationRequested();
-                var filename = Path.GetFileNameWithoutExtension(file);
-                if (filename.Length is not (32 or 64) || !filename.All(Uri.IsHexDigit)) continue;
-                var safe = workspace.ResolveFile(".gtmd/inbox/" + Path.GetFileName(file));
-                if (new FileInfo(safe).Length > 120L * 1024 * 1024) continue;
-                var sourceReceipt = ".gtmd/imported/source-" + filename + ".receipt";
-                var receiptPath = workspace.ResolveFile(sourceReceipt);
-                Guid id;
-                if (!archive && File.Exists(receiptPath) &&
-                    Guid.TryParse(await File.ReadAllTextAsync(receiptPath, ct), out id))
-                {
-                    await TryAcknowledgeAsync(workspace, api, id, ct);
-                    continue;
-                }
-                MailEnvelopeInfo? mail;
-                try
-                {
-                    await using var stream = File.OpenRead(safe);
-                    mail = await JsonSerializer.DeserializeAsync(stream,
-                        AccountJsonContext.Default.MailEnvelopeInfo, ct);
-                }
-                catch (JsonException) { continue; } // Incomplete file; retry after next sync.
-                catch (IOException) { continue; }
-                if (mail is null) continue;
+                if (digest.Length != 64 || !digest.All(Uri.IsHexDigit))
+                    throw new InvalidOperationException("Invalid mail file name.");
+                string receipt = ".gtmd/imported/source-" + digest + ".receipt";
+                if (!archive && File.Exists(workspace.ResolveFile(receipt))) continue;
+                var mail = await api.GitMailFileAsync(revision, digest, ct);
                 var result = await MaterializeAsync(workspace, mail, privateKey, archive, ct);
-                if (result is null) continue; // Older envelope encrypted for another device.
+                if (result is null) continue;
                 if (result.Value) imported++;
-                await workspace.SaveBinaryIfAbsentAsync(sourceReceipt,
+                await workspace.SaveBinaryIfAbsentAsync(receipt,
                     Encoding.UTF8.GetBytes(mail.Id.ToString("D")), ct);
-                await TryAcknowledgeAsync(workspace, api, mail.Id, ct);
             }
-            return imported;
+            if (!listing.HasMore) break;
         }
 
-        // Compatibility path for installations that have not paired the
-        // separate mailbox identity. New data is already committed in Git.
+        // Import legacy SQLite ciphertext only; no new mail is delivered here.
         for (int skip = 0, scanned = 0; scanned < (archive ? 10000 : 200); scanned++)
         {
             var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
@@ -176,24 +160,11 @@ public static class TrustedMailImporter
         catch (CryptographicException) { return null; }
         var materialized = await MailAttachmentImporter.SaveAsync(
             workspace, mail.Id, message.RawMimeBase64, ct);
-        await workspace.SaveAsync(relative, MailTaskFormatter.Render(message.Subject,
-            message.From, materialized.Body ?? message.Body, message.ReceivedUtc) + materialized.Links, ct);
+        await workspace.SaveBinaryIfAbsentAsync(relative, Encoding.UTF8.GetBytes(
+            MailTaskFormatter.Render(message.Subject, message.From,
+                materialized.Body ?? message.Body, message.ReceivedUtc) + materialized.Links), ct);
         await workspace.SaveBinaryIfAbsentAsync(receipt, "imported"u8.ToArray(), ct);
         return true;
-    }
-
-    private static async Task TryAcknowledgeAsync(MarkdownWorkspace workspace, AccountApi api,
-        Guid id, CancellationToken ct)
-    {
-        string marker = $".gtmd/acknowledged/{id:N}.receipt";
-        if (File.Exists(workspace.ResolveFile(marker))) return;
-        try
-        {
-            await api.AckMailAsync(id, ct);
-            await workspace.SaveBinaryIfAbsentAsync(marker, "acknowledged"u8.ToArray(), ct);
-        }
-        catch (HttpRequestException) { /* Receipt is optional; mail bytes remain in both Git replicas. */ }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     public static MailMessagePayload Decrypt(MailEnvelopeInfo mail, RSA privateKey)

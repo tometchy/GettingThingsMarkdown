@@ -4,7 +4,7 @@ import hmac, http.server, json, os, pathlib, re, subprocess, tempfile
 
 ROOT = pathlib.Path(os.environ.get("GTM_MAIL_DATA_ROOT", "/data"))
 GIT = ROOT / "git"
-WORK = ROOT / "mail"
+WORK = ROOT / "files"
 REF = "refs/heads/gtm-mail"
 LIMIT = 120 * 1024 * 1024
 TOKEN = os.environ["GTM_SYNCTHING_API_KEY"]
@@ -26,7 +26,6 @@ def store_file(path, body, immutable=True):
         # the already-committed ciphertext and its original message ID.
         body = old.stdout
     else:
-        WORK.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
             index = str(pathlib.Path(tmp) / "index")
             parent = git("rev-parse", "--verify", REF, check=False)
@@ -43,18 +42,9 @@ def store_file(path, body, immutable=True):
             if parent_id: args += ["-p", parent_id]
             commit = git(*args).stdout.decode().strip()
             git("update-ref", REF, commit, parent_id or "0" * 40)
-    # Do not expose a file to Syncthing until the second Git replica has it.
+    # No checkout and no writes to Syncthing. Only Git objects and the
+    # separate ref are changed. SMTP is confirmed after the second replica.
     git("push", "origin", REF + ":" + REF)
-    # Keep a ciphertext-only working directory, separate from the native
-    # receiveencrypted Syncthing folder. Never put ordinary bytes in that folder.
-    target = WORK / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=WORK, delete=False) as f:
-        tmpname = f.name
-        f.write(body)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmpname, target)
     return body
 
 def store(digest, body):

@@ -129,11 +129,11 @@ See [SMTP feature and security contract](smtp-encrypted-inbox.md).
 Do not mark the project production-ready or promise data-loss protection until
 all relevant mandatory checks have passed.
 
-## File-based inbound mail and access isolation (PR #9)
+## Git-only inbound mail and access isolation (PR #9)
 
-- [x] Implementation: full original MIME retained in public-key envelope, attachment bytes extracted only by trusted client, multiple RSA device recipients, same two Git repositories and separate working tree, non-expiring history.
-- [x] Implementation: separate native Syncthing send-only mailbox identity in existing Plus/Pro Sync container, receive-only .gtmd/inbox on desktop, main E2EE folder unchanged.
-- [x] Implementation: private-IP Scaleway pools, outbound NAT and deny-all-public Kubernetes API ACL. Actual cloud owner IAM and break-glass access tests remain necessary.
-- [ ] Production independent cloud recovery, restore of account/mail registry/index and mobile clients, history purge and quotas.
+- [x] Implementation: full original MIME retained in public-key envelope, attachments extracted on trusted client, independent RSA device recipients, Git-only mailbox branch in the two existing archives, no time-based expiry.
+- [x] Implementation: client reads paginated Git history and imports locally; Syncthing only synchronizes normal task, attachment and receipt files. No extra Syncthing peer.
+- [x] Implementation: private-IP Scaleway workers, outbound NAT, deny-public API and scoped operator IAM configuration. Real provider access verification remains necessary.
+- [ ] Production independent cloud recovery, account/mail registry recovery, mobile clients, history purge and quotas.
 
-See [file-based mailbox design](gtmd-mail-files.md). Previous 30-day mail archive descriptions are superseded; no automatic expiration for accepted mail history.
+See [Git-only mail design](gtmd-mail-files.md). Previous 30-day archive and additional mailbox peer descriptions are superseded.

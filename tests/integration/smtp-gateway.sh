@@ -7,13 +7,7 @@ set -euo pipefail
 : "${GTM_SMTP_PORT:=2525}"
 
 tmp="$(mktemp -d)"
-native_container="gtmd-mail-ci-$RANDOM"
-cleanup() {
-  docker rm -f "$native_container" >/dev/null 2>&1 || true
-  if [ -n "${mail_pf:-}" ]; then kill "$mail_pf" 2>/dev/null || true; fi
-  rm -rf "$tmp" 2>/dev/null || true
-}
-trap cleanup EXIT
+trap 'rm -rf "$tmp"' EXIT
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072   -out "$tmp/private.pem" >/dev/null 2>&1
 openssl pkey -in "$tmp/private.pem" -pubout -outform DER   -out "$tmp/public.der" >/dev/null 2>&1
 public="$(base64 -w0 < "$tmp/public.der")"
@@ -58,47 +52,21 @@ with smtplib.SMTP(os.environ.get('GTM_SMTP_HOST', '127.0.0.1'),
     assert code == 550, (code, 'Unknown random alias accepted')
 PY
 
-messages="$(curl --fail-with-body -fsS "$GTM_API_URL/api/mail/messages"   -H "Authorization: Bearer $bearer")"
-jq -e 'length == 1 and .[0].ciphertext != null and .[0].wrappedKey != null'   <<< "$messages" >/dev/null
-if grep -q 'mail.google.com/confirm-gtm-ci' <<< "$messages"; then
-  echo "Unencrypted mail leaked into API response" >&2
-  exit 1
-fi
-id="$(jq -r '.[0].id' <<< "$messages")"
+# Discover directly from the read-only Gitea history API, not a queue.
+listing="$(curl -fsS "$GTM_API_URL/api/history/mail?page=1" -H "Authorization: Bearer $bearer")"
+revision="$(jq -er '.revision' <<< "$listing")"
+digest="$(jq -er '.digests[0]' <<< "$listing")"
+file="$(curl -fsS "$GTM_API_URL/api/history/mail/$digest?revision=$revision" -H "Authorization: Bearer $bearer")"
+jq -e '.ciphertext != null and .wrappedKey != null' <<< "$file" >/dev/null
+! grep -q 'mail.google.com/confirm-gtm-ci' <<< "$file"
 ns="gtm-${account//-/}"
-kubectl -n "$ns" exec sync-0 -- git --git-dir=/data/git ls-tree -r --name-only gtm-mail | grep -q '^.gtmd/inbox/'
-kubectl -n "$ns" exec history-0 -- git --git-dir=/var/lib/gitea/git/repositories/archive/history.git ls-tree -r --name-only gtm-mail | grep -q '^.gtmd/inbox/'
-# Independently exercise real Syncthing protocol transport, not the API download.
-mkdir -p "$tmp/client-state" "$tmp/client-files"
-chmod 777 "$tmp/client-state" "$tmp/client-files"
-native_key="$(openssl rand -hex 24)"
-kubectl -n "$ns" port-forward svc/sync 22015:22001 >"$tmp/mail-forward.log" 2>&1 &
-mail_pf=$!
-docker run -d --name "$native_container" --network host -v "$tmp/client-state:/state" -v "$tmp/client-files:/files" \
-  --entrypoint /bin/syncthing ghcr.io/syncthing/syncthing:2.1.7 \
-  serve --home=/state --no-browser --gui-address=127.0.0.1:8399 --gui-apikey="$native_key" >/dev/null
-st() { curl -fsS --connect-timeout 3 -H "X-API-Key: $native_key" "$@"; }
-for i in $(seq 1 50); do
-  if st http://127.0.0.1:8399/rest/system/status >"$tmp/native.json" 2>/dev/null; then break; fi
-  sleep 1
-done
-client="$(jq -er .myID "$tmp/native.json")"
-pair="$(curl --fail-with-body -fsS -X POST "$GTM_API_URL/api/devices" -H "Authorization: Bearer $bearer" -H 'Content-Type: application/json' -d "$(jq -nc --arg id "$client" '{deviceId:$id,name:"mail-ci"}')")"
-peer="$(jq -er .mailDeviceId <<< "$pair")"
-primary="$(jq -er .serverDeviceId <<< "$pair")"
-[ "$peer" != "$primary" ]
-st http://127.0.0.1:8399/rest/config/defaults/device | jq -c --arg id "$peer" '.deviceID=$id | .untrusted=false | .addresses=["tcp://127.0.0.1:22015"]' | st -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8399/rest/config/devices >/dev/null
-st http://127.0.0.1:8399/rest/config/defaults/folder | jq -c --arg own "$client" --arg peer "$peer" '.id="gtmd-mail" | .label="Mail CI" | .path="/files" | .type="receiveonly" | .devices=[{"deviceID":$own},{"deviceID":$peer}]' | st -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8399/rest/config/folders >/dev/null
-received=""
-for i in $(seq 1 60); do
-  received="$(find "$tmp/client-files" -maxdepth 1 -name '*.json' -type f -print -quit)"
-  [ -n "$received" ] && jq -e --arg id "$id" '.id == $id' "$received" >/dev/null 2>&1 && break
-  sleep 2
-done
-[ -n "$received" ]
-jq -e --arg id "$id" '.id == $id' "$received" >/dev/null
-jq -e '.ciphertext != null' "$received" >/dev/null
-echo "Native Syncthing ciphertext-only mailbox received"
-curl --fail-with-body -fsS -X DELETE "$GTM_API_URL/api/mail/messages/$id"   -H "Authorization: Bearer $bearer" >/dev/null
-curl --fail-with-body -fsS "$GTM_API_URL/api/mail/messages"   -H "Authorization: Bearer $bearer" | jq -e 'length == 0' >/dev/null
-echo "SMTP STARTTLS -> encrypted queue -> authenticated ACK PASS"
+a="$(kubectl -n "$ns" exec sync-0 -- git --git-dir=/data/git rev-parse gtm-mail)"
+b="$(kubectl -n "$ns" exec history-0 -- git --git-dir=/var/lib/gitea/git/repositories/archive/history.git rev-parse gtm-mail)"
+[ "$a" = "$b" ] && [ "$a" = "$revision" ]
+kubectl -n "$ns" exec sync-0 -- git --git-dir=/data/git show "gtm-mail:.gtmd/inbox/$digest.json" >"$tmp/local.json"
+printf '%s' "$file" >"$tmp/api.json"
+cmp "$tmp/local.json" "$tmp/api.json"
+# No additional Syncthing mailbox peer or plaintext workspace injection.
+kubectl -n "$ns" exec sync-0 -- sh -ec 'test ! -e /data/mail-syncthing/config.xml; test ! -e /data/files/.gtmd/inbox'
+curl -fsS "$GTM_API_URL/api/mail/messages" -H "Authorization: Bearer $bearer" | jq -e 'length == 0' >/dev/null
+echo "PASS: SMTP STARTTLS -> both Git replicas -> authenticated read-only Git file (no mailbox peer or queue)"
