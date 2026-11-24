@@ -82,6 +82,7 @@ public static class TenantManifests
             spec = new { selector = new Dictionary<string, string> {
                 ["gtm.io/tenant"] = ns, ["gtm.io/role"] = "sync" },
                 ports = new object[] { new { name = "api", port = 8384, targetPort = 8384 },
+                    new { name = "mail", port = 8385, targetPort = 8385 },
                     new { name = "tcp", port = 22000, targetPort = 22000 } } }
         });
         yield return KubeObject.From("v1", "Service", "history", ns, new
@@ -260,7 +261,7 @@ public static class TenantManifests
                                              plan == "plus" ? "192Mi" : "256Mi" },
                                     limits = new { cpu = "1", memory = "1Gi" } },
                                 ports = role == "sync"
-                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "tcp", containerPort = 22000 } }
+                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "mail", containerPort = 8385 }, new { name = "tcp", containerPort = 22000 } }
                                     : new[] { new { name = "https", containerPort = 3000 } },
                                 readinessProbe = role == "sync"
                                     ? new { tcpSocket = (object)new { port = 8384 }, initialDelaySeconds = 15, periodSeconds = 10 }
@@ -290,7 +291,7 @@ public static class TenantManifests
                 policyTypes = new[] { "Ingress" },
                 ingress = new object[] {
                     new { from = new object[] { controlPlane },
-                          ports = new object[] { new { protocol = "TCP", port = 8384 } } },
+                          ports = new object[] { new { protocol = "TCP", port = 8384 }, new { protocol = "TCP", port = 8385 } } },
                     new { ports = new object[] {
                         new { protocol = "TCP", port = 22000 },
                         new { protocol = "UDP", port = 22000 }

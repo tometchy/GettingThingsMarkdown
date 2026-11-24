@@ -8,7 +8,7 @@ namespace GettingThingsMarkdown.ControlPlane;
 /// <summary>
 /// Incoming SMTP is necessarily plaintext until this process encrypts it.
 /// Neither the private key nor the Syncthing folder encryption secret is known
-/// to the SMTP gateway or control plane. Attachments are explicitly dropped.
+/// to the SMTP gateway or control plane. The exact original MIME is preserved inside the encrypted payload.
 /// </summary>
 public static class MailEncryption
 {
@@ -50,7 +50,7 @@ public static class MailEncryption
         var normalized = new InboundMailPayload(
             Limit(email.Subject ?? "(no subject)", 400),
             Limit(email.From.ToString(), 254),
-            Limit(text, 32768), now);
+            Limit(text, 32768), now, Convert.ToBase64String(rawMessage));
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(normalized,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var keyMaterial = RandomNumberGenerator.GetBytes(32);

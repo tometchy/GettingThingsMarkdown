@@ -35,11 +35,11 @@ public sealed record MailInboxView(bool Enabled, string Address, int Pending,
 public sealed record MailEnvelope(Guid Id, string WrappedKey, string Nonce,
     string Tag, string Ciphertext, DateTimeOffset ReceivedUtc);
 public sealed record InboundMailPayload(string Subject, string From,
-    string Body, DateTimeOffset ReceivedUtc);
+    string Body, DateTimeOffset ReceivedUtc, string? RawMimeBase64 = null);
 
 public static class MailInboxPolicy
 {
-    public const int MaxRawMailBytes = 256 * 1024;
+    public const int MaxRawMailBytes = 40 * 1024 * 1024;
     public const int MaxPendingMessages = 200;
     public const int MaxDailyMessages = 100;
     public const int MaxRetainedMessages = 3000;

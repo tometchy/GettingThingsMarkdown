@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = MailInboxPolicy.MaxRawMailBytes);
 
 string? jwtSecret = builder.Configuration["GTM_JWT_SECRET"];
 if (string.IsNullOrWhiteSpace(jwtSecret))
@@ -24,7 +25,7 @@ builder.Services.AddDbContext<AppDb>(o => o.UseSqlite(
 builder.Services.AddDbContext<ProvisioningDb>(o => o.UseSqlite(
     builder.Configuration["GTM_PROVISIONING_DB"] ?? "Data Source=gtm-provisioning.sqlite"));
 builder.Services.AddHostedService<ProvisioningWorker>();
-builder.Services.AddHostedService<MailArchiveRetentionWorker>();
+// Mail is user history. Never auto-expire acknowledged ciphertext.
 builder.Services.AddHttpClient<StripeGateway>(client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<EmailVerificationService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -743,6 +744,26 @@ app.MapPost("/internal/mail/receive", async (
         return Results.BadRequest(new { error = "Invalid MIME message." });
     }
     finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+    if (builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED"))
+    {
+        if (!KubeApi.Available) return Results.StatusCode(503);
+        try
+        {
+            var durable = await TenantMailFiles.PersistAsync(account.Id, digest,
+                MailEncryption.View(encrypted), ct);
+            // A retry after a lost response must index the identical envelope.
+            encrypted.Id = durable.Id;
+            encrypted.WrappedKey = Convert.FromBase64String(durable.WrappedKey);
+            encrypted.Nonce = Convert.FromBase64String(durable.Nonce);
+            encrypted.Tag = Convert.FromBase64String(durable.Tag);
+            encrypted.Ciphertext = Convert.FromBase64String(durable.Ciphertext);
+            encrypted.ReceivedUtc = durable.ReceivedUtc;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+        { return Results.StatusCode(503); }
+    }
+    else if (!builder.Environment.IsDevelopment())
+        return Results.StatusCode(503);
     db.EncryptedInboundMails.Add(encrypted);
     try { await db.SaveChangesAsync(ct); }
     catch (DbUpdateException) { return Results.Conflict(new { error = "Retry mail delivery." }); }

@@ -35,6 +35,13 @@ cmp "$tmp/list.txt" "$tmp/expected.txt" >/dev/null || {
 tar -xzf "$tmp/identity.tar.gz" -C /data/syncthing config.xml cert.pem key.pem
 chmod 0600 /data/syncthing/key.pem
 git reset -q --hard refs/remotes/origin/main
+# gtm-mail is optional for tenants created before SMTP. Restore the encrypted
+# mail branch on the same repo and materialize its independent working tree.
+if git ls-remote --exit-code origin refs/heads/gtm-mail >/dev/null 2>&1; then
+  git fetch -q origin 'refs/heads/gtm-mail:refs/heads/gtm-mail'
+  mkdir -p /data/mail
+  git archive refs/heads/gtm-mail | tar -xf - -C /data/mail
+fi
 # Git global GIT_DIR settings would force recovery branch commands to operate
 # on the main Git directory. Remove them before cloning separate branches.
 unset GIT_DIR GIT_WORK_TREE

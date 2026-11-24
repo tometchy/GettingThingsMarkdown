@@ -23,7 +23,7 @@ public record RegisterMailInboxPayload(string PublicKeyBase64);
 public record RotateMailAddressPayload(string Password);
 public record MailEnvelopeInfo(Guid Id, string WrappedKey, string Nonce,
     string Tag, string Ciphertext, DateTimeOffset ReceivedUtc);
-public record MailMessagePayload(string Subject, string From, string Body, DateTimeOffset ReceivedUtc);
+public record MailMessagePayload(string Subject, string From, string Body, DateTimeOffset ReceivedUtc, string? RawMimeBase64 = null);
 
 // WASM trimming and future iOS AOT: all API JSON shapes must be source-generated.
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

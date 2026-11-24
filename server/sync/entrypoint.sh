@@ -37,6 +37,8 @@ else
   git remote add origin "$GTM_GIT_URL"
 fi
 /usr/local/bin/commit-loop.sh &
+# Already encrypted mail has a separate Git branch, never native receiveencrypted bytes.
+python3 /usr/local/bin/mail-files.py &
 if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
   # Existing tenants may have lost historical A-side LFS blobs from the
   # legacy automatic-prune behavior. Rehydrate from History/S3 on startup.
