@@ -46,6 +46,10 @@ jobs:
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
       - name: Verify immutable backup rejects weak retention
         run: bash tests/security/worm-fail-closed.sh
+      - name: Build and test independent encrypted Control Plane backup
+        run: |
+          docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .
+          bash tests/integration/controlplane-backup.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build standalone shared SMTP gateway image
