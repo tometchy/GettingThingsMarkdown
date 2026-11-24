@@ -33,6 +33,19 @@ jobs:
         with:
           name: account-ui-browser
           path: src/Client/Browser/bin/Release/net10.0-browser/publish/wwwroot/
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Git-only mailbox commit and failed push retry
+        run: |
+          python3 tests/integration/git-mail-writer.py
+          python3 tests/integration/storage-budget.py
+          python3 tests/integration/history-purge-candidate.py
+      - name: Build and test independent encrypted Control Plane backup
+        run: |
+          docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .
+          bash tests/integration/controlplane-backup.sh
   images:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -46,10 +59,6 @@ jobs:
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
       - name: Verify immutable backup rejects weak retention
         run: bash tests/security/worm-fail-closed.sh
-      - name: Build and test independent encrypted Control Plane backup
-        run: |
-          docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .
-          bash tests/integration/controlplane-backup.sh
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build standalone shared SMTP gateway image
@@ -82,11 +91,6 @@ jobs:
             --from-literal=jwt="$(openssl rand -hex 32)" \
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
-      - name: Verify Git-only mailbox commit and failed push retry
-        run: |
-          python3 tests/integration/git-mail-writer.py
-          python3 tests/integration/storage-budget.py
-          python3 tests/integration/history-purge-candidate.py
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &

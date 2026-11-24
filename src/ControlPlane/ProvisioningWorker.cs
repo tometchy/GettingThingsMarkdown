@@ -111,7 +111,12 @@ public sealed class ProvisioningWorker(
                     var secret = await kube.SecretAsync(state.Namespace, "gtm-credentials", ct);
                     if (secret is null) throw new InvalidOperationException("Missing tenant credentials.");
                     using var sync = new SyncthingTenantApi(state.Namespace, secret["sync-api-key"]);
-                    if (resuming) await sync.SetFolderPausedAsync(false, ct);
+                    if (resuming)
+                    {
+                        using var storage = new TenantStorage(state.Namespace, secret["sync-api-key"]);
+                        await storage.SetQuotaAsync(PlanCatalog.EffectiveQuotaBytes(account, DateTimeOffset.UtcNow), ct);
+                        await sync.SetFolderPausedAsync((await storage.UsageAsync(ct)).Blocked, ct);
+                    }
                     var serverId = await sync.DeviceIdAsync(ct);
                     if (await GiteaTenantApi.RepositoryReadyAsync(state.Namespace,
                         await kube.SecretAsync(state.Namespace, "history-ca", ct), secret["reader-pass"], ct))

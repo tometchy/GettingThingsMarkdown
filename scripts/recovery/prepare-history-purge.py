@@ -106,9 +106,9 @@ def prepare(source, candidate, branch, path):
         for name, oid in refs(stage).items():
             if name != ref and oid != before[name]: raise ValueError("Unexpected ref modification")
         # Prove selected path is absent from every reachable commit on this ref.
-        for oid in git(stage, "rev-list", ref).stdout.decode().splitlines():
+        for oid in git(stage, "rev-list", "--all").stdout.decode().splitlines():
             if target_blob(stage, oid, path):
-                raise RuntimeError("Historical file still reachable")
+                raise RuntimeError("Historical path still reachable through another branch or tag; refusing candidate")
         reachable = {l.split(b" ",1)[0].decode() for l in git(stage,"rev-list","--objects","--all").stdout.splitlines()}
         shared = sorted(removed_blobs & reachable)
         # This removes unreachable objects only inside the isolated candidate.
