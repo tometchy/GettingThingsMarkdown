@@ -1,11 +1,11 @@
 provider "scaleway" {
   project_id = var.project_id
   region     = var.region
-  zone               = var.zone_a
+  zone       = var.zone_a
 }
 
 data "scaleway_k8s_version" "latest" {
-  name               = "latest"
+  name = "latest"
 }
 
 resource "scaleway_vpc_private_network" "gtm" {

@@ -19,10 +19,9 @@ def git(*args, data=None, index=None, check=True):
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                           check=check, timeout=90)
 
-def store(digest, body):
-    path = ".gtmd/inbox/" + digest + ".json"
+def store_file(path, body, immutable=True):
     old = git("show", REF + ":" + path, check=False)
-    if old.returncode == 0:
+    if old.returncode == 0 and immutable:
         # An SMTP retry after a failed push or lost HTTP response must reuse
         # the already-committed ciphertext and its original message ID.
         body = old.stdout
@@ -50,13 +49,36 @@ def store(digest, body):
     # receiveencrypted Syncthing folder. Never put ordinary bytes in that folder.
     target = WORK / path
     target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as f:
+    with tempfile.NamedTemporaryFile(dir=WORK, delete=False) as f:
         tmpname = f.name
         f.write(body)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmpname, target)
     return body
+
+def store(digest, body):
+    return store_file(".gtmd/inbox/" + digest + ".json", body)
+
+def settings(body):
+    import hashlib
+    parsed = json.loads(body)
+    if not all(k in parsed for k in ("accountId", "localPart", "publicKeys", "enabled")):
+        raise ValueError("Invalid mailbox configuration")
+    recipients = os.environ.get("GTM_RECOVERY_AGE_RECIPIENT", "").split(",")
+    if len(set(recipients)) < 2 or not all(r.startswith("age1") for r in recipients):
+        raise ValueError("Independent age recovery recipients required")
+    fingerprint = hashlib.sha256(body).hexdigest()
+    marker = ROOT / "mail-settings.sha256"
+    if marker.exists() and marker.read_text() == fingerprint:
+        git("push", "origin", REF + ":" + REF)
+        return
+    args = ["age"]
+    for r in recipients: args.extend(["-r", r])
+    encrypted = subprocess.run(args, input=body, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, check=True, timeout=30).stdout
+    store_file(".gtmd/settings.json.age", encrypted, immutable=False)
+    marker.write_text(fingerprint)
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_): pass
@@ -85,7 +107,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(403)
             return
         match = re.fullmatch(r"/mail/([0-9A-Fa-f]{64})", self.path)
-        if not match:
+        if not match and self.path != "/settings":
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length", "0"))
@@ -93,6 +115,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_error(413); return
             body = self.rfile.read(n)
             if len(body) != n: raise ValueError("short input")
+            if self.path == "/settings":
+                if n > 32 * 1024: raise ValueError("Settings too large")
+                settings(body)
+                self.send_body(b'{"saved":true}')
+                return
             envelope = json.loads(body)
             # This is a private authenticated endpoint. Only envelope fields,
             # not arbitrary plaintext MIME or paths, are accepted.

@@ -4,10 +4,11 @@ using System.Text;
 namespace GettingThingsMarkdown.Client.Desktop;
 public static class MailAttachmentImporter
 {
-    public static async Task<string> SaveAsync(MarkdownWorkspace workspace, Guid id,
+    public sealed record Materialized(string? Body, string Links);
+    public static async Task<Materialized> SaveAsync(MarkdownWorkspace workspace, Guid id,
         string? rawMimeBase64, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(rawMimeBase64)) return "";
+        if (string.IsNullOrEmpty(rawMimeBase64)) return new(null, "");
         await using var stream = new MemoryStream(Convert.FromBase64String(rawMimeBase64), writable: false);
         var message = await MimeMessage.LoadAsync(stream, ct);
         var links = new StringBuilder();
@@ -38,6 +39,9 @@ public static class MailAttachmentImporter
             links.Append(image ? "!" : "").Append('[').Append(name)
                 .Append("](../").Append(relative).Append(")\n");
         }
-        return links.Length == 0 ? "" : "\n## Attachments\n\n" + links;
+        var body = message.TextBody ?? (message.HtmlBody is { } html
+            ? new MimeKit.Text.HtmlToText { OutputLinkUrls = true, OutputImageAltText = true }.Convert(html)
+            : "");
+        return new(body, links.Length == 0 ? "" : "\n## Attachments\n\n" + links);
     }
 }

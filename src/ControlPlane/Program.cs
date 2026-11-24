@@ -551,6 +551,18 @@ authenticated.MapDelete("/history/deletion-requests/{requestId:guid}", async (
 });
 
 
+// Store mailbox settings encrypted under two independent recovery public keys.
+async Task<bool> PersistMailSettingsAsync(MailInbox inbox, CancellationToken ct)
+{
+    if (!builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED"))
+        return builder.Environment.IsDevelopment();
+    if (!TenantManifests.ValidRecoveryRecipients(builder.Configuration["GTM_RECOVERY_AGE_RECIPIENT"]))
+        return builder.Environment.IsDevelopment(); // kind without real recovery identities
+    try { await TenantMailFiles.PersistSettingsAsync(inbox, ct); return true; }
+    catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+    { return false; }
+}
+
 // NEW: The SMTP gateway encrypts at ingest, without the Syncthing E2EE
 // secret or any tenant private key. A local trusted client imports the
 // decrypted task into its ordinary Syncthing Send/Receive workspace.
@@ -615,6 +627,8 @@ authenticated.MapPost("/mail/inbox", async (RegisterMailInbox request, ClaimsPri
             OccurredUtc = clock.GetUtcNow(), Details = "rsa3072-public-key" });
         await db.SaveChangesAsync(ct);
     }
+    if (!await PersistMailSettingsAsync(inbox, ct))
+        return Results.StatusCode(503);
     return Results.Ok(new MailInboxView(inbox.Enabled,
         inbox.LocalPart + "@" + domain,
         await db.EncryptedInboundMails.CountAsync(x =>
@@ -642,6 +656,8 @@ authenticated.MapPost("/mail/inbox/rotate-address", async (RotateMailAddress req
         Actor = "account-password", OccurredUtc = clock.GetUtcNow(),
         Details = "Old alias disabled; no private key change." });
     await db.SaveChangesAsync(ct);
+    if (!await PersistMailSettingsAsync(inbox, ct))
+        return Results.StatusCode(503);
     return Results.Ok(new MailInboxView(true,
         inbox.LocalPart + "@" + builder.Configuration["GTM_INBOUND_MAIL_DOMAIN"],
         await db.EncryptedInboundMails.CountAsync(x =>
@@ -793,6 +809,7 @@ app.MapPost("/internal/mail/receive", async (
         if (!KubeApi.Available) return Results.StatusCode(503);
         try
         {
+            if (!await PersistMailSettingsAsync(inbox!, ct)) return Results.StatusCode(503);
             var durable = await TenantMailFiles.PersistAsync(account.Id, digest,
                 MailEncryption.View(encrypted), ct);
             // A retry after a lost response must index the identical envelope.
@@ -971,7 +988,7 @@ app.MapGet("/api/admin/observability", async (
                 .Count(g => g.Count() >= MailInboxPolicy.MaxRetainedMessages * 9 / 10),
             accountsAtPendingLimit = mailPending.GroupBy(m => m.AccountId)
                 .Count(g => g.Count() >= MailInboxPolicy.MaxPendingMessages),
-            recoveryWindowDays = MailInboxPolicy.RecoveryDays,
+            automaticMailExpiryEnabled = false,
             queueIndependentlyReplicated = false
         },
         historyProtection = new {

@@ -102,44 +102,98 @@ public static class TrustedMailImporter
         privateKey.ImportFromPem(await File.ReadAllTextAsync(key, ct));
         var workspace = new MarkdownWorkspace(workspaceRoot);
         int imported = 0;
-        // Page through the archive without downloading all ciphertext at once.
-        // A deterministic mail ID makes retries and multi-device imports safe.
+        var inbox = workspace.ResolveFile(".gtmd/inbox");
+        // A native receive-only Syncthing folder has its own marker. Import
+        // only files that have actually arrived, even when the API is offline.
+        if (Directory.Exists(inbox) && File.Exists(Path.Combine(inbox, ".stfolder")) ||
+            Directory.Exists(Path.Combine(inbox, ".stfolder")))
+        {
+            foreach (var file in Directory.EnumerateFiles(inbox, "*.json").OrderBy(x => x))
+            {
+                ct.ThrowIfCancellationRequested();
+                var filename = Path.GetFileNameWithoutExtension(file);
+                if (filename.Length is not (32 or 64) || !filename.All(Uri.IsHexDigit)) continue;
+                var safe = workspace.ResolveFile(".gtmd/inbox/" + Path.GetFileName(file));
+                if (new FileInfo(safe).Length > 120L * 1024 * 1024) continue;
+                var sourceReceipt = ".gtmd/imported/source-" + filename + ".receipt";
+                var receiptPath = workspace.ResolveFile(sourceReceipt);
+                Guid id;
+                if (!archive && File.Exists(receiptPath) &&
+                    Guid.TryParse(await File.ReadAllTextAsync(receiptPath, ct), out id))
+                {
+                    await TryAcknowledgeAsync(workspace, api, id, ct);
+                    continue;
+                }
+                MailEnvelopeInfo? mail;
+                try
+                {
+                    await using var stream = File.OpenRead(safe);
+                    mail = await JsonSerializer.DeserializeAsync(stream,
+                        AccountJsonContext.Default.MailEnvelopeInfo, ct);
+                }
+                catch (JsonException) { continue; } // Incomplete file; retry after next sync.
+                catch (IOException) { continue; }
+                if (mail is null) continue;
+                var result = await MaterializeAsync(workspace, mail, privateKey, archive, ct);
+                if (result is null) continue; // Older envelope encrypted for another device.
+                if (result.Value) imported++;
+                await workspace.SaveBinaryIfAbsentAsync(sourceReceipt,
+                    Encoding.UTF8.GetBytes(mail.Id.ToString("D")), ct);
+                await TryAcknowledgeAsync(workspace, api, mail.Id, ct);
+            }
+            return imported;
+        }
+
+        // Compatibility path for installations that have not paired the
+        // separate mailbox identity. New data is already committed in Git.
         for (int skip = 0, scanned = 0; scanned < (archive ? 10000 : 200); scanned++)
         {
             var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
                 : await api.MailMessagesAsync(skip, ct);
-            foreach (var mail in messages)
-            {
-                ct.ThrowIfCancellationRequested();
-                string relative = MailTaskFormatter.FileName(mail.Id);
-                var path = workspace.Resolve(relative);
-                // A new device may lack keys for old envelopes; do not ACK
-                // them, and continue to messages addressed to the new key.
-                MailMessagePayload message;
-                try { message = Decrypt(mail, privateKey); }
-                catch (CryptographicException) { skip++; continue; }
-                await workspace.SaveBinaryIfAbsentAsync($".gtmd/inbox/{mail.Id:N}.json",
-                    JsonSerializer.SerializeToUtf8Bytes(mail, AccountJsonContext.Default.MailEnvelopeInfo), ct);
-                string receipt = $".gtmd/imported/{mail.Id:N}.receipt";
-                bool completed = File.Exists(workspace.ResolveFile(receipt)) ||
-                    File.Exists(workspace.Resolve("Archive/" + Path.GetFileName(relative)));
-                if (!File.Exists(path) && (!completed || archive))
-                {
-                    string attachments = await MailAttachmentImporter.SaveAsync(
-                        workspace, mail.Id, message.RawMimeBase64, ct);
-                    await workspace.SaveAsync(relative, MailTaskFormatter.Render(
-                        message.Subject, message.From, message.Body, message.ReceivedUtc) + attachments, ct);
-                    imported++;
-                }
-                await workspace.SaveBinaryIfAbsentAsync(receipt, "imported"u8.ToArray(), ct);
-                // ACK is never issued on archived recoveries, and on pending
-                // deliveries happens only after the atomic local write.
-                if (!archive) await api.AckMailAsync(mail.Id, ct);
-                else skip++;
-            }
             if (messages.Length == 0) break;
+            var mail = messages[0];
+            await workspace.SaveBinaryIfAbsentAsync($".gtmd/inbox/{mail.Id:N}.json",
+                JsonSerializer.SerializeToUtf8Bytes(mail, AccountJsonContext.Default.MailEnvelopeInfo), ct);
+            var result = await MaterializeAsync(workspace, mail, privateKey, archive, ct);
+            if (result is null) { skip++; continue; }
+            if (result.Value) imported++;
+            if (!archive) await api.AckMailAsync(mail.Id, ct);
+            else skip++;
         }
         return imported;
+    }
+
+    private static async Task<bool?> MaterializeAsync(MarkdownWorkspace workspace,
+        MailEnvelopeInfo mail, RSA privateKey, bool archive, CancellationToken ct)
+    {
+        string relative = MailTaskFormatter.FileName(mail.Id);
+        var path = workspace.Resolve(relative);
+        string receipt = $".gtmd/imported/{mail.Id:N}.receipt";
+        if (File.Exists(path) || File.Exists(workspace.Resolve("Archive/" + Path.GetFileName(relative))) ||
+            (!archive && File.Exists(workspace.ResolveFile(receipt)))) return false;
+        MailMessagePayload message;
+        try { message = Decrypt(mail, privateKey); }
+        catch (CryptographicException) { return null; }
+        var materialized = await MailAttachmentImporter.SaveAsync(
+            workspace, mail.Id, message.RawMimeBase64, ct);
+        await workspace.SaveAsync(relative, MailTaskFormatter.Render(message.Subject,
+            message.From, materialized.Body ?? message.Body, message.ReceivedUtc) + materialized.Links, ct);
+        await workspace.SaveBinaryIfAbsentAsync(receipt, "imported"u8.ToArray(), ct);
+        return true;
+    }
+
+    private static async Task TryAcknowledgeAsync(MarkdownWorkspace workspace, AccountApi api,
+        Guid id, CancellationToken ct)
+    {
+        string marker = $".gtmd/acknowledged/{id:N}.receipt";
+        if (File.Exists(workspace.ResolveFile(marker))) return;
+        try
+        {
+            await api.AckMailAsync(id, ct);
+            await workspace.SaveBinaryIfAbsentAsync(marker, "acknowledged"u8.ToArray(), ct);
+        }
+        catch (HttpRequestException) { /* Receipt is optional; mail bytes remain in both Git replicas. */ }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     public static MailMessagePayload Decrypt(MailEnvelopeInfo mail, RSA privateKey)
