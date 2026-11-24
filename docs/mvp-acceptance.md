@@ -137,3 +137,15 @@ all relevant mandatory checks have passed.
 - [ ] Production independent cloud recovery, account/mail registry recovery, mobile clients, history purge and quotas.
 
 See [Git-only mail design](gtmd-mail-files.md). Previous 30-day archive and additional mailbox peer descriptions are superseded.
+
+## Storage and recovery safeguards (PR #10)
+
+- [x] Fix legacy LFS smoke test to wait for the actual encrypted file, not an empty initialization commit.
+- [x] Measure Sync encrypted live bytes and allocated Git/recovery bytes, expose a tenant-scoped read-only usage API and display in desktop pairing UI. Conservative history budget 1.8x effective live allowance and disk reserve; new SMTP data rejected before Git commit if projected usage exceeds budget.
+- [x] Reconcile paid/gift quota and pause Sync at capacity or failed metering. No deletion to enforce quota. This is sampled admission, NOT a hard storage-driver limit; already-in-flight Syncthing writes and the replica B physical disk remain independent limits. A paused tenant may need a temporary free allowance to synchronize deletions.
+- [x] Include the Git mail ref in A-to-B and B-to-A cold recovery and fail closed if remote ref existence cannot be verified.
+- [x] Implementation: optional shared backup container with SQLite online backup, age encryption for two recipients, independently configured S3-compatible destinations, checksum verification after download and stale-backup readiness gate. Restore into a fresh staged directory only. Each DB snapshot is internally consistent, not an atomic cross-database transaction; live failover and Stripe reconciliation still required.
+- [x] Isolated Git purge candidate builder: rewrite a literal opaque path, preserve unrelated refs, refuse a still-live main file, GC unreachable blobs inside candidate only, report blobs still referenced elsewhere. No publication or live deletion.
+- [ ] Provider-enforced hard quotas, immutable seven-day retention, serialized hold/purge authorization and dual-replica cutover/retired-storage destruction, independently fenced failover, Android/iOS and real production acceptance remain mandatory.
+
+See [storage and recovery operations](storage-recovery-operations.md).

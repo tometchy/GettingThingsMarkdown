@@ -16,7 +16,7 @@ for branch in settings infra; do
 done
 GIT_DIR=/data/git GIT_WORK_TREE=/data/files git push origin refs/heads/main:refs/heads/main
 if git --git-dir=/data/git rev-parse --verify refs/heads/gtm-mail >/dev/null 2>&1; then
-  GIT_DIR=/data/git GIT_WORK_TREE=/data/mail git push origin refs/heads/gtm-mail:refs/heads/gtm-mail
+  GIT_DIR=/data/git GIT_WORK_TREE=/data/files git push origin refs/heads/gtm-mail:refs/heads/gtm-mail
 fi
 git -C /data/recovery/settings push origin HEAD:refs/heads/gtm-recovery
 git -C /data/recovery/infra push origin HEAD:refs/heads/gtm-infra

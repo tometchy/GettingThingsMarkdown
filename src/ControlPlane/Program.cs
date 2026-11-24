@@ -342,6 +342,23 @@ authenticated.MapGet("/tenant", async (ClaimsPrincipal user, ProvisioningDb db, 
             builder.Configuration["GTM_SYNC_PUBLIC_ADDRESS"]));
 });
 
+authenticated.MapGet("/storage", async (ClaimsPrincipal user, ProvisioningDb states,
+    AppDb accounts, CancellationToken ct) =>
+{
+    var id = AdminSecurity.UserId(user);
+    if (id is null) return Results.Unauthorized();
+    var tenant = await states.Tenants.FindAsync([id.Value], ct);
+    var account = await accounts.Accounts.FindAsync([id.Value], ct);
+    if (tenant is null || account is null || !KubeApi.Available) return Results.StatusCode(503);
+    using var kube = new KubeApi();
+    var creds = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
+    if (creds is null) return Results.StatusCode(503);
+    using var storage = new TenantStorage(tenant.Namespace, creds["sync-api-key"]);
+    try { return Results.Ok(await storage.UsageAsync(ct)); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+    { return Results.StatusCode(503); }
+});
+
 authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal user,
     ProvisioningDb db, CancellationToken ct) =>
 {
@@ -837,7 +854,7 @@ app.MapPost("/internal/mail/receive", async (
         try
         {
             if (!await PersistMailSettingsAsync(inbox!, ct)) return Results.StatusCode(503);
-            var durable = await TenantMailFiles.PersistAsync(account.Id, digest,
+            var durable = await TenantMailFiles.PersistAsync(account.Id, PlanCatalog.EffectiveQuotaBytes(account, now), digest,
                 MailEncryption.View(encrypted), ct);
             // A retry after a lost response must index the identical envelope.
             encrypted.Id = durable.Id;

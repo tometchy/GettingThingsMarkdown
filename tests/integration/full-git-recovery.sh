@@ -30,6 +30,8 @@ run original '
   git add --all
   git commit -q -m "Full encrypted bytes"
   git push -q origin HEAD:refs/heads/main
+  GTM_SYNCTHING_API_KEY=test-only python3 -c "import sys; sys.path.insert(0, \"/usr/local/bin\"); import runpy; runpy.run_path(\"/usr/local/bin/mail-files.py\")[\"store\"](\"a\"*64, b\"opaque encrypted MIME with attachment\")"
+  git rev-parse gtm-mail > /store/mail-ref
   echo "<configuration>STABLE_SYNCTHING_ID</configuration>" > /data/syncthing/config.xml
   printf "CERT_STABLE\n" > /data/syncthing/cert.pem
   printf "KEY_STABLE\n" > /data/syncthing/key.pem
@@ -60,6 +62,8 @@ run rebuilt '
   grep -q KEY_STABLE /data/syncthing/key.pem
   git -C /data/recovery/settings rev-parse HEAD >/dev/null
   git -C /data/recovery/infra rev-parse HEAD >/dev/null
+  test "$(git --git-dir=/data/git rev-parse gtm-mail)" = "$(cat /store/mail-ref)"
+  test ! -e /data/files/.gtmd/inbox
 '
 # Simulated TOTAL loss of B; after explicit operator fencing, rebuild B
 # from the A archive and both encrypted recovery branches.
@@ -71,10 +75,12 @@ run rebuilt '
   git -C /data/recovery/infra remote set-url origin /store/rehydrated-history.git
   GTM_GIT_URL=/store/rehydrated-history.git GTM_FENCE_ACKNOWLEDGED=true \
     /usr/local/bin/reseed-history.sh
-  for ref in main gtm-recovery gtm-infra; do
+  for ref in main gtm-recovery gtm-infra gtm-mail; do
     git --git-dir=/store/rehydrated-history.git rev-parse --verify "$ref^{commit}" >/dev/null
   done
   test "$(git --git-dir=/store/rehydrated-history.git cat-file -s main:full-encrypted-opaque-blob.bin)" -eq 8388608
+  test "$(git --git-dir=/store/rehydrated-history.git rev-parse gtm-mail)" = "$(cat /store/mail-ref)"
+  test "$(git --git-dir=/store/rehydrated-history.git show gtm-mail:.gtmd/inbox/$(printf %064d 0 | tr 0 a).json)" = "opaque encrypted MIME with attachment"
   git --git-dir=/store/rehydrated-history.git show gtm-recovery:identity.tar.gz.age > /store/recovered.age
   age -d -i /store/age-a.key -o /store/recovered.tar.gz /store/recovered.age
   tar -tzf /store/recovered.tar.gz | grep -q key.pem

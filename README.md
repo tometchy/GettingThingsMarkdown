@@ -145,3 +145,7 @@ Own source files are released under MPL-2.0; dependencies retain their licenses.
 ### Git-only inbound mail (development preview)
 
 See [docs/gtmd-mail-files.md](docs/gtmd-mail-files.md). SMTP encrypts full MIME and commits it to the existing two Git archives on the gtm-mail branch. Clients discover and read those files through authenticated Git history, then write local Markdown/attachments for normal Syncthing E2EE. No second Syncthing identity, no mail checkout or new SQLite mail bodies, and no automatic mail expiry. Production gates remain.
+
+### Storage and shared-state recovery
+
+The storage meter uses opaque bytes only. New SMTP writes are admitted against a conservative budget; Syncthing is paused when sampling detects an exceeded allowance. No history is deleted automatically. Optional shared Control Plane backup is described in [storage and recovery operations](docs/storage-recovery-operations.md). Neither sampled metering nor encrypted periodic backups constitute a verified hard quota or automatic multi-cloud failover.

@@ -36,9 +36,16 @@ tar -xzf "$tmp/identity.tar.gz" -C /data/syncthing config.xml cert.pem key.pem
 chmod 0600 /data/syncthing/key.pem
 git reset -q --hard refs/remotes/origin/main
 # Restore the optional Git-only mail branch without checking it out.
-if git ls-remote --exit-code origin refs/heads/gtm-mail >/dev/null 2>&1; then
-  git fetch -q origin 'refs/heads/gtm-mail:refs/heads/gtm-mail'
-fi
+# A network/authorization failure must not be mistaken for absent mail.
+set +e
+git ls-remote --exit-code origin refs/heads/gtm-mail >/dev/null
+mail_status=$?
+set -e
+case "$mail_status" in
+  0) git fetch -q origin 'refs/heads/gtm-mail:refs/heads/gtm-mail' ;;
+  2) : ;; # No matching ref on a legacy tenant
+  *) echo 'Cannot verify mailbox ref during recovery' >&2; exit 1 ;;
+esac
 # Git global GIT_DIR settings would force recovery branch commands to operate
 # on the main Git directory. Remove them before cloning separate branches.
 unset GIT_DIR GIT_WORK_TREE

@@ -33,6 +33,19 @@ jobs:
         with:
           name: account-ui-browser
           path: src/Client/Browser/bin/Release/net10.0-browser/publish/wwwroot/
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Git-only mailbox commit and failed push retry
+        run: |
+          python3 tests/integration/git-mail-writer.py
+          python3 tests/integration/storage-budget.py
+          python3 tests/integration/history-purge-candidate.py
+      - name: Build and test independent encrypted Control Plane backup
+        run: |
+          docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .
+          bash tests/integration/controlplane-backup.sh
   images:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -78,8 +91,6 @@ jobs:
             --from-literal=jwt="$(openssl rand -hex 32)" \
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
-      - name: Verify Git-only mailbox commit and failed push retry
-        run: python3 tests/integration/git-mail-writer.py
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &
@@ -151,6 +162,12 @@ jobs:
             --set mailIngress.tokenSecret=existing-inbound-token > /tmp/gtm-mail.yaml
           grep -q 'name: mail-ingress' /tmp/gtm-mail.yaml
           grep -q 'GTM_INBOUND_MAIL_DOMAIN' /tmp/gtm-mail.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set stateBackup.enabled=true \
+            --set stateBackup.existingSecret=ci-backup \
+            --set-string recovery.ageRecipient=ci-render-only > /tmp/gtm-backup.yaml
+          grep -q 'name: state-backup' /tmp/gtm-backup.yaml
+          grep -q 'name: GTM_BACKUP_ENDPOINT_A' /tmp/gtm-backup.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0
