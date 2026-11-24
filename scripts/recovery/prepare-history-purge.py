@@ -77,7 +77,8 @@ def prepare(source, candidate, branch, path):
                 removed_blobs.add(blob)
                 index.unlink(missing_ok=True)
                 git(stage, "read-tree", oid, index=index)
-                git(stage, "update-index", "--force-remove", "--", path, index=index)
+                git(stage, "update-index", "-z", "--index-info",
+                    data=b"0 " + b"0"*len(blob) + b"\t" + path.encode() + b"\0", index=index)
                 new_tree = git(stage, "write-tree", index=index).stdout.strip()
             for i, line in enumerate(lines):
                 if line.startswith(b"tree ") and blob:
@@ -119,7 +120,7 @@ def prepare(source, candidate, branch, path):
                 raise RuntimeError("Unreachable target blob retained in candidate")
         if refs(source) != before: raise ValueError("Source changed; discard candidate")
         # Disable push from the candidate (requires a separate explicit publisher).
-        git(stage, "remote", "remove", "origin")
+        git(stage, "config", "--remove-section", "remote.origin")
         stage.rename(candidate)
         return {"sourceRef": before[ref], "candidateRef": new, "branch": branch,
             "uniqueBlobsRemoved": len(removed_blobs)-len(shared),
