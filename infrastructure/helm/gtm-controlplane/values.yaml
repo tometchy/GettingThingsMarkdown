@@ -35,6 +35,8 @@ placement:
   syncCloud: "" # e.g. hetzner (set both or neither)
   historyCloud: "" # e.g. ovh
 storage:
+  # Fresh full-Git tenants only; requires actual CSI capacity enforcement.
+  isolateLiveVolume: true
   controlPlaneGi: 2
   className: ""
   syncClassName: ""

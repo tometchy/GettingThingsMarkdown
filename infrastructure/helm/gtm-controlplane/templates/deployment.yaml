@@ -36,6 +36,8 @@ spec:
               value: {{ and .Values.development.enabled .Values.development.longTrial | quote }}
             - name: GTM_DEV_VOLUME_GI
               value: {{ .Values.development.tenantVolumeGi | quote }}
+            - name: GTM_ISOLATE_LIVE_VOLUME
+              value: {{ .Values.storage.isolateLiveVolume | quote }}
             - name: GTM_SYNC_STORAGE_CLASS
               value: {{ .Values.storage.syncClassName | quote }}
             - name: GTM_HISTORY_STORAGE_CLASS

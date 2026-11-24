@@ -13,7 +13,7 @@ public static class TenantManifests
         IDictionary<string, string>? secrets, string syncImage, string historyImage, bool lfsEnabled = false, bool wormEnabled = false,
         string? syncStorageClass = null, string? historyStorageClass = null,
         int? quotaGiBOverride = null, string? syncCloud = null, string? historyCloud = null,
-        string? recoveryRecipient = null, string? failoverCloud = null)
+        string? recoveryRecipient = null, string? failoverCloud = null, bool isolatedLiveVolume = false)
     {
         if (string.IsNullOrWhiteSpace(syncCloud) != string.IsNullOrWhiteSpace(historyCloud))
             throw new ArgumentException("Cloud placement requires both providers.");
@@ -35,8 +35,9 @@ public static class TenantManifests
         // PLUS Git archive; B keeps the entire bare Git archive. Storage must
         // be provisioned for both and measured. Unbounded history remains a
         // separate *unimplemented* byte quota/garbage-collection challenge.
-        string syncSize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 3)) + "Gi";
+        string syncSize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * (isolatedLiveVolume ? 2 : 3))) + "Gi";
         string historySize = (devVolumeGi > 0 ? devVolumeGi : checked(baseGiB * 2)) + "Gi";
+        if (isolatedLiveVolume && lfsEnabled) throw new ArgumentException("Separate live volume requires full Git, not legacy LFS.");
         string legacyLfsSyncSize = checked(baseGiB * 2) + "Gi";
         yield return KubeObject.From("v1", "Namespace", ns, null, new
         {
@@ -52,6 +53,20 @@ public static class TenantManifests
                 type = "Opaque",
                 data = secrets.ToDictionary(x => x.Key,
                     x => Convert.ToBase64String(Encoding.UTF8.GetBytes(x.Value)))
+            });
+        }
+        if (isolatedLiveVolume)
+        {
+            var liveSpec = new Dictionary<string, object> {
+                ["accessModes"] = new[] { "ReadWriteOnce" },
+                ["resources"] = new { requests = new Dictionary<string, string> {
+                    ["storage"] = baseGiB + "Gi" } }
+            };
+            if (!string.IsNullOrWhiteSpace(syncStorageClass))
+                liveSpec["storageClassName"] = syncStorageClass;
+            yield return KubeObject.From("v1", "PersistentVolumeClaim", "sync-live", ns, new {
+                apiVersion = "v1", kind = "PersistentVolumeClaim",
+                metadata = Meta("sync-live", ns), spec = liveSpec
             });
         }
         foreach (var role in new[] { "sync", "history" })
@@ -137,6 +152,7 @@ public static class TenantManifests
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
                     new { name = "GTM_GIT_USERNAME", value = "sync" },
                     new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" },
+                    new { name = "GTM_ISOLATED_LIVE_VOLUME", value = isolatedLiveVolume ? "true" : "false" },
                     new { name = "GTM_STORAGE_QUOTA_BYTES", value = ((long)(quotaGiBOverride ?? (int)(PlanCatalog.Quotas[plan] / PlanCatalog.GiB)) * PlanCatalog.GiB).ToString(System.Globalization.CultureInfo.InvariantCulture) },
                     new { name = "GTM_RECOVERY_AGE_RECIPIENT", value = recoveryRecipient ?? "" }
                 }
@@ -171,7 +187,7 @@ public static class TenantManifests
                     runAsUser = 0, runAsNonRoot = false, allowPrivilegeEscalation = false,
                     capabilities = new { drop = new[] { "ALL" }, add = new[] { "CHOWN", "DAC_OVERRIDE", "FOWNER" } }
                 },
-                volumeMounts = new[] { new { name = "data", mountPath = "/data" } }
+                volumeMounts = isolatedLiveVolume ? new[] { new { name = "data", mountPath = "/data" }, new { name = "live", mountPath = "/data/files" } } : new[] { new { name = "data", mountPath = "/data" } }
             } } : Array.Empty<object>();
             if (lfsEnabled && role == "history")
             {
@@ -226,6 +242,11 @@ public static class TenantManifests
                     new { name = "gitea-config", emptyDir = new { } },
                     new { name = "history-tls", secret = new { secretName = "history-tls" } }
                 };
+            if (role == "sync" && isolatedLiveVolume)
+            {
+                mounts = mounts.Append(new { name = "live", mountPath = "/data/files" }).ToArray();
+                volumes = volumes.Append(new { name = "live", persistentVolumeClaim = new { claimName = "sync-live" } }).ToArray();
+            }
             yield return KubeObject.From("apps/v1", "StatefulSet", role, ns, new
             {
                 apiVersion = "apps/v1", kind = "StatefulSet",
