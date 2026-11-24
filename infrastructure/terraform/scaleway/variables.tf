@@ -46,3 +46,9 @@ variable "max_nodes_per_zone" {
     error_message = "max_nodes_per_zone must be 1..100."
   }
 }
+
+variable "observability_operator_user_ids" {
+  description = "IDs of dedicated daily operator identities with no other elevated permissions. Never include the organization owner or break-glass identity."
+  type        = list(string)
+  default     = []
+}

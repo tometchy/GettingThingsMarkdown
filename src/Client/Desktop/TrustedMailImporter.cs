@@ -102,31 +102,69 @@ public static class TrustedMailImporter
         privateKey.ImportFromPem(await File.ReadAllTextAsync(key, ct));
         var workspace = new MarkdownWorkspace(workspaceRoot);
         int imported = 0;
-        // Page through the archive without downloading all ciphertext at once.
-        // A deterministic mail ID makes retries and multi-device imports safe.
-        for (int skip = 0; skip < 3000; skip += 50)
+        // Git is the authoritative inbox. Page through a pinned revision;
+        // a receipt synchronized with ordinary notes prevents repeat imports.
+        string? revision = null;
+        for (int page = 1; ; page++)
         {
-            var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
-                : await api.MailMessagesAsync(ct);
-            foreach (var mail in messages)
+            var listing = await api.GitMailPageAsync(page, revision, ct);
+            if (listing.Revision is null) break;
+            revision ??= listing.Revision;
+            if (!string.Equals(revision, listing.Revision, StringComparison.Ordinal))
+                throw new InvalidOperationException("Git mailbox revision changed during scan.");
+            foreach (string digest in listing.Digests)
             {
                 ct.ThrowIfCancellationRequested();
-                string relative = MailTaskFormatter.FileName(mail.Id);
-                var path = workspace.Resolve(relative);
-                if (!File.Exists(path))
-                {
-                    var message = Decrypt(mail, privateKey);
-                    await workspace.SaveAsync(relative, MailTaskFormatter.Render(
-                        message.Subject, message.From, message.Body, message.ReceivedUtc), ct);
-                    imported++;
-                }
-                // ACK is never issued on archived recoveries, and on pending
-                // deliveries happens only after the atomic local write.
-                if (!archive) await api.AckMailAsync(mail.Id, ct);
+                if (digest.Length != 64 || !digest.All(Uri.IsHexDigit))
+                    throw new InvalidOperationException("Invalid mail file name.");
+                string receipt = ".gtmd/imported/source-" + digest + ".receipt";
+                if (!archive && File.Exists(workspace.ResolveFile(receipt))) continue;
+                var mail = await api.GitMailFileAsync(revision, digest, ct);
+                var result = await MaterializeAsync(workspace, mail, privateKey, archive, ct);
+                if (result is null) continue;
+                if (result.Value) imported++;
+                await workspace.SaveBinaryIfAbsentAsync(receipt,
+                    Encoding.UTF8.GetBytes(mail.Id.ToString("D")), ct);
             }
-            if (!archive || messages.Length < 50) break;
+            if (!listing.HasMore) break;
+        }
+
+        // Import legacy SQLite ciphertext only; no new mail is delivered here.
+        for (int skip = 0, scanned = 0; scanned < (archive ? 10000 : 200); scanned++)
+        {
+            var messages = archive ? await api.MailArchivedMessagesAsync(skip, ct)
+                : await api.MailMessagesAsync(skip, ct);
+            if (messages.Length == 0) break;
+            var mail = messages[0];
+            await workspace.SaveBinaryIfAbsentAsync($".gtmd/inbox/{mail.Id:N}.json",
+                JsonSerializer.SerializeToUtf8Bytes(mail, AccountJsonContext.Default.MailEnvelopeInfo), ct);
+            var result = await MaterializeAsync(workspace, mail, privateKey, archive, ct);
+            if (result is null) { skip++; continue; }
+            if (result.Value) imported++;
+            if (!archive) await api.AckMailAsync(mail.Id, ct);
+            else skip++;
         }
         return imported;
+    }
+
+    private static async Task<bool?> MaterializeAsync(MarkdownWorkspace workspace,
+        MailEnvelopeInfo mail, RSA privateKey, bool archive, CancellationToken ct)
+    {
+        string relative = MailTaskFormatter.FileName(mail.Id);
+        var path = workspace.Resolve(relative);
+        string receipt = $".gtmd/imported/{mail.Id:N}.receipt";
+        if (File.Exists(path) || File.Exists(workspace.Resolve("Archive/" + Path.GetFileName(relative))) ||
+            (!archive && File.Exists(workspace.ResolveFile(receipt)))) return false;
+        MailMessagePayload message;
+        try { message = Decrypt(mail, privateKey); }
+        catch (CryptographicException) { return null; }
+        var materialized = await MailAttachmentImporter.SaveAsync(
+            workspace, mail.Id, message.RawMimeBase64, ct);
+        await workspace.SaveBinaryIfAbsentAsync(relative, Encoding.UTF8.GetBytes(
+            MailTaskFormatter.Render(message.Subject, message.From,
+                materialized.Body ?? message.Body, message.ReceivedUtc) + materialized.Links), ct);
+        await workspace.SaveBinaryIfAbsentAsync(receipt, "imported"u8.ToArray(), ct);
+        return true;
     }
 
     public static MailMessagePayload Decrypt(MailEnvelopeInfo mail, RSA privateKey)
@@ -135,9 +173,20 @@ public static class TrustedMailImporter
         var iv = Convert.FromBase64String(mail.Nonce);
         var tag = Convert.FromBase64String(mail.Tag);
         var ciphertext = Convert.FromBase64String(mail.Ciphertext);
-        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 128 * 1024)
+        if (iv.Length != 12 || tag.Length != 16 || ciphertext.Length > 70 * 1024 * 1024)
             throw new CryptographicException("Invalid encrypted mail envelope.");
-        var aesKey = privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+        byte[]? aesKey = null;
+        if (wrapped.Length is >= 384 and <= 512)
+            aesKey = privateKey.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+        else
+        {
+            foreach (var candidate in JsonSerializer.Deserialize<byte[][]>(wrapped) ?? [])
+            {
+                try { aesKey = privateKey.Decrypt(candidate, RSAEncryptionPadding.OaepSHA256); break; }
+                catch (CryptographicException) { }
+            }
+        }
+        if (aesKey is null) throw new CryptographicException("Mail was not encrypted for this device.");
         var plain = new byte[ciphertext.Length];
         try
         {

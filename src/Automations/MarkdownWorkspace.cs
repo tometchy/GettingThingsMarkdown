@@ -51,11 +51,35 @@ public sealed class MarkdownWorkspace
 
     public string Resolve(string relative)
     {
+        if (!relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only Markdown files are allowed.");
+        return ResolveFile(relative);
+    }
+
+    public async Task SaveBinaryIfAbsentAsync(string relative, byte[] bytes, CancellationToken ct = default)
+    {
+        var path = ResolveFile(relative);
+        if (File.Exists(path)) return;
+        var folder = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(folder);
+        EnsureAllParentsNotSymlinks(folder);
+        var tmp = Path.Combine(folder, "." + Guid.NewGuid().ToString("N") + ".gtm-tmp");
+        try
+        {
+            await File.WriteAllBytesAsync(tmp, bytes, ct);
+            try { File.Move(tmp, path, overwrite: false); }
+            catch (IOException) when (File.Exists(path)) { }
+        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+    }
+
+    public string ResolveFile(string relative)
+    {
         if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) ||
             relative.Contains('\\') || relative.Split('/').Any(p => p is "." or ".." or ""))
             throw new ArgumentException("Unsafe relative path.");
-        if (!relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Only Markdown files are allowed.");
+        if (relative.Split('/').Any(p => p.Contains(':') || p.Any(char.IsControl)))
+            throw new ArgumentException("Unsafe file path.");
         string full = Path.GetFullPath(Path.Combine(Root, relative));
         string prefix = Root + Path.DirectorySeparatorChar;
         if (!full.StartsWith(prefix, StringComparison.Ordinal))

@@ -8,6 +8,7 @@ public sealed class MailInbox
 {
     public Guid AccountId { get; set; }
     public string LocalPart { get; set; } = "";
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
     public string PublicKeyBase64 { get; set; } = "";
     public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedUtc { get; set; }
@@ -23,41 +24,32 @@ public sealed class EncryptedInboundMail
     public byte[] Tag { get; set; } = [];
     public byte[] Ciphertext { get; set; } = [];
     public DateTimeOffset ReceivedUtc { get; set; }
+    // Git is authoritative; this row only accounts for SMTP retry/rate limits.
+    public bool StoredInGit { get; set; }
     // ACK is an import receipt, NOT permission to destroy the only queued copy.
-    // ACKed ciphertext stays recoverable for a separate grace period.
+    // ACK never authorizes deletion of user mail history.
     public DateTimeOffset? AcknowledgedUtc { get; set; }
 }
 
-public sealed record RegisterMailInbox(string PublicKeyBase64);
+public sealed record RegisterMailInbox(string PublicKeyBase64, string? Password = null);
 public sealed record RotateMailAddress(string Password);
 public sealed record MailInboxView(bool Enabled, string Address, int Pending,
     bool PublicKeyRegistered);
 public sealed record MailEnvelope(Guid Id, string WrappedKey, string Nonce,
     string Tag, string Ciphertext, DateTimeOffset ReceivedUtc);
 public sealed record InboundMailPayload(string Subject, string From,
-    string Body, DateTimeOffset ReceivedUtc);
+    string Body, DateTimeOffset ReceivedUtc, string? RawMimeBase64 = null);
 
 public static class MailInboxPolicy
 {
-    public const int MaxRawMailBytes = 256 * 1024;
+    public const int MaxRawMailBytes = 40 * 1024 * 1024;
     public const int MaxPendingMessages = 200;
     public const int MaxDailyMessages = 100;
     public const int MaxRetainedMessages = 3000;
-    public const int RecoveryDays = 30;
-
-    public static DateTimeOffset RecoveryDeadline(EncryptedInboundMail item, Account account)
-    {
-        if (item.AcknowledgedUtc is null)
-            throw new InvalidOperationException("An unacknowledged message must never expire.");
-        var earliest = item.AcknowledgedUtc.Value.AddDays(RecoveryDays);
-        return account.HistoryHoldUntilUtc is { } hold && hold > earliest
-            ? hold : earliest;
-    }
-
+    // Import acknowledgement is not a history deletion request. No time-based
+    // expiry is allowed, including legacy messages still stored in SQLite.
     public static bool EligibleForPurge(EncryptedInboundMail item, Account account,
-        DateTimeOffset now) =>
-        item.AcknowledgedUtc is not null && now >= RecoveryDeadline(item, account);
-
+        DateTimeOffset now) => false;
 
     public static bool IsEligible(Account account, DateTimeOffset now) =>
         account.Plan is "plus" or "pro" && PlanCatalog.View(account, now).CanWrite;

@@ -8,7 +8,7 @@ namespace GettingThingsMarkdown.ControlPlane;
 /// <summary>
 /// Incoming SMTP is necessarily plaintext until this process encrypts it.
 /// Neither the private key nor the Syncthing folder encryption secret is known
-/// to the SMTP gateway or control plane. Attachments are explicitly dropped.
+/// to the SMTP gateway or control plane. The exact original MIME is preserved inside the encrypted payload.
 /// </summary>
 public static class MailEncryption
 {
@@ -34,7 +34,8 @@ public static class MailEncryption
         Guid accountId, string key, byte[] rawMessage, DateTimeOffset now,
         CancellationToken ct)
     {
-        if (!ValidatePublicKey(key) || rawMessage.Length is 0 or > MailInboxPolicy.MaxRawMailBytes)
+        if (MailKeySet.Read(key).Length is < 1 or > MailKeySet.MaximumKeys ||
+            !MailKeySet.Read(key).All(ValidatePublicKey) || rawMessage.Length is 0 or > MailInboxPolicy.MaxRawMailBytes)
             throw new ArgumentException("Invalid key or message size.");
         await using var input = new MemoryStream(rawMessage, writable: false);
         var email = await MimeMessage.LoadAsync(input, ct);
@@ -50,9 +51,10 @@ public static class MailEncryption
         var normalized = new InboundMailPayload(
             Limit(email.Subject ?? "(no subject)", 400),
             Limit(email.From.ToString(), 254),
-            Limit(text, 32768), now);
+            Limit(text, 32768), now, Convert.ToBase64String(rawMessage));
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(normalized,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         var keyMaterial = RandomNumberGenerator.GetBytes(32);
         var nonce = RandomNumberGenerator.GetBytes(12);
         var encrypted = new byte[plaintext.Length];
@@ -60,9 +62,7 @@ public static class MailEncryption
         byte[] wrapped;
         try
         {
-            using var rsa = RSA.Create();
-            rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(key), out _);
-            wrapped = rsa.Encrypt(keyMaterial, RSAEncryptionPadding.OaepSHA256);
+            wrapped = MailKeySet.Wrap(key, keyMaterial);
             using var aes = new AesGcm(keyMaterial, 16);
             aes.Encrypt(nonce, plaintext, encrypted, tag, DomainSeparator);
         }
@@ -85,7 +85,7 @@ public static class MailEncryption
 
     public static InboundMailPayload DecryptForTestOnly(EncryptedInboundMail message, RSA privateKey)
     {
-        var aesKey = privateKey.Decrypt(message.WrappedKey, RSAEncryptionPadding.OaepSHA256);
+        var aesKey = MailKeySet.Unwrap(message.WrappedKey, privateKey);
         var plaintext = new byte[message.Ciphertext.Length];
         try
         {

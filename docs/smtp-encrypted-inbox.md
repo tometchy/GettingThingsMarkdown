@@ -1,3 +1,5 @@
+> **Superseded:** The current file-based architecture is documented in [gtmd-mail-files.md](gtmd-mail-files.md). The description below is historical: current Kubernetes delivery writes complete encrypted MIME to both Git replicas, preserves attachments and has no automatic expiry.
+
 # E-mail forwarding → encrypted queue → trusted-client Markdown tasks
 
 Status: **engineering preview; no public MX or production SMTP service deployed**.

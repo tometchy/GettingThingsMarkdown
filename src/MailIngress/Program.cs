@@ -26,7 +26,7 @@ internal static class Program
         using var certificate = X509Certificate2.CreateFromPemFile(certPath, keyPath);
         using var api = new HttpClient {
             BaseAddress = new Uri(apiUrl, UriKind.Absolute),
-            Timeout = TimeSpan.FromSeconds(20)
+            Timeout = TimeSpan.FromSeconds(200)
         };
         api.DefaultRequestHeaders.Add("X-GTM-Mail-Token", token);
         int port = int.TryParse(Environment.GetEnvironmentVariable("GTM_SMTP_PORT"),
@@ -35,7 +35,7 @@ internal static class Program
         var options = new SmtpServerOptionsBuilder()
             .ServerName(serverName)
             .Endpoint(b => b.Port(port).AllowUnsecureAuthentication(false).Certificate(certificate))
-            .MaxMessageSize(256 * 1024)
+            .MaxMessageSize(40 * 1024 * 1024)
             .CommandWaitTimeout(TimeSpan.FromSeconds(30))
             .Build();
         var services = new ServiceProvider();
@@ -55,7 +55,7 @@ internal sealed class IngressMailboxFilter(HttpClient api, string domain) : IMai
 {
     public Task<bool> CanAcceptFromAsync(ISessionContext context, IMailbox from,
         int size, CancellationToken ct) =>
-        Task.FromResult(size < 0 || size <= 256 * 1024);
+        Task.FromResult(size < 0 || size <= 40 * 1024 * 1024);
 
     public async Task<bool> CanDeliverToAsync(ISessionContext context, IMailbox to,
         IMailbox from, CancellationToken ct)
@@ -89,7 +89,7 @@ internal sealed class IngressMailStore(HttpClient api) : MessageStore
         CancellationToken cancellationToken)
     {
         if (transaction.To.Count != 1) return SmtpResponse.NoValidRecipientsGiven;
-        if (buffer.Length is <= 0 or > 256 * 1024) return SmtpResponse.SizeLimitExceeded;
+        if (buffer.Length is <= 0 or > 40 * 1024 * 1024) return SmtpResponse.SizeLimitExceeded;
         string to = transaction.To[0].User + "@" + transaction.To[0].Host;
         using var request = new HttpRequestMessage(HttpMethod.Post,
             "internal/mail/receive?recipient=" + Uri.EscapeDataString(to));

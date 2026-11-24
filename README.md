@@ -141,3 +141,7 @@ This project cannot be presented as a complete or production-ready MVP until the
 ## License
 
 Own source files are released under MPL-2.0; dependencies retain their licenses. Full dependency and packaging audit is pending.
+
+### Git-only inbound mail (development preview)
+
+See [docs/gtmd-mail-files.md](docs/gtmd-mail-files.md). SMTP encrypts full MIME and commits it to the existing two Git archives on the gtm-mail branch. Clients discover and read those files through authenticated Git history, then write local Markdown/attachments for normal Syncthing E2EE. No second Syncthing identity, no mail checkout or new SQLite mail bodies, and no automatic mail expiry. Production gates remain.
