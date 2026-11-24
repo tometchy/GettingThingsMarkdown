@@ -1,11 +1,11 @@
 provider "scaleway" {
   project_id = var.project_id
   region     = var.region
-  zone       = var.zone_a
+  zone               = var.zone_a
 }
 
 data "scaleway_k8s_version" "latest" {
-  name = "latest"
+  name               = "latest"
 }
 
 resource "scaleway_vpc_private_network" "gtm" {
@@ -36,14 +36,14 @@ resource "scaleway_k8s_cluster" "gtm" {
 }
 
 resource "scaleway_k8s_pool" "zone_a" {
-  cluster_id  = scaleway_k8s_cluster.gtm.id
-  name        = "${var.name}-a"
-  node_type   = var.node_type
-  zone        = var.zone_a
-  size        = 1
-  min_size    = 1
-  max_size    = var.max_nodes_per_zone
-  autoscaling = true
+  cluster_id         = scaleway_k8s_cluster.gtm.id
+  name               = "${var.name}-a"
+  node_type          = var.node_type
+  zone               = var.zone_a
+  size               = 1
+  min_size           = 1
+  max_size           = var.max_nodes_per_zone
+  autoscaling        = true
   autohealing        = true
   public_ip_disabled = true
 
@@ -51,14 +51,14 @@ resource "scaleway_k8s_pool" "zone_a" {
 }
 
 resource "scaleway_k8s_pool" "zone_b" {
-  cluster_id  = scaleway_k8s_cluster.gtm.id
-  name        = "${var.name}-b"
-  node_type   = var.node_type
-  zone        = var.zone_b
-  size        = 1
-  min_size    = 1
-  max_size    = var.max_nodes_per_zone
-  autoscaling = true
+  cluster_id         = scaleway_k8s_cluster.gtm.id
+  name               = "${var.name}-b"
+  node_type          = var.node_type
+  zone               = var.zone_b
+  size               = 1
+  min_size           = 1
+  max_size           = var.max_nodes_per_zone
+  autoscaling        = true
   autohealing        = true
   public_ip_disabled = true
 

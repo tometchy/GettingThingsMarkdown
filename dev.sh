@@ -144,7 +144,7 @@ case "${1:-help}" in
     account="${2:?Account UUID is required}"
     port="${3:-22000}"
     if ! [[ "$account" =~ ^[a-fA-F0-9-]{36}$ ]]; then echo "Invalid UUID" >&2; exit 1; fi
-    exec kubectl -n "gtm-${account//-/}" port-forward --address 127.0.0.1 svc/sync "$port:22000"
+    exec kubectl -n "gtm-${account//-/}" port-forward --address 127.0.0.1 svc/sync "$port:22000" "$((port+1)):22001"
     ;;
   down)
     if [ -f .gtm/port-forward.pid ]; then

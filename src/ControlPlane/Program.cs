@@ -330,7 +330,7 @@ authenticated.MapGet("/tenant", async (ClaimsPrincipal user, ProvisioningDb db, 
 });
 
 authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal user,
-    ProvisioningDb db, CancellationToken ct) =>
+    ProvisioningDb db, AppDb accounts, CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
     var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
@@ -345,10 +345,19 @@ authenticated.MapPost("/devices", async (AddDeviceRequest input, ClaimsPrincipal
     try
     {
         await syncthing.AddDeviceAsync(input.DeviceId, input.Name, ct);
+        var account = await accounts.Accounts.FindAsync([id!.Value], ct);
+        string? mailDevice = null;
+        if (account?.Plan is "plus" or "pro")
+        {
+            using var mailPeer = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"], true);
+            await mailPeer.AddDeviceAsync(input.DeviceId, input.Name, ct);
+            mailDevice = await mailPeer.DeviceIdAsync(ct);
+        }
         return Results.Ok(new PairResponse(TenantNames.FolderId,
             tenant.ServerDeviceId ?? await syncthing.DeviceIdAsync(ct),
             builder.Configuration["GTM_SYNC_PUBLIC_ADDRESS"] ?? "",
-            "Syncthing Untrusted Device Encryption; key remains on trusted clients"));
+            "Syncthing Untrusted Device Encryption; key remains on trusted clients",
+            mailDevice, builder.Configuration["GTM_MAIL_SYNC_PUBLIC_ADDRESS"]));
     }
     catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
     catch (HttpRequestException) { return Results.Problem("Syncthing pairing failed.", statusCode: 503); }
@@ -370,7 +379,7 @@ authenticated.MapGet("/devices", async (ClaimsPrincipal user,
 });
 
 authenticated.MapDelete("/devices/{deviceId}", async (string deviceId,
-    ClaimsPrincipal user, ProvisioningDb db, CancellationToken ct) =>
+    ClaimsPrincipal user, ProvisioningDb db, AppDb accounts, CancellationToken ct) =>
 {
     var id = AdminSecurity.UserId(user);
     var tenant = id is null ? null : await db.Tenants.FindAsync([id.Value], ct);
@@ -381,7 +390,16 @@ authenticated.MapDelete("/devices/{deviceId}", async (string deviceId,
     var credentials = await kube.SecretAsync(tenant.Namespace, "gtm-credentials", ct);
     if (credentials is null) return Results.Problem("Tenant unavailable.", statusCode: 503);
     using var sync = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"]);
-    try { await sync.RemoveDeviceAsync(deviceId, ct); }
+    try
+    {
+        var account = await accounts.Accounts.FindAsync([id!.Value], ct);
+        if (account?.Plan is "plus" or "pro")
+        {
+            using var mailPeer = new SyncthingTenantApi(tenant.Namespace, credentials["sync-api-key"], true);
+            await mailPeer.RemoveDeviceAsync(deviceId, ct);
+        }
+        await sync.RemoveDeviceAsync(deviceId, ct);
+    }
     catch (ArgumentException) { return Results.BadRequest(new { error = "Invalid device ID." }); }
     return Results.NoContent();
 });

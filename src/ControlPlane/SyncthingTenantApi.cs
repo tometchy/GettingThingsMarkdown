@@ -9,9 +9,13 @@ namespace GettingThingsMarkdown.ControlPlane;
 public sealed class SyncthingTenantApi : IDisposable
 {
     private readonly HttpClient _http;
-    public SyncthingTenantApi(string ns, string key)
+    private readonly bool _mailPeer;
+    private string FolderId => _mailPeer ? "gtmd-mail" : TenantNames.FolderId;
+    private string FolderType => _mailPeer ? "sendonly" : "receiveencrypted";
+    public SyncthingTenantApi(string ns, string key, bool mailPeer = false)
     {
-        _http = new HttpClient { BaseAddress = new Uri($"http://sync.{ns}.svc.cluster.local:8384/"),
+        _mailPeer = mailPeer;
+        _http = new HttpClient { BaseAddress = new Uri($"http://sync.{ns}.svc.cluster.local:{(mailPeer ? 8386 : 8384)}/"),
             Timeout = TimeSpan.FromSeconds(12) };
         _http.DefaultRequestHeaders.Add("X-API-Key", key);
     }
@@ -39,14 +43,14 @@ public sealed class SyncthingTenantApi : IDisposable
             "rest/config/defaults/device", ct) ?? throw new InvalidOperationException("No device defaults.");
         defaultDevice["deviceID"] = deviceId;
         defaultDevice["name"] = (name ?? "GTMD device")[..Math.Min((name ?? "GTMD device").Length, 80)];
-        defaultDevice["untrusted"] = true;
+        defaultDevice["untrusted"] = !_mailPeer;
         using (var result = await _http.PostAsJsonAsync("rest/config/devices", defaultDevice, ct))
         {
             if (!result.IsSuccessStatusCode && result.StatusCode != System.Net.HttpStatusCode.Conflict)
                 result.EnsureSuccessStatusCode();
         }
 
-        using var folderResponse = await _http.GetAsync("rest/config/folders/" + TenantNames.FolderId, ct);
+        using var folderResponse = await _http.GetAsync("rest/config/folders/" + FolderId, ct);
         JsonObject folder;
         if (folderResponse.IsSuccessStatusCode)
             folder = JsonNode.Parse(await folderResponse.Content.ReadAsStringAsync(ct))!.AsObject();
@@ -54,13 +58,13 @@ public sealed class SyncthingTenantApi : IDisposable
         {
             folder = await _http.GetFromJsonAsync<JsonObject>("rest/config/defaults/folder", ct)
                 ?? throw new InvalidOperationException("Missing folder defaults.");
-            folder["id"] = TenantNames.FolderId;
-            folder["label"] = "GettingThingsMarkdown";
-            folder["path"] = "/data/files";
-            folder["type"] = "receiveencrypted";
+            folder["id"] = FolderId;
+            folder["label"] = _mailPeer ? "GTMD encrypted mail" : "GettingThingsMarkdown";
+            folder["path"] = _mailPeer ? "/data/mail/.gtmd/inbox" : "/data/files";
+            folder["type"] = FolderType;
         }
         else { folderResponse.EnsureSuccessStatusCode(); return; }
-        if (folder["type"]?.GetValue<string>() != "receiveencrypted")
+        if (folder["type"]?.GetValue<string>() != FolderType)
             throw new InvalidOperationException("Server folder must remain receiveencrypted.");
 
         var members = folder["devices"] as JsonArray ?? new JsonArray();
@@ -69,14 +73,14 @@ public sealed class SyncthingTenantApi : IDisposable
         if (folder["devices"] is null) folder["devices"] = members;
 
         using var save = await _http.PutAsJsonAsync(
-            "rest/config/folders/" + TenantNames.FolderId, folder, ct);
+            "rest/config/folders/" + FolderId, folder, ct);
         save.EnsureSuccessStatusCode();
     }
 
     public async Task SetFolderPausedAsync(bool paused, CancellationToken ct)
     {
         using var response = await _http.GetAsync(
-            "rest/config/folders/" + TenantNames.FolderId, ct);
+            "rest/config/folders/" + FolderId, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
         response.EnsureSuccessStatusCode();
         var folder = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))!.AsObject();
@@ -85,7 +89,7 @@ public sealed class SyncthingTenantApi : IDisposable
         if (folder["paused"]?.GetValue<bool>() == paused) return;
         folder["paused"] = paused;
         using var save = await _http.PutAsJsonAsync(
-            "rest/config/folders/" + TenantNames.FolderId, folder, ct);
+            "rest/config/folders/" + FolderId, folder, ct);
         save.EnsureSuccessStatusCode();
     }
 
@@ -106,7 +110,7 @@ public sealed class SyncthingTenantApi : IDisposable
             throw new ArgumentException("Invalid device ID.");
 
         using var folderResponse = await _http.GetAsync(
-            "rest/config/folders/" + TenantNames.FolderId, ct);
+            "rest/config/folders/" + FolderId, ct);
         if (folderResponse.IsSuccessStatusCode)
         {
             var folder = JsonNode.Parse(await folderResponse.Content.ReadAsStringAsync(ct))!.AsObject();
@@ -118,7 +122,7 @@ public sealed class SyncthingTenantApi : IDisposable
             }
             if (folder["devices"] is null) folder["devices"] = devices;
             using var saved = await _http.PutAsJsonAsync(
-                "rest/config/folders/" + TenantNames.FolderId, folder, ct);
+                "rest/config/folders/" + FolderId, folder, ct);
             saved.EnsureSuccessStatusCode();
         }
         using var removed = await _http.DeleteAsync("rest/config/devices/" + deviceId, ct);
@@ -130,4 +134,4 @@ public sealed class SyncthingTenantApi : IDisposable
 }
 
 public record PairResponse(string FolderId, string ServerDeviceId, string Address,
-    string EncryptionMode);
+    string EncryptionMode, string? MailDeviceId = null, string? MailAddress = null);

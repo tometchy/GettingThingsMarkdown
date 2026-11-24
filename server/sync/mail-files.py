@@ -44,6 +44,8 @@ def store(digest, body):
             if parent_id: args += ["-p", parent_id]
             commit = git(*args).stdout.decode().strip()
             git("update-ref", REF, commit, parent_id or "0" * 40)
+    # Do not expose a file to Syncthing until the second Git replica has it.
+    git("push", "origin", REF + ":" + REF)
     # Keep a ciphertext-only working directory, separate from the native
     # receiveencrypted Syncthing folder. Never put ordinary bytes in that folder.
     target = WORK / path
@@ -54,9 +56,6 @@ def store(digest, body):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmpname, target)
-    # A 200 means the same append-only Git ref is present in A and B.
-    # A failed push leaves A intact; SMTP retry attempts the same push again.
-    git("push", "origin", REF + ":" + REF)
     return body
 
 class Handler(http.server.BaseHTTPRequestHandler):

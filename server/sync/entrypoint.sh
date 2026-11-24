@@ -39,6 +39,15 @@ fi
 /usr/local/bin/commit-loop.sh &
 # Already encrypted mail has a separate Git branch, never native receiveencrypted bytes.
 python3 /usr/local/bin/mail-files.py &
+if [ "${GTM_MAIL_PEER_ENABLED:-false}" = true ]; then
+  mkdir -p /data/mail-syncthing /data/mail/.gtmd/inbox
+  if [ ! -f /data/mail-syncthing/config.xml ]; then
+    syncthing generate --home=/data/mail-syncthing
+  fi
+  python3 /usr/local/bin/configure-mail-peer.py /data/mail-syncthing/config.xml
+  syncthing serve --home=/data/mail-syncthing --no-browser \
+    --gui-address=0.0.0.0:8386 --gui-apikey="$GTM_SYNCTHING_API_KEY" &
+fi
 if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
   # Existing tenants may have lost historical A-side LFS blobs from the
   # legacy automatic-prune behavior. Rehydrate from History/S3 on startup.
