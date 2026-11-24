@@ -25,7 +25,7 @@ public sealed class EncryptedInboundMail
     public byte[] Ciphertext { get; set; } = [];
     public DateTimeOffset ReceivedUtc { get; set; }
     // ACK is an import receipt, NOT permission to destroy the only queued copy.
-    // ACKed ciphertext stays recoverable for a separate grace period.
+    // ACK never authorizes deletion of user mail history.
     public DateTimeOffset? AcknowledgedUtc { get; set; }
 }
 

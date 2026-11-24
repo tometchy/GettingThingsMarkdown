@@ -471,8 +471,8 @@ public sealed class AccountView : UserControl
         _importRecovery.Content = T("Importuj klucz z zaufanego urządzenia", "Import key from trusted device");
         _loadHistory.Content = T("Pokaż zapisane wersje Git", "List historical revisions");
         _restoreHistory.Content = T("Odszyfruj wybraną wersję lokalnie", "Restore selected version locally");
-        _createMail.Content = T("Utwórz szyfrowany adres do przekierowania e-maili",
-            "Create encrypted mail forwarding address");
+        _createMail.Content = T("Utwórz adres lub dodaj klucz tego urządzenia",
+            "Create forwarding address or add this device's key");
         _refreshMail.Content = T("Sprawdź adres i kolejkę wiadomości", "Check address and pending mail");
         _importMail.Content = T("Importuj wiadomości do ToDo teraz",
             "Import pending mail to local ToDo");

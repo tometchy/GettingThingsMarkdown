@@ -128,3 +128,12 @@ See [SMTP feature and security contract](smtp-encrypted-inbox.md).
 
 Do not mark the project production-ready or promise data-loss protection until
 all relevant mandatory checks have passed.
+
+## File-based inbound mail and access isolation (PR #9)
+
+- [x] Implementation: full original MIME retained in public-key envelope, attachment bytes extracted only by trusted client, multiple RSA device recipients, same two Git repositories and separate working tree, non-expiring history.
+- [x] Implementation: separate native Syncthing send-only mailbox identity in existing Plus/Pro Sync container, receive-only .gtmd/inbox on desktop, main E2EE folder unchanged.
+- [x] Implementation: private-IP Scaleway pools, outbound NAT and deny-all-public Kubernetes API ACL. Actual cloud owner IAM and break-glass access tests remain necessary.
+- [ ] Production independent cloud recovery, restore of account/mail registry/index and mobile clients, history purge and quotas.
+
+See [file-based mailbox design](gtmd-mail-files.md). Previous 30-day mail archive descriptions are superseded; no automatic expiration for accepted mail history.
