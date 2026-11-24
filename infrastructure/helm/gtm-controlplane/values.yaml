@@ -56,3 +56,19 @@ resources:
   limits:
     cpu: "1"
     memory: 768Mi
+
+# Shared Control Plane state only. Credentials for two independent S3 providers
+# are mounted exclusively into the backup container. Never supply age identities.
+stateBackup:
+  enabled: false
+  image: gtm/controlplane-backup:dev
+  existingSecret: ""
+  intervalSeconds: 300
+  scratchSize: 1Gi
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi

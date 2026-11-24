@@ -146,7 +146,100 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+        {{- if .Values.stateBackup.enabled }}
+        # Shared backup process only, not an extra container per tenant.
+        - name: state-backup
+          image: {{ .Values.stateBackup.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GTM_RECOVERY_AGE_RECIPIENT
+              value: {{ required "stateBackup requires recovery.ageRecipient (two independent age keys)" .Values.recovery.ageRecipient | quote }}
+            - name: GTM_BACKUP_INTERVAL_SECONDS
+              value: {{ .Values.stateBackup.intervalSeconds | quote }}
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /backup-auth/credentials
+            - name: AWS_CONFIG_FILE
+              value: /backup-auth/config
+            {{- range $key := list "endpoint-a" "bucket-a" "endpoint-b" "bucket-b" }}
+            - name: GTM_BACKUP_{{ $key | upper | replace "-" "_" }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "stateBackup.existingSecret required" $.Values.stateBackup.existingSecret | quote }}
+                  key: {{ $key }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.stateBackup.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            exec:
+              command: ["python3", "-c", "import pathlib,time,os; p=pathlib.Path('/scratch/last-dual-success'); assert p.is_file() and time.time()-int(p.read_text()) < 3*max(60,int(os.environ['GTM_BACKUP_INTERVAL_SECONDS']))"]
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+              readOnly: true
+            - name: backup-scratch
+              mountPath: /scratch
+            - name: backup-auth
+              mountPath: /backup-auth
+              readOnly: true
+            - name: backup-account-config
+              mountPath: /config/account
+              readOnly: true
+            {{- if .Values.billing.existingSecret }}
+            - name: backup-billing-config
+              mountPath: /config/billing
+              readOnly: true
+            {{- end }}
+            {{- if .Values.mail.existingSecret }}
+            - name: backup-smtp-config
+              mountPath: /config/smtp
+              readOnly: true
+            {{- end }}
+            {{- if .Values.mailIngress.enabled }}
+            - name: backup-mail-ingress-config
+              mountPath: /config/mail-ingress
+              readOnly: true
+            - name: backup-mail-ingress-tls
+              mountPath: /config/mail-tls
+              readOnly: true
+            {{- end }}
+        {{- end }}
       volumes:
+        {{- if .Values.stateBackup.enabled }}
+        - name: backup-scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.stateBackup.scratchSize | quote }}
+        - name: backup-auth
+          secret:
+            secretName: {{ .Values.stateBackup.existingSecret | quote }}
+        - name: backup-account-config
+          secret:
+            secretName: {{ .Values.existingSecret | quote }}
+        {{- if .Values.billing.existingSecret }}
+        - name: backup-billing-config
+          secret:
+            secretName: {{ .Values.billing.existingSecret | quote }}
+        {{- end }}
+        {{- if .Values.mail.existingSecret }}
+        - name: backup-smtp-config
+          secret:
+            secretName: {{ .Values.mail.existingSecret | quote }}
+        {{- end }}
+        {{- if .Values.mailIngress.enabled }}
+        - name: backup-mail-ingress-config
+          secret:
+            secretName: {{ .Values.mailIngress.tokenSecret | quote }}
+        - name: backup-mail-ingress-tls
+          secret:
+            secretName: {{ .Values.mailIngress.tlsSecret | quote }}
+        {{- end }}
+        {{- end }}
         - name: data
           persistentVolumeClaim:
             claimName: gtm-control-plane-data

@@ -157,6 +157,12 @@ jobs:
             --set mailIngress.tokenSecret=existing-inbound-token > /tmp/gtm-mail.yaml
           grep -q 'name: mail-ingress' /tmp/gtm-mail.yaml
           grep -q 'GTM_INBOUND_MAIL_DOMAIN' /tmp/gtm-mail.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set stateBackup.enabled=true \
+            --set stateBackup.existingSecret=ci-backup \
+            --set-string recovery.ageRecipient=ci-render-only > /tmp/gtm-backup.yaml
+          grep -q 'name: state-backup' /tmp/gtm-backup.yaml
+          grep -q 'name: GTM_BACKUP_ENDPOINT_A' /tmp/gtm-backup.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0
