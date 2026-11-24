@@ -68,7 +68,7 @@ def settings(body):
     recipients = os.environ.get("GTM_RECOVERY_AGE_RECIPIENT", "").split(",")
     if len(set(recipients)) < 2 or not all(r.startswith("age1") for r in recipients):
         raise ValueError("Independent age recovery recipients required")
-    fingerprint = hashlib.sha256(body).hexdigest()
+    fingerprint = hashlib.sha256(body + b'\x00' + ','.join(sorted(recipients)).encode()).hexdigest()
     marker = ROOT / "mail-settings.sha256"
     if marker.exists() and marker.read_text() == fingerprint:
         git("push", "origin", REF + ":" + REF)

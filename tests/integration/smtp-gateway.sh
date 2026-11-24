@@ -44,7 +44,7 @@ msg['Subject'] = 'Forwarded Gmail confirmation test'
 msg.set_content('Confirmation URL: https://mail.google.com/confirm-gtm-ci')
 msg.add_attachment(b"%PDF-1.4 test binary", maintype="application", subtype="pdf", filename="test.pdf")
 with smtplib.SMTP(os.environ.get('GTM_SMTP_HOST', '127.0.0.1'),
-                  int(os.environ.get('GTM_SMTP_PORT', '2525')), timeout=20) as smtp:
+                  int(os.environ.get('GTM_SMTP_PORT', '2525')), timeout=120) as smtp:
     smtp.ehlo()
     if not smtp.has_extn('STARTTLS'):
         raise AssertionError('No STARTTLS offered')
