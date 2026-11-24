@@ -21,6 +21,9 @@ def quota():
 class QuotaExceeded(Exception):
     pass
 
+class RateExceeded(Exception):
+    pass
+
 def git(*args, data=None, index=None, check=True):
     env = dict(os.environ, GIT_DIR=str(GIT), GIT_WORK_TREE=str(WORK),
                GIT_ASKPASS="/usr/local/bin/askpass.sh", GIT_TERMINAL_PROMPT="0")
@@ -38,8 +41,15 @@ def store_file(path, body, immutable=True):
         # the already-committed ciphertext and its original message ID.
         body = old.stdout
     else:
-        if immutable and quota() > 0 and budget.usage(ROOT, quota(), len(body))["blocked"]:
-            raise QuotaExceeded()
+        if immutable:
+            # The single HTTP writer serializes admissions. Git commit history
+            # is the durable rate ledger, independent of Control Plane SQLite.
+            if git("rev-parse", "--verify", REF, check=False).returncode == 0:
+                recent = git("rev-list", "--since-as-filter=24 hours ago", "--max-count=100",
+                    REF, "--", ".gtmd/inbox/").stdout.splitlines()
+                if len(recent) >= 100: raise RateExceeded()
+            if quota() > 0 and budget.usage(ROOT, quota(), len(body))["blocked"]:
+                raise QuotaExceeded()
         with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
             index = str(pathlib.Path(tmp) / "index")
             parent = git("rev-parse", "--verify", REF, check=False)
@@ -144,6 +154,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             result = store(match.group(1).lower(), body)
         except QuotaExceeded:
             self.send_error(507); return
+        except RateExceeded:
+            self.send_error(429); return
         except (ValueError, OSError, KeyError, subprocess.SubprocessError) as exc:
             # Log only the operation and exit status, never SMTP content,
             # tenant paths, addresses, keys or subprocess arguments.

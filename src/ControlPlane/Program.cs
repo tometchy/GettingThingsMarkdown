@@ -826,20 +826,25 @@ app.MapPost("/internal/mail/receive", async (
     byte[] bytes = raw.ToArray();
     var digest = Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(bytes));
-    if (await db.EncryptedInboundMails.AnyAsync(x =>
-            x.AccountId == account.Id && x.DedupSha256 == digest, ct))
-        return Results.Ok(new { duplicate = true });
     var now = clock.GetUtcNow();
-    var messages = await db.EncryptedInboundMails.AsNoTracking()
-        .Where(x => x.AccountId == account.Id)
-        .Select(x => x.ReceivedUtc).ToListAsync(ct);
     bool gitBacked = builder.Configuration.GetValue<bool>("GTM_KUBE_ENABLED");
-    if ((!gitBacked && (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
-        await db.EncryptedInboundMails.CountAsync(x =>
-            x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct)
-            >= MailInboxPolicy.MaxPendingMessages)) ||
-        messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
-        return Results.StatusCode(429);
+    // New deliveries are deduplicated and rate-limited atomically by the
+    // single tenant Git writer, not by a second SQLite delivery index.
+    if (!gitBacked)
+    {
+        if (await db.EncryptedInboundMails.AnyAsync(x =>
+                x.AccountId == account.Id && x.DedupSha256 == digest, ct))
+            return Results.Ok(new { duplicate = true });
+        var messages = await db.EncryptedInboundMails.AsNoTracking()
+            .Where(x => x.AccountId == account.Id)
+            .Select(x => x.ReceivedUtc).ToListAsync(ct);
+        if (messages.Count >= MailInboxPolicy.MaxRetainedMessages ||
+            await db.EncryptedInboundMails.CountAsync(x =>
+                x.AccountId == account.Id && x.AcknowledgedUtc == null && !x.StoredInGit, ct)
+                >= MailInboxPolicy.MaxPendingMessages ||
+            messages.Count(x => x >= now.AddDays(-1)) >= MailInboxPolicy.MaxDailyMessages)
+            return Results.StatusCode(429);
+    }
     EncryptedInboundMail encrypted;
     try { encrypted = await MailEncryption.EncryptAsync(account.Id,
         inbox!.PublicKeyBase64, bytes, now, ct); }
@@ -854,17 +859,11 @@ app.MapPost("/internal/mail/receive", async (
         try
         {
             if (!await PersistMailSettingsAsync(inbox!, ct)) return Results.StatusCode(503);
-            var durable = await TenantMailFiles.PersistAsync(account.Id, PlanCatalog.EffectiveQuotaBytes(account, now), digest,
+            await TenantMailFiles.PersistAsync(account.Id, PlanCatalog.EffectiveQuotaBytes(account, now), digest,
                 MailEncryption.View(encrypted), ct);
-            // A retry after a lost response must index the identical envelope.
-            encrypted.Id = durable.Id;
-            // Do not keep a third resident ciphertext copy in SQLite.
-            encrypted.WrappedKey = [];
-            encrypted.Nonce = [];
-            encrypted.Tag = [];
-            encrypted.Ciphertext = [];
-            encrypted.StoredInGit = true;
-            encrypted.ReceivedUtc = durable.ReceivedUtc;
+            // Both Git replicas contain the mail. No SQLite delivery row is
+            // needed or written, including on retry after losing an HTTP ACK.
+            return Results.Ok(new { stored = true });
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
         { return Results.StatusCode(503); }

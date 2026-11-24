@@ -16,7 +16,7 @@ public sealed class TenantStorage : IDisposable
 
     public async Task SetQuotaAsync(long quota, CancellationToken ct)
     {
-        using var result = await http.PostAsJsonAsync("quota", new { quotaBytes = quota }, ct);
+        using var result = await TenantMailFiles.PostAsync(http, "quota", new { quotaBytes = quota }, ct);
         result.EnsureSuccessStatusCode();
     }
 
