@@ -117,7 +117,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length", "0"))
-            if not 0 < n <= LIMIT:
+            if not 0 < n <= (32 * 1024 if self.path in ("/settings", "/quota") else LIMIT):
                 self.send_error(413); return
             body = self.rfile.read(n)
             if len(body) != n: raise ValueError("short input")

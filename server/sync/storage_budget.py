@@ -6,7 +6,9 @@ import stat
 def bytes_in(path, logical=False):
     total = 0
     seen = set()
-    for root, dirs, files in os.walk(path, followlinks=False):
+    def fail(error): raise error
+    if not path.exists(): return 0
+    for root, dirs, files in os.walk(path, followlinks=False, onerror=fail):
         for name in files:
             try:
                 st = os.lstat(os.path.join(root, name))
