@@ -137,6 +137,7 @@ public static class TenantManifests
                     new { name = "GTM_GIT_URL", value = $"https://{historyHost}:3000/archive/history.git" },
                     new { name = "GTM_GIT_USERNAME", value = "sync" },
                     new { name = "GTM_GIT_LFS_ENABLED", value = lfsEnabled ? "true" : "false" },
+                    new { name = "GTM_STORAGE_QUOTA_BYTES", value = ((long)(quotaGiBOverride ?? (int)(PlanCatalog.Quotas[plan] / PlanCatalog.GiB)) * PlanCatalog.GiB).ToString(System.Globalization.CultureInfo.InvariantCulture) },
                     new { name = "GTM_RECOVERY_AGE_RECIPIENT", value = recoveryRecipient ?? "" }
                 }
                 : new object[]

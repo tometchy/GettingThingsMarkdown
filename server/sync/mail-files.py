@@ -2,12 +2,24 @@
 """Private, ciphertext-only ingress to the existing tenant Git repository."""
 import hmac, http.server, json, os, pathlib, re, subprocess, tempfile, sys
 
+import importlib.util
+spec = importlib.util.spec_from_file_location("storage_budget", pathlib.Path(__file__).with_name("storage_budget.py"))
+budget = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(budget)
+
 ROOT = pathlib.Path(os.environ.get("GTM_MAIL_DATA_ROOT", "/data"))
 GIT = ROOT / "git"
 WORK = ROOT / "files"
 REF = "refs/heads/gtm-mail"
 LIMIT = 120 * 1024 * 1024
 TOKEN = os.environ["GTM_SYNCTHING_API_KEY"]
+QUOTA = ROOT / "storage-quota-bytes"
+
+def quota():
+    return int(QUOTA.read_text() if QUOTA.exists() else os.environ.get("GTM_STORAGE_QUOTA_BYTES", "0"))
+
+class QuotaExceeded(Exception):
+    pass
 
 def git(*args, data=None, index=None, check=True):
     env = dict(os.environ, GIT_DIR=str(GIT), GIT_WORK_TREE=str(WORK),
@@ -26,6 +38,8 @@ def store_file(path, body, immutable=True):
         # the already-committed ciphertext and its original message ID.
         body = old.stdout
     else:
+        if immutable and quota() > 0 and budget.usage(ROOT, quota(), len(body))["blocked"]:
+            raise QuotaExceeded()
         with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
             index = str(pathlib.Path(tmp) / "index")
             parent = git("rev-parse", "--verify", REF, check=False)
@@ -81,13 +95,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+    def do_GET(self):
+        if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
+            self.send_error(403); return
+        if self.path != "/usage":
+            self.send_error(404); return
+        try:
+            limit = quota()
+            if limit <= 0: raise ValueError("Missing quota")
+            self.send_body(json.dumps(budget.usage(ROOT, limit)).encode())
+        except (ValueError, OSError):
+            self.send_error(503)
+
     def do_POST(self):
         self.connection.settimeout(120)
         if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
             self.send_error(403)
             return
         match = re.fullmatch(r"/mail/([0-9A-Fa-f]{64})", self.path)
-        if not match and self.path != "/settings":
+        if not match and self.path not in ("/settings", "/quota"):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length", "0"))
@@ -95,6 +121,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_error(413); return
             body = self.rfile.read(n)
             if len(body) != n: raise ValueError("short input")
+            if self.path == "/quota":
+                limit = json.loads(body)["quotaBytes"]
+                if type(limit) is not int or not 0 < limit <= 10 * 1024**4:
+                    raise ValueError("Invalid quota")
+                with tempfile.NamedTemporaryFile(dir=ROOT, mode="w", delete=False) as tmp:
+                    tmp.write(str(limit))
+                    tmp_path = tmp.name
+                os.replace(tmp_path, QUOTA)
+                self.send_body(b'{"saved":true}')
+                return
             if self.path == "/settings":
                 if n > 32 * 1024: raise ValueError("Settings too large")
                 settings(body)
@@ -106,7 +142,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not all(k in envelope for k in ("id","wrappedKey","nonce","tag","ciphertext","receivedUtc")):
                 raise ValueError("not an envelope")
             result = store(match.group(1).lower(), body)
-        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        except QuotaExceeded:
+            self.send_error(507); return
+        except (ValueError, OSError, KeyError, subprocess.SubprocessError) as exc:
             # Log only the operation and exit status, never SMTP content,
             # tenant paths, addresses, keys or subprocess arguments.
             print('mail Git write failed:', type(exc).__name__,
