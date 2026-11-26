@@ -56,11 +56,14 @@ REPO="/var/lib/gitea/git/repositories/archive/history.git"
 if [ -d "$REPO" ]; then
   git --git-dir="$REPO" config receive.denyNonFastForwards true
   git --git-dir="$REPO" config receive.denyDeletes true
+  git --git-dir="$REPO" config receive.fsckObjects true
+  git --git-dir="$REPO" config transfer.fsckObjects true
 fi
 
 if [ "${GTM_WORM_BACKUP_ENABLED:-false}" = "true" ]; then
   /usr/local/bin/backup-loop.sh &
   echo 'WORM backup worker started (same History container, no sidecar).'
 fi
+python3 /usr/local/bin/git_integrity.py watch "$REPO" /var/lib/gitea/integrity.json --role history &
 echo 'Gitea archive initialized. Waiting for server.'
 wait "$server_pid"

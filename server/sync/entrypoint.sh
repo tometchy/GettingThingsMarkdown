@@ -29,6 +29,8 @@ if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
   printf '%s\n' '* filter=lfs diff=lfs merge=lfs -text' > /data/git/info/attributes
 fi
 git config --local user.email 'archive@localhost.invalid'
+git config --local fetch.fsckObjects true
+git config --local transfer.fsckObjects true
 # Make the default branch available before receiving the first mail, even
 # if no client has paired yet. No files are added in this bootstrap commit.
 if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -42,6 +44,9 @@ else
   git remote add origin "$GTM_GIT_URL"
 fi
 /usr/local/bin/commit-loop.sh &
+# Read-only local Git integrity scan; structured logs + atomic status.
+# The worker does not authorize failover or destructive repair.
+python3 /usr/local/bin/git_integrity.py watch /data/git /data/integrity.json --role sync &
 # Already encrypted mail has a separate Git branch, never native receiveencrypted bytes.
 python3 /usr/local/bin/mail-files.py &
 if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then
