@@ -65,5 +65,6 @@ if [ "${GTM_WORM_BACKUP_ENABLED:-false}" = "true" ]; then
   echo 'WORM backup worker started (same History container, no sidecar).'
 fi
 python3 /usr/local/bin/git_integrity.py watch "$REPO" /var/lib/gitea/integrity.json --role history &
+python3 /usr/local/bin/git_integrity.py watchdog /var/lib/gitea/integrity.json --role history &
 echo 'Gitea archive initialized. Waiting for server.'
 wait "$server_pid"

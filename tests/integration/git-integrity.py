@@ -48,6 +48,9 @@ class IntegrityTests(unittest.TestCase):
     def flip(self, path):
         data = bytearray(path.read_bytes())
         data[len(data)//2] ^= 1
+        # Git objects are normally read-only; simulate physical corruption
+        # as the owner of a disposable test repository, not as root.
+        path.chmod(path.stat().st_mode | 0o200)
         path.write_bytes(data)
 
     def test_all_refs_and_rebuild(self):
@@ -93,6 +96,32 @@ class IntegrityTests(unittest.TestCase):
         self.flip(pack)
         with self.assertRaises(integrity.IntegrityError):
             integrity.scan(self.repo)
+
+    def test_corrupt_index(self):
+        self.git("gc", "--prune=now")
+        self.flip(next((self.repo / "objects/pack").glob("*.idx")))
+        with self.assertRaises(integrity.IntegrityError):
+            integrity.scan(self.repo)
+
+    def test_watchdog_status_age_and_stalled_scan(self):
+        status = self.root / "status.json"
+        now = 200000
+        self.assertEqual(integrity.status_health(status, now)[0], "critical")
+        integrity.atomic_json(status, {"state": "verified", "lastSuccessfulUnix": now - 60,
+                                      "updatedUnix": now - 60})
+        self.assertEqual(integrity.status_health(status, now)[0], "info")
+        integrity.atomic_json(status, {"state": "scanning", "lastSuccessfulUnix": now - 90000,
+                                      "updatedUnix": now - 100})
+        self.assertEqual(integrity.status_health(status, now)[0], "warning")
+        integrity.atomic_json(status, {"state": "scanning", "lastSuccessfulUnix": now - 100,
+                                      "updatedUnix": now - 90000})
+        self.assertEqual(integrity.status_health(status, now)[0], "critical")
+        integrity.atomic_json(status, {"state": "verified", "lastSuccessfulUnix": now - 180000,
+                                      "updatedUnix": now - 60})
+        self.assertEqual(integrity.status_health(status, now)[0], "critical")
+        integrity.atomic_json(status, {"state": "verified", "lastSuccessfulUnix": now - 60,
+                                      "updatedUnix": now - 1000})
+        self.assertEqual(integrity.status_health(status, now)[0], "critical")
 
     def test_missing_index(self):
         self.git("gc", "--prune=now")

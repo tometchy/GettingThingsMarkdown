@@ -139,9 +139,8 @@ def stage_rebuild(source, destination, expected, timeout=DAY):
     # Exact wildcard preserves branches, tags and protected refs.
     git(dest, "-c", "fetch.fsckObjects=true", "fetch", "--no-tags", "--",
         source, "+refs/*:refs/*", timeout=timeout)
-    result = scan(dest, expected, timeout=timeout)
     git(dest, "symbolic-ref", "HEAD", "refs/heads/main", timeout=60)
-    return result
+    return scan(dest, expected, timeout=timeout)
 
 
 def atomic_json(path, value):
@@ -165,7 +164,8 @@ def atomic_json(path, value):
 
 def emit(role, state, **data):
     event = {"event": "gtmd_git_integrity", "role": role, "state": state,
-             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(), **data}
+             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+             "updatedUnix": time.time(), **data}
     print(json.dumps(event, separators=(",", ":")), flush=True)
     return event
 
@@ -202,6 +202,37 @@ def cycle(repo, status, role, timeout):
     return event
 
 
+def status_health(path, now=None, scan_timeout=DAY, interval=300):
+    """Independent local watchdog. Does not depend on scanner progress."""
+    now = time.time() if now is None else now
+    try:
+        value = json.loads(Path(path).read_text())
+        updated = value["updatedUnix"]
+        state = value["state"]
+        if (not isinstance(updated, (int, float)) or not 0 < updated <= now
+                or state not in ("scanning", "verified", "unverified", "degraded")):
+            return "critical", "invalid_status"
+        allowed = scan_timeout + 120 if state == "scanning" else interval + 120
+        if now - updated > allowed:
+            return "critical", "scanner_stalled"
+        if state == "degraded":
+            return "critical", "corruption_or_scan_failure"
+        last = value.get("lastSuccessfulUnix")
+        if last is None:
+            # An initial scan has no previous verification; still unverified.
+            return ("warning", "never_verified") if now - updated < DAY else ("critical", "never_verified")
+        if not isinstance(last, (int, float)) or not 0 < last <= now:
+            return "critical", "invalid_status"
+        age = now - last
+        if age >= CRITICAL:
+            return "critical", "verification_overdue"
+        if age >= DAY:
+            return "warning", "verification_overdue"
+        return "info", "within_budget"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return "critical", "status_missing_or_invalid"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -215,13 +246,16 @@ def main():
     p.add_argument("--role", choices=("sync", "history"), required=True)
     p.add_argument("--interval", type=int, default=300)
     p.add_argument("--timeout", type=int, default=DAY)
+    p = sub.add_parser("watchdog")
+    p.add_argument("status")
+    p.add_argument("--role", choices=("sync", "history"), required=True)
     p = sub.add_parser("stage-rebuild")
     p.add_argument("source")
     p.add_argument("destination")
     p.add_argument("manifest")
     p.add_argument("--timeout", type=int, default=DAY)
     args = parser.parse_args()
-    if args.timeout <= 0 or getattr(args, "interval", 1) <= 0:
+    if getattr(args, "timeout", DAY) <= 0 or getattr(args, "interval", 1) <= 0:
         parser.error("timeouts and intervals must be positive")
     try:
         if args.action == "watch":
@@ -230,6 +264,14 @@ def main():
             while True:
                 cycle(args.repo, args.status, args.role, args.timeout)
                 time.sleep(args.interval)
+        elif args.action == "watchdog":
+            # Separate process from the scanner; reports stalled/missing state.
+            # Cluster-level monitoring must still detect a missing entire pod.
+            time.sleep(120)
+            while True:
+                severity, reason = status_health(args.status)
+                emit(args.role, "watchdog", severity=severity, reason=reason)
+                time.sleep(60)
         elif args.action == "scan":
             expected = load_manifest(args.manifest) if args.manifest else None
             print(json.dumps(scan(args.repo, expected, args.timeout)))
