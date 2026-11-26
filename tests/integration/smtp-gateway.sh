@@ -12,7 +12,8 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072   -out "$tmp/privat
 openssl pkey -in "$tmp/private.pem" -pubout -outform DER   -out "$tmp/public.der" >/dev/null 2>&1
 public="$(base64 -w0 < "$tmp/public.der")"
 email="smtp-ci-$(openssl rand -hex 8)@example.test"
-registration="$(curl --fail-with-body -fsS "$GTM_API_URL/api/auth/register"   -H 'Content-Type: application/json'   -d "$(jq -nc --arg email "$email" '{
+echo "SMTP smoke: register disposable tenant"
+registration="$(curl -fsS "$GTM_API_URL/api/auth/register"   -H 'Content-Type: application/json'   -d "$(jq -nc --arg email "$email" '{
     email:$email,password:"long test password for mail",plan:"plus"
   }')")"
 bearer="$(jq -r '.accessToken' <<< "$registration")"
@@ -24,10 +25,12 @@ for i in $(seq 1 60); do
 done
 [ "$status" = Ready ]
 [ "$bearer" != null ] && [ -n "$bearer" ]
-inbox="$(curl --fail-with-body -fsS "$GTM_API_URL/api/mail/inbox"   -H "Authorization: Bearer $bearer" -H 'Content-Type: application/json'   -d "$(jq -nc --arg publicKeyBase64 "$public" '{publicKeyBase64:$publicKeyBase64}')")"
+echo "SMTP smoke: register mailbox public key"
+inbox="$(curl -fsS "$GTM_API_URL/api/mail/inbox"   -H "Authorization: Bearer $bearer" -H 'Content-Type: application/json'   -d "$(jq -nc --arg publicKeyBase64 "$public" '{publicKeyBase64:$publicKeyBase64}')")"
 recipient="$(jq -r '.address' <<< "$inbox")"
 [[ "$recipient" == r*@inbox.test.invalid ]]
 
+echo "SMTP smoke: send via STARTTLS"
 GTM_TEST_MAIL_RECIPIENT="$recipient" python3 - <<'PY'
 import os, smtplib, ssl
 from email.message import EmailMessage
@@ -53,6 +56,7 @@ with smtplib.SMTP(os.environ.get('GTM_SMTP_HOST', '127.0.0.1'),
 PY
 
 # Discover directly from the read-only Gitea history API, not a queue.
+echo "SMTP smoke: verify both Git replicas and read API"
 listing="$(curl -fsS "$GTM_API_URL/api/history/mail?page=1" -H "Authorization: Bearer $bearer")"
 revision="$(jq -er '.revision' <<< "$listing")"
 digest="$(jq -er '.digests[0]' <<< "$listing")"

@@ -108,20 +108,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not hmac.compare_digest(self.headers.get("X-API-Key", ""), TOKEN):
             self.send_error(403); return
-        if self.path not in ("/usage", "/logical-usage"):
+        if self.path != "/usage":
             self.send_error(404); return
         try:
             limit = quota()
             if limit <= 0: raise ValueError("Missing quota")
-            if self.path == "/logical-usage":
-                # Separate diagnostic: never substitute a snapshot for admission.
-                import logical_history
-                result = logical_history.measure(GIT)
-                result["quotaBytes"] = limit
-                self.send_body(json.dumps(result).encode())
-            else:
-                self.send_body(json.dumps(budget.usage(ROOT, limit)).encode())
-        except (ValueError, OSError, subprocess.SubprocessError):
+            self.send_body(json.dumps(budget.usage(ROOT, limit)).encode())
+        except (ValueError, OSError):
             self.send_error(503)
 
     def do_POST(self):

@@ -25,7 +25,10 @@ public static class GiteaTenantApi
         try
         {
             using var r = await client.GetAsync(
-                $"https://history.{ns}.svc.cluster.local:3000/api/v1/repos/archive/history", ct);
+                $"https://history.{ns}.svc.cluster.local:3000/api/v1/repos/archive/history/branches/main", ct);
+            // Repository creation alone is insufficient: Sync may not yet have
+            // pushed the initial main commit. Do not expose a ready tenant
+            // before the reader can resolve main in the second replica.
             return r.IsSuccessStatusCode;
         }
         catch (HttpRequestException) { return false; }
