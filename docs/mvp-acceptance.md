@@ -169,8 +169,14 @@ Nadrzędne wymagania: MVP-SPECIFICATION.md; wcześniejsze pozycje o migracjach, 
 
 Requirements: MVP-SPECIFICATION.md §17.1. Plan only; not implemented or tested by this change.
 - [ ] Every transfer validates new Git objects and required committed refs; independently anchored manifest/fencing prevents silent rollback and stale-replica resurrection.
-- [ ] Scheduled bounded full-content scrubs of A and B, all required/protected refs, and encrypted working tree; hourly ref/lag checks, initial weekly full scrub, missed-deadline and corruption alerts in both clouds.
+- [ ] Scheduled bounded full-content scrubs of A and B, all required/protected refs, and encrypted working tree; hourly ref/lag checks, continuous rolling full-content scrub (target 24h, critical 48h), missed-deadline and corruption alerts in both clouds.
 - [ ] Automatic quarantining/fencing, verified source selection, targeted repair of missing/corrupt objects and indexes with forced transfer, full replica rebuild on new storage when required, verified atomic publication and safe resume; healthy replica stays protected.
 - [ ] Fail closed on ambiguous source or unavailable quorum; audit, retry and incident visibility without manual SSH or leaking tenant content.
 - [ ] Fault injection covers bit rot, missing objects, corrupt packs/indexes, rollback, legitimate concurrent changes, interrupted repair, total disk failure, retention/purge race, both copies corrupt and network partition. Test successful E2EE decrypt after repair.
 - [ ] Benchmark HDD/JBOD with independent per-disk failure domains vs RAID6/mirror, fully used plans, repair and scrub cost, measured RPO/RTO, spare capacity, provider replacement SLA and independent retention. Local RAID is optional if all mandatory acceptance criteria pass; no third persistent copy or relaxation of two independent replicas.
+
+### Continuous scrub and hardware lifecycle (§17.2)
+- [ ] All branches, tags, refs, reflogs, loose/packed and not-yet-GCed objects checked in both replicas; actual disk reads, per-segment age and watchdog. Target 24h, critical at 48h; no silent extension. Test saturated pools, concurrent commits/repack, restart and repair, distinguish legally unreachable/purged objects.
+- [ ] Node/disk health agent and stable disk identity; simulated SMART degradation, silent corruption, I/O errors, readonly filesystem, total disk/node failure; quarantine, alert and begin verified restore without awaiting vendor intervention.
+- [ ] GTMD storage controller provisions new isolated local PV/PVC, fences old writer, restores and validates staging, preserves identity and retention, then switches workload/routing; no blind PV deletion or empty Syncthing startup. Test both directions and stale-node return.
+- [ ] Provider-specific hardware ticket automation where supported (otherwise actionable alert), documented replacement SLA and workflow, no tenant content in ticket, validate replacement disk before reuse. Verify spare capacity for largest local disk failure, node/cloud disaster capacity, actual throughput, full recovery duration and costs. No paid deployment before approval.
