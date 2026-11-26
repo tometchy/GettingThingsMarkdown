@@ -1,3 +1,5 @@
+> **Current MVP specification / obowiązująca specyfikacja:** [docs/MVP-SPECIFICATION.md](docs/MVP-SPECIFICATION.md). It supersedes conflicting historical design notes. Follow it for all future implementation work.
+
 > **Current design:** New tenants use complete encrypted local Git on BOTH Sync and History; no LFS/S3 required. A seven-day deletion-intent/Undo API and operator incident holds are present, but **physical Git erasure, root-resistant immutability, strict quota accounting, and automatic cross-cloud failover are NOT IMPLEMENTED**. See [full-Git recovery](docs/full-git-dual-cloud-recovery.md) and [history protection](docs/history-protection-operations.md). Admin management at `/admin/` must be private and protected with operator SSO/MFA. No live billing until real cloud and data-loss tests pass.
 
 # GettingThingsMarkdown
