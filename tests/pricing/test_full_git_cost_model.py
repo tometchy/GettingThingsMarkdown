@@ -1,35 +1,35 @@
 import importlib.util
 from pathlib import Path
-import unittest,sys
-source=Path(__file__).resolve().parents[2]/"scripts"/"full_git_cost_model.py"
-spec=importlib.util.spec_from_file_location("full_git_cost_model",source)
-model=importlib.util.module_from_spec(spec)
-sys.modules[spec.name]=model
+import unittest, sys
+source = Path(__file__).resolve().parents[2] / "scripts" / "full_git_cost_model.py"
+spec = importlib.util.spec_from_file_location("full_git_cost_model", source)
+model = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = model
 spec.loader.exec_module(model)
 
 class FullGitEconomicsTests(unittest.TestCase):
-    def test_both_full_git_copies_are_counted(self):
-        r=model.FullGitCosts().estimate(100,300,100)
-        self.assertGreater(r["live_plus_history_a_tib"],r["full_git_b_tib"])
-        self.assertGreater(r["hetzner_nodes"],1)
-        self.assertGreater(r["ovh_nodes"],1)
-        self.assertGreater(r["source_gib"],50000)
-
-    def test_warm_failover_costs_more_than_cold(self):
-        e=model.FullGitCosts()
-        cold=e.estimate(100,300,100)
-        warm=e.estimate(100,300,100,warm_failover=True)
-        self.assertGreaterEqual(warm["hetzner_nodes"],cold["hetzner_nodes"])
-        self.assertGreater(warm["ovh_nodes"],cold["ovh_nodes"])
-        self.assertLess(warm["net_margin"],cold["net_margin"])
-
-    def test_more_histories_and_annual_discounts_reduce_margin(self):
-        regular=model.FullGitCosts().estimate(100,300,100)
-        higher=model.FullGitCosts(history_multiplier=3).estimate(100,300,100)
-        annual=model.FullGitCosts().estimate(100,300,100,annual_share=1)
-        self.assertLess(higher["profit_eur"],regular["profit_eur"])
-        self.assertLess(annual["net_revenue_eur"],regular["net_revenue_eur"])
-
-    def test_invalid_ratio_rejected(self):
+    def test_max_counts_history_twice_and_working_tree_once(self):
+        r = model.FullGitCosts(extra_storage_fraction=0, rebuild_capacity_fraction=0).estimate("max")
+        self.assertEqual(r["a_data_tib"], 4)
+        self.assertEqual(r["b_data_tib"], 2)
+        self.assertAlmostEqual(r["a_reserved_tib"]+r["b_reserved_tib"], 8)
+    def test_all_plans_and_missing_annual_price_fail_closed(self):
+        m = model.FullGitCosts()
+        self.assertEqual(set(m.full_capacity_gate()["plans"]), {"basic","plus","pro","max"})
+        self.assertFalse(m.full_capacity_gate(True)["passed"])
+        self.assertEqual(m.estimate("max", annual=True)["status"], "price_not_set")
+    def test_retention_and_store_fee_reduce_margin(self):
+        base = model.FullGitCosts().estimate("max")
+        expensive = model.FullGitCosts(extra_storage_fraction=.5, payment_fraction=.3).estimate("max")
+        self.assertLess(expensive["net_margin"], base["net_margin"])
+        self.assertLess(model.FullGitCosts().estimate("plus", annual=True)["net_revenue_eur"],
+                        model.FullGitCosts().estimate("plus")["net_revenue_eur"])
+    def test_price_floor(self):
+        e = model.FullGitCosts()
+        floor = e.estimate("max")["gross_usd_month_for_target_margin"]
+        self.assertAlmostEqual(model.FullGitCosts(max_month_usd=floor).estimate("max")["net_margin"], e.target_margin)
+    def test_invalid_inputs(self):
         with self.assertRaises(ValueError):
-            model.FullGitCosts(history_multiplier=0).estimate(10,10,10)
+            model.FullGitCosts(pool_utilization=0).estimate("max")
+        with self.assertRaises(ValueError):
+            model.FullGitCosts().estimate("max", fill=1.1)
