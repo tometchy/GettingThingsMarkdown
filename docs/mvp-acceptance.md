@@ -156,3 +156,11 @@ See [storage and recovery operations](storage-recovery-operations.md).
 - [x] Fresh full-Git tenants can use separate bounded live PVC without additional pods or increased nominal total reservation; existing PVC layout retained; no automatic migration.
 - [x] New Kubernetes SMTP deliveries no longer write SQLite mail receipt rows; deterministic Git digest and serialized commit history enforce retry/rate policy.
 - [ ] Verify real CSI physical capacity and native Syncthing deletion/download at full live volume, history-budget admission and safe downgrade/gift expiry. Shared PVC legacy migration, actual failover/purge and mobile apps remain open.
+
+## Kontynuacja 2026-11-26 — logiczna historia i ekonomia
+
+Nadrzędne wymagania: MVP-SPECIFICATION.md; wcześniejsze pozycje o migracjach, LFS/S3, centralnym SQLite i mnożnikach PVC opisują przeszły prototyp, nie kryteria nowego MVP.
+- Stan main 80f38b152278ee8bebf582b85a7fe6c1c0d25dfb: CI 45817121204 — dotnet, browser, safety, infrastructure success; images failure w SMTP kind (HTTP 503). Poprzedni main 45797835070 success. Przyczyna 503 nieustalona, nie osłabiać testu.
+- Implementacja: niezależny pomiar unikalnych blobów main + refs/gtmd/protected/*, bez liczenia innych gałęzi lub fizycznej wielkości packfile; prywatny uwierzytelniony /logical-usage oraz CLI. Brak automatycznego wyłączania technicznych ścieżek; jawnie ciphertext bytes. Nie włączono do publicznego limitu ani admission, nie istnieje jeszcze protokół chronionych refów, inkrementalny indeks, fencing lub dowód zgodności A/B. Testy Git: dedup, usunięcie, inna gałąź, GC, protected ref i brak obiektu.
+- Implementacja: model kosztów czterech planów i pełnego wykorzystania, jawne założenia, scenariusz opłat mobilnych, nieustalona roczna cena max blokuje roczny gate. Nie uruchomiono zasobów płatnych. Wynik nowego CI do odczytania z PR; nie deklarujemy zaliczenia przed wynikiem.
+- Nadal BLOKER: native selective admission przed materializacją i ACK, niezależna 7-dniowa retencja, sejf i obowiązkowy recovery kit, quorum/fencing i automatyczny failover; żadna z tych funkcji nie została uznana za gotową. Live purge pozostaje wyłączony. Nie osłabiać wymagań ani deklarować RPO=0.
