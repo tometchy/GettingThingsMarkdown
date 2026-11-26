@@ -164,3 +164,13 @@ Nadrzędne wymagania: MVP-SPECIFICATION.md; wcześniejsze pozycje o migracjach, 
 - Implementacja: niezależny pomiar unikalnych blobów main + refs/gtmd/protected/*, bez liczenia innych gałęzi lub fizycznej wielkości packfile; CLI dostępne wewnątrz obrazu Sync (nie na ścieżce SMTP). Brak automatycznego wyłączania technicznych ścieżek; jawnie ciphertext bytes. Nie włączono do publicznego limitu ani admission, nie istnieje jeszcze protokół chronionych refów, inkrementalny indeks, fencing lub dowód zgodności A/B. Testy Git: dedup, usunięcie, inna gałąź, GC, protected ref i brak obiektu.
 - Implementacja: model kosztów czterech planów i pełnego wykorzystania, jawne założenia, scenariusz opłat mobilnych, nieustalona roczna cena max blokuje roczny gate. Nie uruchomiono zasobów płatnych. Wynik nowego CI do odczytania z PR; nie deklarujemy zaliczenia przed wynikiem.
 - Nadal BLOKER: native selective admission przed materializacją i ACK, niezależna 7-dniowa retencja, sejf i obowiązkowy recovery kit, quorum/fencing i automatyczny failover; żadna z tych funkcji nie została uznana za gotową. Live purge pozostaje wyłączony. Nie osłabiać wymagań ani deklarować RPO=0.
+
+## Git-native integrity and self-healing (mandatory, 2026-11-26)
+
+Requirements: MVP-SPECIFICATION.md §17.1. Plan only; not implemented or tested by this change.
+- [ ] Every transfer validates new Git objects and required committed refs; independently anchored manifest/fencing prevents silent rollback and stale-replica resurrection.
+- [ ] Scheduled bounded full-content scrubs of A and B, all required/protected refs, and encrypted working tree; hourly ref/lag checks, initial weekly full scrub, missed-deadline and corruption alerts in both clouds.
+- [ ] Automatic quarantining/fencing, verified source selection, targeted repair of missing/corrupt objects and indexes with forced transfer, full replica rebuild on new storage when required, verified atomic publication and safe resume; healthy replica stays protected.
+- [ ] Fail closed on ambiguous source or unavailable quorum; audit, retry and incident visibility without manual SSH or leaking tenant content.
+- [ ] Fault injection covers bit rot, missing objects, corrupt packs/indexes, rollback, legitimate concurrent changes, interrupted repair, total disk failure, retention/purge race, both copies corrupt and network partition. Test successful E2EE decrypt after repair.
+- [ ] Benchmark HDD/JBOD with independent per-disk failure domains vs RAID6/mirror, fully used plans, repair and scrub cost, measured RPO/RTO, spare capacity, provider replacement SLA and independent retention. Local RAID is optional if all mandatory acceptance criteria pass; no third persistent copy or relaxation of two independent replicas.
