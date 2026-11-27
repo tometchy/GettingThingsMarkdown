@@ -105,3 +105,72 @@ Syncthing technical files; a future snapshot/provisioner must explicitly
 validate those before excluding them. It never resets a live working tree or
 mistakes uncommitted user changes for permission to repair. Integrating it
 with continuous scheduling and stable snapshots remains a release blocker.
+
+
+## One-shot repair allocator: freeze first, use the native binder
+
+No new daemon, controller loop, reservation database, queue, CRD or tenant
+container. Run server/storage-controller/repair_allocator.py as a trusted
+one-shot task when reconciling an incident, with PYTHONPATH containing
+server/integrity and server/storage-controller. Uses existing node/disk
+inventory and scoped health reports. A common spare pool, not one spare per
+tenant; capacity reserve still must cover the largest failure domain under
+the governing SLO. Do not allocate paid machines automatically.
+
+Enable repairAllocator.enabled=true with a dedicated
+repairAllocator.storageClass in Helm (requires the existing
+gtm-storage-reports namespace). Include that class in independent storage
+inventory and the storage controller's managed classes. The class must
+have provisioner=kubernetes.io/no-provisioner and
+volumeBindingMode=Immediate. Prepare fresh empty, capacity-enforced local
+Retain RWO Filesystem PVs with gtmd.io/repair-spare=true label and existing
+independent node/disk mapping. Do not reuse Released PVs or clear claimRef
+as an allocation strategy. Physical initialization and mount ownership
+verification are separate gates; this adapter does NOT provision disks or
+format volumes. The candidate LVM layout needs a verified spare-slot
+mount/PVC association after binding; no automatic LVM mount is implied.
+
+Helm creates only namespace, RBAC and native admission policies; no
+Deployment or additional compute. The dedicated actor gets GET on
+nodes/PVCs, GET/LIST PV metadata, GET the designated StorageClass and
+reports, CREATE PVC only in gtm-recovery. No PV patch, claim delete,
+pod creation or tenant writes. Use short-lived TokenRequest from trusted
+coordinator. Admission blocks pods in gtm-recovery, other claims consuming
+the dedicated repair class, creation by other identities and mutating
+the staging claim's binding/incident or deleting it. Native binder may
+update its ordinary metadata/status. Policies are not protection from
+cluster administrators who can remove them. The actor is trusted to request
+the correct incident, can consume spare capacity if compromised, but has
+no data plane or live activation permission.
+
+CLI arguments: --inventory, --repair-class, --tenant, --incident, --role,
+--kube-endpoint, --kube-ca, --kube-token, --witness-endpoint, --witness-ca,
+--witness-cert, --witness-key, --witness-public. Read-only default.
+--apply-development-allocation first freezes enrolled writers through the
+witness, even when no spare exists, then verifies the signed current
+challenge. Without an anchor, stop safely. Verify old primary role claim
+UID and binding, original node/cloud and other role's independent cloud.
+Filter pre-created Available unclaimed Retain PVs for enough capacity,
+compatible mode, no overlapping local paths, fresh healthy reports, a
+distinct eligible same-cloud node/disk. Best-fit capacity, stable name
+tie-break, one health read per candidate node. Native binder arbitrates
+races; explicitly pin volumeName, class, spare selector and target PV UID
+in an incident-specific PVC (repair-<freeze digest prefix>). A lost
+create reply or retry reads that same claim. No automatic retarget,
+deletion or release on conflict or stale health; safe blocked state
+requires trusted incident review. No dynamic fallback.
+Only after exact bound PVC/PV UID and fresh eligibility verification,
+attach one target UID to the existing witness freeze using its existing
+transaction/CAS. This does not change the signed challenge, epoch,
+prior permits' deadline or collected stop proofs. The old target and
+old live claim are not modified. Allocation is for the primary Git
+volume only; separate sync-live reconstruction, physical binding,
+staging runner invocation, provider fence, independent retention and
+cutover remain open. No authorized activation is returned.
+
+The staging claim lives in gtm-recovery, intentionally separate from
+the immutable frozen tenant namespace. Host staging must verify its
+actual mount and not start pods there. Do not remove admission policy
+or delete/rebind the claim for cutover; later implement a verified
+replacement enrollment/cutover transaction first. This currently
+preserves a safe blocked state rather than pretending to repair live data.
