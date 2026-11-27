@@ -29,12 +29,15 @@ class Tests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)
         self.run_openssl("req","-x509","-newkey","rsa:2048","-nodes","-days","1",
-                         "-subj","/CN=CI CA","-keyout","ca.key","-out","ca.crt")
+                         "-subj","/CN=CI CA","-keyout","ca.key","-out","ca.crt",
+                         "-addext","basicConstraints=critical,CA:TRUE",
+                         "-addext","keyUsage=critical,keyCertSign,cRLSign",
+                         "-addext","subjectKeyIdentifier=hash")
         for name in ("server","coordinator","other"):
             self.run_openssl("req","-new","-newkey","rsa:2048","-nodes","-subj","/CN="+name,
                              "-keyout",name+".key","-out",name+".csr")
             ext=self.root/(name+".ext")
-            ext.write_text("subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n" if name=="server" else "extendedKeyUsage=clientAuth\n")
+            ext.write_text("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n" + ("subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n" if name=="server" else "extendedKeyUsage=clientAuth\n"))
             self.run_openssl("x509","-req","-in",name+".csr","-CA","ca.crt","-CAkey","ca.key",
                              "-CAcreateserial","-days","1","-extfile",name+".ext","-out",name+".crt")
         der=ssl.PEM_cert_to_DER_cert((self.root/"coordinator.crt").read_text())
