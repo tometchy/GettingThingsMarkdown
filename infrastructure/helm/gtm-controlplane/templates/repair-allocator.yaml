@@ -12,6 +12,13 @@ metadata:
   namespace: {{ .Values.namespace | quote }}
 automountServiceAccountToken: false
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gtm-repair-stage
+  namespace: {{ .Values.namespace | quote }}
+automountServiceAccountToken: false
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -39,6 +46,9 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: gtm-repair-allocator
+    namespace: {{ .Values.namespace | quote }}
+  - kind: ServiceAccount
+    name: gtm-repair-stage
     namespace: {{ .Values.namespace | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -87,6 +97,9 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: gtm-repair-allocator
+    namespace: {{ .Values.namespace | quote }}
+  - kind: ServiceAccount
+    name: gtm-repair-stage
     namespace: {{ .Values.namespace | quote }}
 ---
 apiVersion: admissionregistration.k8s.io/v1

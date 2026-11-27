@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -73,9 +74,9 @@ class Tests(unittest.TestCase):
     def git(self,*args):
         return subprocess.check_output(["git","-C",str(self.repo),*args],stderr=subprocess.DEVNULL)
 
-    def run_stage(self):
+    def run_stage(self, **kwargs):
         return runner.run(self.api,self.identity,"repair-1",self.root,self.keys["witness"][1],
-                          self.keys["target"][0],60,allow_local_test_source=True)
+                          self.keys["target"][0],60,allow_local_test_source=True,**kwargs)
 
     def test_rebuild_and_resume_after_lost_receipt(self):
         self.api.fail_submit=True
@@ -114,6 +115,57 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(c.RecoveryError,"incomplete_staging_requires_new_attempt"):
             self.run_stage()
         self.assertEqual((stage/"marker").read_text(),"keep")
+
+    def test_production_requires_guard_before_any_write(self):
+        with self.assertRaisesRegex(c.RecoveryError,"verified_staging_binding_required"):
+            runner.run(self.api,self.identity,"repair-1",self.root,self.keys["witness"][1],
+                       self.keys["target"][0],60)
+        self.assertEqual(list(self.root.iterdir()),[])
+        def guard():
+            raise c.RecoveryError("wrong_volume")
+        with self.assertRaisesRegex(c.RecoveryError,"wrong_volume"):
+            self.run_stage(guard=guard)
+        self.assertEqual(list(self.root.iterdir()),[])
+
+    def test_guard_detects_root_substitution_before_lock(self):
+        previous=self.root.with_name("previous")
+        def guard():
+            self.root.rename(previous)
+            self.root.mkdir()
+            return {"mount":str(self.root),"device":"0:0"}
+        with patch.object(runner,"validate_mount"):
+            with self.assertRaisesRegex(c.RecoveryError,"staging_mount_changed"):
+                self.run_stage(guard=guard)
+        self.assertEqual(list(self.root.iterdir()),[])
+        self.assertEqual(list(previous.iterdir()),[])
+
+    def test_guard_rechecked_before_receipt_and_retry(self):
+        calls=[]
+        def guard():
+            calls.append(1)
+            if len(calls)==3:
+                raise c.RecoveryError("target_no_longer_healthy")
+            return {"mount":str(self.root),"device":"0:0"}
+        with patch.object(runner,"validate_mount"):
+            try:
+                with self.assertRaisesRegex(c.RecoveryError,"target_no_longer_healthy"):
+                    self.run_stage(guard=guard)
+            except g.IntegrityError as exc:
+                if str(exc)=="direct_io_unsupported":
+                    self.skipTest("filesystem does not support direct I/O")
+                raise
+            self.assertEqual(len(calls),3)
+            self.assertIsNone(self.api.receipt)
+            self.assertTrue((self.root/"repair-1-1"/"receipt.json").is_file())
+            self.assertEqual(self.run_stage(guard=guard)["state"],"staged_verified")
+
+    def test_unrelated_data_preserved_and_rejected(self):
+        marker=self.root/"unrelated"
+        marker.write_bytes(b"keep")
+        with self.assertRaisesRegex(c.RecoveryError,"unexpected_staging_content"):
+            self.run_stage()
+        self.assertEqual(marker.read_bytes(),b"keep")
+        self.assertIsNone(self.api.receipt)
 
     def test_mismatch_and_unverified_mount(self):
         self.identity["target_pvc_uid"]="wrong"

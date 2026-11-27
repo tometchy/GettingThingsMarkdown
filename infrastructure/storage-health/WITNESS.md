@@ -75,12 +75,41 @@ same attempt re-verifies all staged data before signing again, even after
 expiry. An expired ticket cannot begin a new fetch.
 Incomplete staging is never overwritten; retire the old attempt with
 verified target evidence before separately authorizing another attempt.
-The allocator must establish the real PVC→mount/device identity outside this
-worker; these checks alone cannot prove Kubernetes binding. The target signing
+The trusted host must provision the physical PVC→LV association; the worker now
+independently verifies this association against the active allocator/witness
+binding and actual LVM device before execution and before signing a receipt. The target signing
 key and mTLS credentials belong to a trusted host/repair service, never a
 normal tenant pod. No Kubernetes write permission, no activation. Do not
 reuse the volume until any old job is stopped/fenced. Real Git and OpenSSL
 CI fixture simulates interrupted receipt delivery and verifies restart.
+
+The development host staging CLI now requires --binding-inventory,
+--storage-inventory, --repair-class and --kube-endpoint/--kube-ca/--kube-token
+in addition to its existing witness identity, operation and credentials.
+The former manually supplied --mount/--mount-dev shortcut is removed.
+Install with both server/integrity and server/storage-controller on PYTHONPATH.
+Independent root-owned binding inventory:
+
+    {"tenant":"gtm-<32 hex>","role":"sync","incident":"<ID>",
+     "machineId":"<32 hex>","nodeName":"<node>","pvName":"<PV>",
+     "pvUid":"<UUID>","pvcUid":"<UUID>","mount":"/managed/spare/slot",
+     "vgName":"gtmd-pool","vgUuid":"<LVM UUID>","lvUuid":"<LVM UUID>"}
+
+The host must independently prepare the exact LV, name pvc-<PVC UID>,
+owner tags and mounted ext4/XFS path; no implicit formatting, rename or
+mount action. Use the gtm-repair-stage service account from the optional allocator chart
+(short-lived TokenRequest; no claim creation or mutation), and private
+witness/target signing keys.
+The CLI currently runs on trusted root host because LVM inspection needs
+privileged access; production privilege separation and hardening remain
+required. Reuses allocator inspection in read-only mode, so actual bound
+PVC/PV, current freeze and fresh healthy target node/disk must still match.
+The original enrolled PVC must remain present. A held directory FD prevents
+ordinary unmount during execution, and device/inode/mount binding is checked
+before any writes, before rebuilding and before submitting receipt. Unknown
+root contents block; only empty lost+found, lock and exact operation attempt
+directories are permitted. No cleanup of unknown data. Lazy unmount or
+malicious root is outside this guarantee. This gate is not a cutover proof.
 
 ## Consensus metadata backend (optional)
 

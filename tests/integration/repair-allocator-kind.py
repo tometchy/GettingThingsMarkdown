@@ -22,6 +22,7 @@ CLASS = "gtmd-ci-repair"
 NORMAL = "gtmd-ci-original"
 POLICIES = ["gtmd-recovery-no-pods", "gtmd-recovery-claims", "gtmd-repair-pool-only"]
 ACTOR = "system:serviceaccount:gtm-system:gtm-repair-allocator"
+STAGE = "system:serviceaccount:gtm-system:gtm-repair-stage"
 
 
 def run(*args, data=None, check=True):
@@ -121,6 +122,12 @@ def main():
         assert k("auth","can-i","patch","pv","--as="+ACTOR,check=False).stdout.strip() == b"no"
         assert k("auth","can-i","create","pvc","-n",tenant,"--as="+ACTOR,check=False).stdout.strip() == b"no"
         assert k("auth","can-i","create","pod","-n",a.NAMESPACE,"--as="+ACTOR,check=False).stdout.strip() == b"no"
+        for verb,resource,namespace in [("create","pvc",a.NAMESPACE),("patch","pv",None),
+                                         ("delete","pvc",a.NAMESPACE),("create","pod",a.NAMESPACE)]:
+            args=["auth","can-i",verb,resource,"--as="+STAGE]
+            if namespace:
+                args+=["-n",namespace]
+            assert k(*args,check=False).stdout.strip()==b"no"
         reports()
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -183,6 +190,11 @@ def main():
             result=reconcile()
             assert result["state"]=="allocated" and result["targetPV"]==names[2]
             assert result==reconcile()
+            stage_token=root/"stage-token"
+            stage_token.write_bytes(k("-n","gtm-system","create","token","gtm-repair-stage","--duration=10m").stdout)
+            stage_api=Kube(kc["server"],str(ca),str(stage_token))
+            assert a.reconcile(stage_api,Client(),keys["witness"][1],cfg,CLASS,tenant,
+                               "ci-incident","sync",apply=False)==result
             f=witness.status(tenant)["writerFence"]
             assert f["freeze"]["challenge"]==ch and f["freeze"]["plan"]["targetPvcUid"]==result["targetPvcUid"]
             deny(["-n",a.NAMESPACE,"annotate","pvc",name,"gtmd.io/tenant=changed","--overwrite","--dry-run=server"],
