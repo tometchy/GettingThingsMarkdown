@@ -108,12 +108,12 @@ external anti-rollback watermark after full cluster restore, writer
 enforcement/fencing and independent retention are not yet complete.
 
 ## Writer freeze and short-lived permits (opt-in)
-Offline enroll-writers binds both roles to exact pod, PVC and node UIDs. The
+Offline enroll-writers binds both roles to exact pod, all PVC and node UIDs. The
 trusted host agent signs renewal requests with its role key and publishes
 witness-signed 60s permits in a host-owned directory, mounted read-only at
 /run/gtmd-writer-fence with pinned witness.pub. Renew every 10–15s, not via
 slow Kubernetes Secret refresh. The data image uses GTM_WRITER_FENCE_MODE=required,
-GTM_FENCE_TENANT, GTM_FENCE_POD_UID, GTM_FENCE_PVC_UID, GTM_FENCE_NODE_UID;
+GTM_FENCE_TENANT, GTM_FENCE_POD_UID, GTM_FENCE_PVC_UIDS (comma-separated all data PVC UIDs), GTM_FENCE_NODE_UID;
 the guard must be PID1 in an unshared container PID namespace. Default
 development mode preserves legacy behavior and is NOT production fenced.
 No deployment automatically sets these variables yet. Provisioner must
@@ -156,3 +156,11 @@ private challenge metadata; ordinary status logs omit refs. No automatic
 allocator/host fencing evidence collection, staging Job scheduling, live PVC
 changes, unfreeze or provider API operations. The controller is not yet wired
 to this orchestrator; run only in trusted test/orchestration environment.
+
+The read-only recovery_binding.py inspector derives writer identities from
+all PVC references (including sync-live where present), exact bound claim/PV
+UIDs, node inventory and separate clouds. It validates an already allocated
+new bound Retain PVC on a different healthy node in the same cloud, with
+compatible storage class/mode/capacity, no references by tenant pods.
+This is API-level validation only, not actual mount or physical isolation.
+Needs read-only scoped pod/PVC API access; does not allocate or mutate.

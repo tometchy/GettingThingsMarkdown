@@ -20,8 +20,11 @@ def state(s):
 
 
 def identity(value):
-    require(isinstance(value, dict) and set(value) == {"podUid", "pvcUid", "nodeUid"}
-            and all(identifier(x) for x in value.values()), "invalid_writer_identity")
+    require(isinstance(value, dict) and set(value) == {"podUid", "pvcUids", "nodeUid"}
+            and identifier(value["podUid"]) and identifier(value["nodeUid"])
+            and isinstance(value["pvcUids"], list) and 1 <= len(value["pvcUids"]) <= 8
+            and all(identifier(x) for x in value["pvcUids"])
+            and value["pvcUids"] == sorted(set(value["pvcUids"])), "invalid_writer_identity")
     return value
 
 
@@ -30,7 +33,7 @@ def enroll(w, tenant, writers):
     require(isinstance(writers, dict) and set(writers) == set(ROLES), "invalid_writer_pair")
     writers = {role: identity(v) for role, v in writers.items()}
     require(writers["sync"]["podUid"] != writers["history"]["podUid"]
-            and writers["sync"]["pvcUid"] != writers["history"]["pvcUid"], "writer_identity_collision")
+            and not set(writers["sync"]["pvcUids"]) & set(writers["history"]["pvcUids"]), "writer_identity_collision")
     with w.transaction(tenant) as s:
         require(s.get("writerFence") is None and s["repair"] is None and s["challenge"] is None,
                 "writer_fencing_already_enrolled_or_busy")
@@ -84,7 +87,7 @@ def freeze(w, tenant, incident, target_role=None, target_pvc=None):
         plan = None if target_role is None else {"targetRole": target_role, "targetPvcUid": target_pvc,
                    "generation": s["generation"], "anchorDigest": s["anchorDigest"]}
         if plan is not None:
-            require(s["generation"] > 0 and target_pvc not in [v["pvcUid"] for v in f["writers"].values()],
+            require(s["generation"] > 0 and target_pvc not in {uid for v in f["writers"].values() for uid in v["pvcUids"]},
                     "repair_requires_new_volume_and_anchor")
         if f["phase"] != "open":
             require(f["freeze"]["incident"] == incident and f["freeze"].get("plan") == plan, "different_freeze_active")
@@ -119,10 +122,10 @@ def confirm_stop(w, tenant, role, envelope):
         expected = {"schema": 1, "kind": "writer_stopped", "tenant": tenant, "role": role,
                     "challengeDigest": digest(ch), "identity": ch["writers"][role],
                     "epoch": ch["epoch"], "processesStopped": True,
-                    "writeAccessRevoked": True, "oldVolumeIsolated": True}
+                    "writeAccessRevoked": True, "oldVolumesIsolated": True}
         require(isinstance(data, dict) and set(data) == set(expected) | {"verifiedUnix", "method", "evidenceDigest"}
                 and all(data.get(k) == v for k, v in expected.items())
-                and all(data[k] is True for k in ("processesStopped", "writeAccessRevoked", "oldVolumeIsolated")),
+                and all(data[k] is True for k in ("processesStopped", "writeAccessRevoked", "oldVolumesIsolated")),
                 "stop_evidence_mismatch")
         require(data["method"] in ("trusted_host_runtime", "provider_fence")
                 and isinstance(data["evidenceDigest"], str) and len(data["evidenceDigest"]) == 64

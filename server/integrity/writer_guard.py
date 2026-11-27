@@ -123,8 +123,9 @@ def main():
     if mode!="required":
         raise RecoveryError("invalid_writer_fence_mode")
     tenant=os.environ["GTM_FENCE_TENANT"]
-    identity={k:os.environ[v] for k,v in (("podUid","GTM_FENCE_POD_UID"),
-              ("pvcUid","GTM_FENCE_PVC_UID"),("nodeUid","GTM_FENCE_NODE_UID"))}
+    identity={"podUid":os.environ["GTM_FENCE_POD_UID"],
+              "nodeUid":os.environ["GTM_FENCE_NODE_UID"],
+              "pvcUids":sorted(os.environ["GTM_FENCE_PVC_UIDS"].split(","))}
     # Immutable trust material, separate from the tenant PVC.
     root=Path("/run/gtmd-writer-fence")
     return supervise(Guard(tenant,a.role,identity,root/"witness.pub"),

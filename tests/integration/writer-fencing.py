@@ -17,8 +17,9 @@ import recovery_crypto as c
 import recovery_witness as w
 
 TENANT="gtm-"+"c"*32
-IDS={role:{"podUid":role+"-pod","pvcUid":role+"-pvc","nodeUid":role+"-node"}
+IDS={role:{"podUid":role+"-pod","pvcUids":[role+"-pvc"],"nodeUid":role+"-node"}
      for role in ("sync","history")}
+IDS["sync"]["pvcUids"]=["sync-live-pvc","sync-pvc"]
 
 
 class Tests(unittest.TestCase):
@@ -75,7 +76,7 @@ class Tests(unittest.TestCase):
         data={"schema":1,"kind":"writer_stopped","tenant":TENANT,"role":role,
             "challengeDigest":c.digest(ch["payload"]),"identity":IDS[role],
             "epoch":ch["payload"]["epoch"],"processesStopped":True,
-            "writeAccessRevoked":True,"oldVolumeIsolated":True,"method":"trusted_host_runtime",
+            "writeAccessRevoked":True,"oldVolumesIsolated":True,"method":"trusted_host_runtime",
             "evidenceDigest":"a"*64,"verifiedUnix":self.now}
         data.update(extra)
         return c.sign(data,self.keys[role][0])
@@ -87,7 +88,7 @@ class Tests(unittest.TestCase):
             f.confirm_stop(self.w,TENANT,"sync",self.stop(ch,"sync"))
         self.now=ch["payload"]["notBeforeUnix"]
         with self.assertRaises(c.RecoveryError):
-            f.confirm_stop(self.w,TENANT,"sync",self.stop(ch,"sync",oldVolumeIsolated=False))
+            f.confirm_stop(self.w,TENANT,"sync",self.stop(ch,"sync",oldVolumesIsolated=False))
         proof=self.stop(ch,"sync")
         self.assertEqual(f.confirm_stop(self.w,TENANT,"sync",proof)["phase"],"freezing")
         self.assertEqual(f.confirm_stop(self.w,TENANT,"history",self.stop(ch,"history"))["phase"],"frozen")

@@ -47,14 +47,15 @@ def renew(api, tenant, role, identity, epoch, key, public, output, now=None):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    for k in ("endpoint","ca","cert","tls-key","tenant","role","pod-uid","pvc-uid","node-uid",
+    for k in ("endpoint","ca","cert","tls-key","tenant","role","pod-uid","node-uid",
               "replica-key","witness-public","output"):
         p.add_argument("--"+k,required=True)
+    p.add_argument("--pvc-uid",action="append",required=True)
     p.add_argument("--epoch",type=int,required=True)
     a=p.parse_args()
     try:
         result=renew(Client(a.endpoint,a.ca,a.cert,a.tls_key),a.tenant,a.role,
-            {"podUid":a.pod_uid,"pvcUid":a.pvc_uid,"nodeUid":a.node_uid},a.epoch,
+            {"podUid":a.pod_uid,"pvcUids":sorted(a.pvc_uid),"nodeUid":a.node_uid},a.epoch,
             a.replica_key,a.witness_public,a.output)
         print(json.dumps(result))
     except (RecoveryError,OSError,ValueError,TypeError) as exc:
