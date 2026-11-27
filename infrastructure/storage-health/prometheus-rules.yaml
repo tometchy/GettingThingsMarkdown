@@ -1,0 +1,85 @@
+groups:
+  - name: gtmd-storage-health
+    interval: 30s
+    rules:
+      - alert: GTMDStorageNodeExporterDown
+        expr: up{gtmd_storage_node="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD storage node exporter unavailable"
+      - alert: GTMDStorageDiskProbeMissing
+        expr: (up{gtmd_storage_node="true"} == 1) unless on(job,instance) gtmd_disk_health_last_poll_unixtime
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD storage health telemetry missing"
+      - alert: GTMDStorageDiskProbeStale
+        expr: time() - gtmd_disk_health_last_poll_unixtime > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD disk inspection stalled"
+      - alert: GTMDStorageInventoryInvalid
+        expr: gtmd_disk_health_inventory_ok != 1 or gtmd_disk_health_expected_disks == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD expected disk inventory missing or invalid"
+      - alert: GTMDStorageDiskSuspect
+        expr: gtmd_disk_health_state{state="suspect"} == 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD disk shows hardware degradation; investigate evacuation"
+      - alert: GTMDStorageDiskFailedOrUnverified
+        expr: gtmd_disk_health_state{state=~"failed|unknown"} == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD disk failed or cannot be verified"
+      - alert: GTMDStorageDiskCheckStale
+        expr: time() - gtmd_disk_health_checked_unixtime > 300
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD individual disk check overdue"
+      - alert: GTMDStorageInterfaceErrorsIncreasing
+        expr: delta(gtmd_disk_health_counter{counter="interface_crc"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD disk interface CRC errors increasing; check cabling/controller"
+      - alert: GTMDGitIntegrityEndpointDown
+        expr: up{job="gtmd-git-integrity"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD repository integrity metrics endpoint unavailable"
+      - alert: GTMDGitIntegrityMetricsMissing
+        expr: (up{job="gtmd-git-integrity"} == 1) unless on(job,instance) gtmd_git_integrity_health{severity="critical"}
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD repository integrity telemetry missing"
+      - alert: GTMDGitIntegrityCritical
+        expr: gtmd_git_integrity_health{severity="critical"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD local Git verification failed, missing or overdue"
+      - alert: GTMDGitIntegrityWarning
+        expr: gtmd_git_integrity_health{severity="warning"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD local Git verification incomplete or overdue"

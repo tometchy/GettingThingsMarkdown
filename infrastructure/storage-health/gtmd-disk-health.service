@@ -1,0 +1,23 @@
+[Unit]
+Description=GTMD physical disk health read-only inspection
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/lib/gtmd/disk_health.py --inventory /etc/gtmd/disk-health.json --state-dir /var/lib/gtmd-disk-health
+StateDirectory=gtmd-disk-health
+StateDirectoryMode=0755
+UMask=0077
+TimeoutStartSec=180
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+# SMART uses hardware ioctls; requires host privileges. No network/Kubernetes
+# credentials, tenant files, or automatic destructive commands.

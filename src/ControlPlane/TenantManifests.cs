@@ -283,8 +283,8 @@ public static class TenantManifests
                                              plan == "plus" ? "192Mi" : "256Mi" },
                                     limits = new { cpu = "1", memory = "1Gi" } },
                                 ports = role == "sync"
-                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "mail", containerPort = 8385 }, new { name = "tcp", containerPort = 22000 } }
-                                    : new[] { new { name = "https", containerPort = 3000 } },
+                                    ? new[] { new { name = "api", containerPort = 8384 }, new { name = "mail", containerPort = 8385 }, new { name = "tcp", containerPort = 22000 }, new { name = "integrity", containerPort = 8390 } }
+                                    : new[] { new { name = "https", containerPort = 3000 }, new { name = "integrity", containerPort = 8390 } },
                                 readinessProbe = role == "sync"
                                     ? new { tcpSocket = (object)new { port = 8384 }, initialDelaySeconds = 15, periodSeconds = 10 }
                                     : new { tcpSocket = (object)new { port = 3000 }, initialDelaySeconds = 25, periodSeconds = 10 }
@@ -303,6 +303,10 @@ public static class TenantManifests
             new Dictionary<string,string> { ["kubernetes.io/metadata.name"] = "gtm-system" } },
             podSelector = new { matchLabels = new Dictionary<string,string> {
                 ["app"] = "gtm-controlplane" } } };
+        var monitoring = new { namespaceSelector = new { matchLabels =
+            new Dictionary<string,string> { ["kubernetes.io/metadata.name"] = "gtm-monitoring" } },
+            podSelector = new { matchLabels = new Dictionary<string,string> {
+                ["app"] = "gtm-prometheus" } } };
         yield return KubeObject.From("networking.k8s.io/v1", "NetworkPolicy", "sync-ingress", ns, new
         {
             apiVersion = "networking.k8s.io/v1", kind = "NetworkPolicy",
@@ -312,6 +316,8 @@ public static class TenantManifests
                     ["gtm.io/role"] = "sync" } },
                 policyTypes = new[] { "Ingress" },
                 ingress = new object[] {
+                    new { from = new object[] { monitoring },
+                          ports = new object[] { new { protocol = "TCP", port = 8390 } } },
                     new { from = new object[] { controlPlane },
                           ports = new object[] { new { protocol = "TCP", port = 8384 }, new { protocol = "TCP", port = 8385 } } },
                     new { ports = new object[] {
@@ -332,6 +338,8 @@ public static class TenantManifests
                     ["gtm.io/role"] = "history" } },
                 policyTypes = new[] { "Ingress" },
                 ingress = new object[] {
+                    new { from = new object[] { monitoring },
+                          ports = new object[] { new { protocol = "TCP", port = 8390 } } },
                     new { from = new object[] { controlPlane },
                           ports = new object[] { new { protocol = "TCP", port = 3000 } } },
                     new { from = new object[] { new { podSelector = new {

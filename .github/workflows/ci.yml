@@ -43,7 +43,12 @@ jobs:
           python3 tests/integration/storage-budget.py
           python3 tests/integration/logical-history.py
           python3 tests/integration/git-integrity.py
+          python3 tests/integration/disk-health.py
           python3 tests/integration/history-purge-candidate.py
+      - name: Test storage-health Prometheus alert rules
+        run: |
+          docker run --rm -v "$PWD/infrastructure/storage-health:/rules:ro" \
+            -w /rules --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules prometheus-rules.test.yaml
       - name: Build and test independent encrypted Control Plane backup
         run: |
           docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .

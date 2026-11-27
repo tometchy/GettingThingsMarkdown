@@ -56,6 +56,37 @@ public class TenantManifestTests
     }
 
     [Fact]
+    public void GitIntegrityMetricsIngressIsRestrictedToMonitoringPods()
+    {
+        var declarations = TenantManifests.Build(Guid.NewGuid(), "basic", 2, null,
+            "sync", "history").ToList();
+        foreach (var policy in declarations.Where(x => x.Kind == "NetworkPolicy"))
+        {
+            using var json = JsonDocument.Parse(policy.Json);
+            var rules = json.RootElement.GetProperty("spec").GetProperty("ingress")
+                .EnumerateArray().Where(rule => rule.GetProperty("ports").EnumerateArray()
+                    .Any(port => port.GetProperty("port").GetInt32() == 8390)).ToArray();
+            var rule = Assert.Single(rules);
+            var peer = Assert.Single(rule.GetProperty("from").EnumerateArray().ToArray());
+            Assert.Equal("gtm-monitoring", peer.GetProperty("namespaceSelector")
+                .GetProperty("matchLabels").GetProperty("kubernetes.io/metadata.name").GetString());
+            Assert.Equal("gtm-prometheus", peer.GetProperty("podSelector")
+                .GetProperty("matchLabels").GetProperty("app").GetString());
+        }
+        foreach (var workload in declarations.Where(x => x.Kind == "StatefulSet"))
+        {
+            using var json = JsonDocument.Parse(workload.Json);
+            var ports = json.RootElement.GetProperty("spec").GetProperty("template")
+                .GetProperty("spec").GetProperty("containers")[0].GetProperty("ports");
+            Assert.Contains(ports.EnumerateArray(), p =>
+                p.GetProperty("name").GetString() == "integrity" &&
+                p.GetProperty("containerPort").GetInt32() == 8390);
+        }
+        foreach (var service in declarations.Where(x => x.Kind == "Service"))
+            Assert.DoesNotContain("8390", service.Json);
+    }
+
+    [Fact]
     public void RequiresTwoDifferentCloudsWhenPlacementIsEnabled()
     {
         var id = Guid.NewGuid();
