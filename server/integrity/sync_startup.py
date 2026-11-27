@@ -15,7 +15,7 @@ import stat
 import time
 import xml.etree.ElementTree as ET
 
-from recovery_crypto import RecoveryError, read, decode
+from recovery_crypto import RecoveryError, read, decode, digest, verify as verify_signature
 from writer_guard import Guard
 from git_integrity import IntegrityError, refs, OID
 from worktree_integrity import verify
@@ -32,7 +32,7 @@ MAX_IDENTITY = 4*1024*1024
 
 def configuration(value):
     require(isinstance(value,dict) and set(value)=={
-        "schema","tenant","role","identity","epoch","mounts","refs","deviceId","folderId","identitySha256"},
+        "schema","tenant","role","identity","epoch","mounts","refs","anchor","deviceId","folderId","identitySha256"},
         "invalid_startup_inventory")
     require(type(value["schema"]) is int and value["schema"]==1 and value["role"]=="sync"
             and isinstance(value["tenant"],str) and TENANT.fullmatch(value["tenant"])
@@ -145,6 +145,11 @@ def preflight(root,trust,tenant,identity,*,timeout=86400,mountinfo="/proc/self/m
     require(cfg["tenant"]==tenant and cfg["identity"]==identity,"startup_enrollment_mismatch")
     def check_permit():
         key=trusted_file(trust/"witness.pub")
+        anchor=verify_signature(cfg["anchor"],key)
+        require(isinstance(anchor,dict) and anchor.get("schema")==1 and anchor.get("kind")=="generation"
+                and anchor.get("tenant")==tenant and type(anchor.get("generation")) is int
+                and anchor["generation"]>0 and anchor.get("refsDigest")==digest(cfg["refs"]),
+                "startup_anchor_mismatch")
         permit=trusted_file(trust/"permit.json")
         guard=Guard(tenant,"sync",identity,key)
         guard.check(decode(read(permit)))
