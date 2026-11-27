@@ -16,6 +16,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "server/integrity"), str(ROOT / "server/storage-controller")]
 import local_lvm_fence as f
+import lvm_mount_binding as binding
 from recovery_crypto import RecoveryError, digest, sign
 
 
@@ -122,9 +123,13 @@ def main():
                 return f.reconcile(backend, Cri(), Kube(), Witness(), public, cfg,
                                    cfg["machineId"], apply=apply)
             assert backend.inspect(cfg, pvc)["open"]
+            assert binding.verify_mount(mount, backend.inspect(cfg, pvc),
+                                        Path("/proc/self/mountinfo").read_text())["filesystem"] == "ext4"
             reject(lambda: reconcile(True), "lvm_volume_still_mounted_or_open")
             assert lvm_report(vg, name)["lv_attr"][1] == "w"
             run("umount", str(mount))
+            reject(lambda: binding.verify_mount(mount, backend.inspect(cfg, pvc),
+                        Path("/proc/self/mountinfo").read_text()), "pvc_not_exactly_one_mount")
             assert reconcile(False)["state"] == "isolation_required"
             result = reconcile(True)
             assert result["state"] == "isolated" and result["isolatedVolumeCount"] == 1
