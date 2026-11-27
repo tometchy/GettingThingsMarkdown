@@ -125,8 +125,8 @@ object is NOT by itself proof of actual isolation. Trusted host or provider
 adapter must establish runtime stop, revoked write access and isolated volume.
 Only then can an enrolled tenant proceed to a repair challenge. The source
 must be served by a separately authenticated read-only snapshot endpoint;
-normal Gitea/Syncthing writers are stopped. That endpoint and collection of
-actual provider/host evidence are not implemented yet. No release/unfreeze
+normal Gitea/Syncthing writers are stopped. The endpoint is implemented below;
+production snapshot provisioning and durable isolation evidence remain open. No release/unfreeze
 or replacement writer activation. cutover-status lists mandatory blockers.
 
 ## Read-only recovery source
@@ -164,3 +164,66 @@ new bound Retain PVC on a different healthy node in the same cloud, with
 compatible storage class/mode/capacity, no references by tenant pods.
 This is API-level validation only, not actual mount or physical isolation.
 Needs read-only scoped pod/PVC API access; does not allocate or mutate.
+
+
+## Host runtime observation and scoped stop
+
+The independent witness now exposes resume-freeze through the existing
+pinned mTLS API; the immutable signed challenge can be fetched after an
+orchestrator restart. Use --freeze-output with recovery_orchestrator.py
+to export it privately (not the separate repair scan challenge).
+
+Install server/integrity/host_runtime_fence.py and its existing Python
+dependencies in a root-controlled directory on the actual Linux node.
+Use crictl at /usr/bin/crictl with the local runtime Unix socket. The
+root-owned inventory file (not writable by group or others) must be
+provisioned independently of tenant pods. Example schema (actual UUIDs,
+not names; replace placeholders with independently verified values):
+
+    {"tenant":"gtm-<32 hex>","role":"sync",
+     "identity":{"podUid":"<UUID>","nodeUid":"<UUID>","pvcUids":["<UUID>"]},
+     "devices":{"<PVC UUID>":"8:1"}}
+
+Map ALL data PVCs to actual filesystem device major:minor on this boot,
+including sync-live. The collector does not derive physical identity or
+verify this mapping against Kubernetes/provider inventory; use it only
+after the trusted host provisioner independently verifies the binding.
+Shared filesystems conservatively report every potentially writable mount
+of the mapped filesystem, including unrelated tenants. Device numbers
+are not persistent identifiers. No support for virtual/anonymous
+filesystems whose device major is zero.
+
+    python3 host_runtime_fence.py --inventory /etc/gtmd/writer.json \
+      --freeze-challenge /run/gtmd/freeze.json \
+      --witness-public /etc/gtmd/witness.pub \
+      --cri-socket /run/containerd/containerd.sock
+
+Default is read-only. --stop-enrolled is an explicit development-only
+operational action: after the signed challenge's not-before deadline it
+calls CRI StopPodSandbox on exact enrolled sandbox IDs only, never on a
+replacement UID. It does not delete the Pod/PVC or stop unrelated
+tenants. Run only after checking that the signed freeze is the current
+incident and the node identity is correct. The collector reads the local
+CRI twice around the kernel sample, counts non-exited containers,
+matching pod cgroups and all visible mount namespaces, and flags
+potentially writable mounts (including ro bind mounts on rw superblocks).
+Unknown runtime state, orphaned containers, malformed inventory, failed
+CRI requests and inaccessible process observations fail closed.
+It emits aggregate counts, no raw mount paths, file names or container IDs.
+
+The resulting writer_runtime_observation is deliberately NOT a
+writer_stopped attestation: stopEvidenceEligible=false and
+activationAllowed=false even when every observation is clean. No private
+key is accepted. CRI stop does not prevent kubelet recreation; proc
+sampling cannot prove absence of detached mounts, raw-device writers,
+unreachable hosts or future writes. Independent durable restart
+prevention, actual physical binding and storage isolation, and trusted
+provider fencing are still needed before the role agent may sign stop
+evidence. Do not translate this report into the existing stop proof.
+Tests cover signatures, identity, runtime races, actual /proc mountinfo,
+and a real CRI sandbox stop in disposable kind. CI results must be checked
+before declaring the integration verified.
+
+Writer guard now uses Linux CLOCK_BOOTTIME for lease expiry across host
+suspend; a resumed process may still run before the next supervisor
+poll. This is not a replacement for external host/storage fencing.
