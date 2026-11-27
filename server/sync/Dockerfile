@@ -6,7 +6,7 @@ RUN apk add --no-cache openssl ca-certificates git git-lfs curl bash tini age py
 COPY --from=syncthing /bin/syncthing /usr/local/bin/syncthing
 COPY server/integrity/recovery_crypto.py server/integrity/writer_guard.py /usr/local/bin/
 COPY server/integrity/git_integrity.py server/integrity/physical_scrub.py server/integrity/authorized_rebuild.py server/integrity/worktree_integrity.py /usr/local/bin/
-COPY server/sync/mail-files.py server/sync/storage_budget.py server/sync/logical_history.py /usr/local/bin/
+COPY server/sync/mail-files.py server/sync/storage_budget.py server/sync/logical_history.py server/sync/identity-backup-git.py /usr/local/bin/
 COPY server/sync/entrypoint.sh server/sync/commit-loop.sh server/sync/askpass.sh \
      server/sync/identity-backup-once.sh server/sync/identity-backup-loop.sh \
      server/sync/lfs-backfill-once.sh server/sync/lfs-backfill-loop.sh \
