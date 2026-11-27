@@ -174,3 +174,15 @@ actual mount and not start pods there. Do not remove admission policy
 or delete/rebind the claim for cutover; later implement a verified
 replacement enrollment/cutover transaction first. This currently
 preserves a safe blocked state rather than pretending to repair live data.
+
+
+For one entry point use the existing recovery_orchestrator.py with
+--allocate-development instead of --target-pvc, and provide --inventory,
+--repair-class, --kube-endpoint, --kube-ca, --kube-token, --witness-public
+alongside its existing witness credentials and incident/role arguments.
+It invokes the same one-shot allocator; when capacity/binding is pending
+it returns the active freeze challenge (private --freeze-output) and can
+already submit independent role stop proofs. Once allocated it proceeds
+through the existing source-evidence/ticket workflow without manual
+copying of target UID. It still never performs physical mounting, source
+export setup or cutover; no new resident process is introduced.
