@@ -136,7 +136,7 @@ def main():
             storage = storage_inventory({"storageClasses":["repair"],"nodes":[
                 {"name":"ci-node","uid":node_uid,"hostname":"ci-host","cloud":"a",
                  "disks":[{"id":"a"*24,"mount":str(root)}]}]})
-            pv = {"metadata":{"uid":pv_uid,"annotations":{"gtmd.io/node":"ci-node",
+            pv = {"metadata":{"uid":pv_uid,"name":"ci-pv","annotations":{"gtmd.io/node":"ci-node",
                     "gtmd.io/node-uid":node_uid,"gtmd.io/disk-id":"a"*24}},
                   "spec":{"local":{"path":str(mount)},"claimRef":{"uid":pvc},
                           "nodeAffinity":{"required":{"nodeSelectorTerms":[{"matchExpressions":[
