@@ -356,3 +356,18 @@ to remain online. There is no unfreeze/activation operation. The adapter
 always returns stopEvidenceEligible=false and activationAllowed=false;
 never feed this observation to confirm-writer-stop as a stop proof.
 CI loop devices are not physical hardware or a two-provider test.
+
+
+Pre-enrollment read-only lvm_mount_binding.py checks the actual API
+Namespace/node/pod/PVC/PV identities, exact Retain local PV path
+<managed-root>/<PVC UID>, hostname affinity, RWO Filesystem mode,
+non-privileged pod with expected claims, and the actual host mountinfo
+entry plus stat.st_dev against the LVM device-mapper identity. Reject
+missing/stacked/subdirectory mounts, read-only filesystem and parent
+filesystem fallback. Currently candidate ext4/XFS only. No mount creation,
+no enrollment action. CLI takes --inventory, --node-name, --mount-root,
+--kube-endpoint, --kube-ca, --kube-token. Root-owned independent
+configuration and narrowly scoped read-only API credentials required.
+Checks are repeated, not an atomic enrollment or runtime mount guard;
+the caller must prevent changes during enrollment. Full provisioning
+and enforced mount lifecycle remain open.
