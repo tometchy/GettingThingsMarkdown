@@ -81,12 +81,16 @@ def config(path, witness_key):
 
 
 class Witness:
-    def __init__(self, root, cfg, key, clock=time.time):
-        self.root = Path(root)
-        self.root.mkdir(mode=0o700, parents=False, exist_ok=True)
-        st = self.root.lstat()
-        require(stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and st.st_mode & 0o077 == 0,
-                "insecure_witness_directory")
+    def __init__(self, root, cfg, key, clock=time.time, store=None):
+        self.store = store
+        if store is None:
+            self.root = Path(root)
+            self.root.mkdir(mode=0o700, parents=False, exist_ok=True)
+            st = self.root.lstat()
+            require(stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and st.st_mode & 0o077 == 0,
+                    "insecure_witness_directory")
+        else:
+            require(root is None, "ambiguous_witness_backend")
         self.cfg, self.key, self.clock = cfg, key, clock
 
     def now(self):
@@ -96,8 +100,8 @@ class Witness:
         return digest({role: {k: entry[k] for k in ('cloud', 'sourceUrl', 'fingerprint')}
                        for role, entry in self.cfg[tenant].items()})
 
-    def read_state(self, path, tenant):
-        state = verify(decode(read(path)), self.key, private=True)
+    def parse_state(self, raw, tenant):
+        state = verify(decode(raw), self.key, private=True)
         require(isinstance(state, dict) and state.get('schema') == 1 and state.get('tenant') == tenant
                 and state.get('trustDigest') == self.trust_digest(tenant), 'invalid_witness_state_or_trust_change')
         if state['generation']:
@@ -107,9 +111,26 @@ class Witness:
                     and digest(anchor) == state['anchorDigest'], 'invalid_anchor')
         return state
 
+    def read_state(self, path, tenant):
+        return self.parse_state(read(path), tenant)
+
+    def genesis(self, tenant):
+        return {"schema": 1, "tenant": tenant, "generation": 0,
+                "trustDigest": self.trust_digest(tenant),
+                "refs": {}, "anchorDigest": None, "challenge": None,
+                "repair": None, "lastClosedRepair": None, "revision": 0}
+
     @contextlib.contextmanager
     def transaction(self, tenant, initialize=False):
         require(tenant in self.cfg and TENANT.fullmatch(tenant), "unknown_tenant")
+        if self.store is not None:
+            raw, revision = self.store.read(tenant)
+            require((raw is None) == initialize, "witness_state_missing_or_already_initialized")
+            state = self.genesis(tenant) if initialize else self.parse_state(raw, tenant)
+            yield state
+            state["revision"] += 1
+            require(self.store.cas(tenant, revision, canonical(sign(state, self.key))), "witness_cas_conflict")
+            return
         lock = self.root / (tenant + ".lock")
         fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
@@ -122,10 +143,7 @@ class Witness:
                 require(initialize, "witness_state_missing")
                 # A missing state is never implicitly treated as genesis. The
                 # independent provisioning process must explicitly enroll it.
-                state = {"schema": 1, "tenant": tenant, "generation": 0,
-                         "trustDigest": self.trust_digest(tenant),
-                         "refs": {}, "anchorDigest": None, "challenge": None,
-                         "repair": None, "lastClosedRepair": None, "revision": 0}
+                state = self.genesis(tenant)
             if initialize:
                 require(not path.exists(), "tenant_already_initialized")
             yield state
@@ -161,6 +179,10 @@ class Witness:
     def status(self, tenant):
         # Read with same lock; no state-changing command required.
         require(tenant in self.cfg and TENANT.fullmatch(tenant), "unknown_tenant")
+        if self.store is not None:
+            raw, _ = self.store.read(tenant)
+            require(raw is not None, "witness_state_missing")
+            return self.parse_state(raw, tenant)
         path = self.root / (tenant + ".json")
         if not path.exists():
             raise RecoveryError("witness_state_missing")
@@ -320,8 +342,11 @@ class Witness:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for key in ("state-dir", "config", "key", "tenant"):
+    for key in ("config", "key", "tenant"):
         p.add_argument("--" + key, required=True)
+    backend = p.add_mutually_exclusive_group(required=True)
+    backend.add_argument("--state-dir")
+    backend.add_argument("--etcd-config")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     sub.add_parser("initialize")
@@ -347,7 +372,9 @@ def main():
     c.add_argument("operation")
     args = p.parse_args()
     try:
-        w = Witness(args.state_dir, config(args.config, args.key), args.key)
+        from witness_etcd import EtcdStore
+        store = EtcdStore.from_config(args.etcd_config) if args.etcd_config else None
+        w = Witness(args.state_dir, config(args.config, args.key), args.key, store=store)
         tenant = args.tenant
         if args.cmd == "initialize":
             result = w.initialize(tenant)

@@ -132,13 +132,18 @@ def tls_context(cert, key, client_ca):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for field in ("state-dir", "config", "key", "cert", "tls-key", "client-ca"):
+    for field in ("config", "key", "cert", "tls-key", "client-ca"):
         p.add_argument("--" + field, required=True)
+    backend = p.add_mutually_exclusive_group(required=True)
+    backend.add_argument("--state-dir")
+    backend.add_argument("--etcd-config")
     p.add_argument("--coordinator-fingerprint", action="append", required=True)
     p.add_argument("--bind", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8443)
     args = p.parse_args()
-    w = Witness(args.state_dir, config(args.config, args.key), args.key)
+    from witness_etcd import EtcdStore
+    store = EtcdStore.from_config(args.etcd_config) if args.etcd_config else None
+    w = Witness(args.state_dir, config(args.config, args.key), args.key, store=store)
     tls = tls_context(args.cert, args.tls_key, args.client_ca)
     with make_server((args.bind, args.port), tls, w, set(args.coordinator_fingerprint)) as server:
         server.serve_forever()

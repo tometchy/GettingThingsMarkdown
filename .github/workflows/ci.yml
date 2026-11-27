@@ -51,6 +51,8 @@ jobs:
           python3 tests/integration/witness-api.py
           python3 tests/integration/stage-runner.py
           python3 tests/integration/history-purge-candidate.py
+      - name: Verify real three-member etcd witness quorum
+        run: bash tests/integration/witness-etcd.sh
       - name: Test storage-health Prometheus alert rules
         run: |
           docker run --rm -v "$PWD/infrastructure/storage-health:/rules:ro" \

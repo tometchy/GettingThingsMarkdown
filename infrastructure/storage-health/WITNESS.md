@@ -81,3 +81,28 @@ key and mTLS credentials belong to a trusted host/repair service, never a
 normal tenant pod. No Kubernetes write permission, no activation. Do not
 reuse the volume until any old job is stopped/fenced. Real Git and OpenSSL
 CI fixture simulates interrupted receipt delivery and verifies restart.
+
+## Consensus metadata backend (optional)
+
+For distributed operation use an independently provisioned three-member
+etcd cluster, one voting member in A, B and the independent witness failure
+domain. Store only signed recovery metadata under /gtmd/recovery/v1/;
+no Git objects, data files, keys or third data copy. Configure mutual TLS
+for peers and clients, encryption/permissions and a prefix-scoped read/write
+identity for witness API; deny all other access. Use --etcd-config instead
+of --state-dir with JSON:
+
+    {"endpoints":["https://etcd-a.internal:2379","https://etcd-b.internal:2379","https://etcd-w.internal:2379"],"ca":"/tls/ca.crt","cert":"/tls/client.crt","key":"/tls/client.key"}
+
+The v3 gateway client uses linearizable range and transaction compare of
+mod_revision; concurrent witness transitions cannot overwrite newer state.
+A failed/ambiguous transaction is not replayed blindly. Read current state
+before retrying. No quorum means no new decisions. Max signed value 512 KiB;
+large ref sets fail closed pending measured metadata design. Local backend
+is for testing/one authority only. CI launches three real etcd members,
+races CAS and witness challenges, stops two members, verifies minority
+cannot read/write, restores quorum and compares state. HTTP is accepted
+only through explicit loopback test mode, not CLI production config.
+Real multi-cloud mTLS/IaC, peer latency and failure-domain validation,
+external anti-rollback watermark after full cluster restore, writer
+enforcement/fencing and independent retention are not yet complete.
