@@ -65,7 +65,7 @@ class Cri:
         result = subprocess.run(["/usr/bin/crictl", "--runtime-endpoint", self.endpoint,
                                  "--timeout", "15s", *args], stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, check=True, timeout=20)
-        require(len(result.stdout) <= 16 * 1024 * 1024, "runtime_response_too_large")
+        require(len(result.stdout) <= 4 * 1024 * 1024, "runtime_response_too_large")
         return result.stdout
 
     def list(self):
@@ -148,7 +148,7 @@ def kernel_view(proc, cfg):
     proc = Path(proc)
     devices = set(cfg["devices"].values())
     uid = cfg["identity"]["podUid"]
-    pattern = re.compile(r"pod" + re.escape(uid).replace(r"\-", "[-_]").replace("-", "[-_]") +
+    pattern = re.compile(r"pod" + "[-_]".join(re.escape(part) for part in uid.split("-")) +
                          r"(?=\.slice|/|$)")
     namespaces = set()
     mounts = rw = processes = 0
