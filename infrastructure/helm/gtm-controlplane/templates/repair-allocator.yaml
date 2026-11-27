@@ -155,4 +155,30 @@ metadata:
 spec:
   policyName: gtmd-recovery-claims
   validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-repair-pool-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["persistentvolumeclaims"]
+        scope: Namespaced
+  validations:
+    - expression: '!has(object.spec.storageClassName) || object.spec.storageClassName != {{ $class | toJson }} || request.namespace == "gtm-recovery"'
+      message: "GTMD static repair pool is reserved for isolated recovery claims"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-repair-pool-only
+spec:
+  policyName: gtmd-repair-pool-only
+  validationActions: [Deny]
 {{- end }}
