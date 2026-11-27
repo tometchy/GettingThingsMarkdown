@@ -31,9 +31,14 @@ def dispatch(witness, data):
               "abort": {"operation"}, "writer-permit": {"role","evidence"},
               "freeze-writers": {"incident"}, "confirm-writer-stop": {"role","evidence"},
               "cutover-status": set(), "plan-repair": {"incident","targetRole","targetPvcUid"},
-              "resume-challenge": set()}
+              "resume-challenge": set(), "resume-freeze": set()}
     require(isinstance(operation, str) and operation in fields and set(data) == base | fields[operation],
             "invalid_request_fields")
+    if operation == "resume-freeze":
+        from recovery_crypto import sign
+        f = witness.status(tenant).get("writerFence")
+        require(f and f["phase"] in ("freezing", "frozen") and f.get("freeze"), "no_active_freeze")
+        return sign(f["freeze"]["challenge"], witness.key)
     if operation == "resume-challenge":
         from recovery_crypto import sign
         ch = witness.status(tenant).get("challenge")
