@@ -1,13 +1,6 @@
 {{- if .Values.writerFence.enabled }}
 # Optional fail-closed admission barrier. Install and test before granting
-# the separate actor patch access to specific tenant namespaces.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: gtm-writer-fence
-  namespace: {{ .Values.namespace | quote }}
-automountServiceAccountToken: false
----
+# the separately provisioned per-tenant actor patch access.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -32,7 +25,7 @@ spec:
     - name: after
       expression: 'object != null && has(object.metadata.annotations) ? object.metadata.annotations : {}'
     - name: actor
-      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:gtm-writer-fence"'
+      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:" + (request.operation == "DELETE" ? oldObject.metadata.name : object.metadata.name) + "-fence"'
   validations:
     - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && request.subResource != "finalize" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
       message: "GTMD frozen namespace marker is immutable; deletion and finalization are denied"
