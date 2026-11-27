@@ -128,3 +128,18 @@ must be served by a separately authenticated read-only snapshot endpoint;
 normal Gitea/Syncthing writers are stopped. That endpoint and collection of
 actual provider/host evidence are not implemented yet. No release/unfreeze
 or replacement writer activation. cutover-status lists mandatory blockers.
+
+## Read-only recovery source
+Trusted host service recovery_source.py serves a verified stable snapshot
+through HTTPS Git upload-pack only (/repo.git). Require a read-only mount,
+exact refs manifest, signed generation anchor from witness, pinned witness
+public key and independent target client TLS certificate fingerprint.
+No receive-pack or web UI, no Git private data beyond the authorized repo.
+Configure sourceUrl in witness trust provisioning to this endpoint, not an
+unavailable stopped Gitea. TLS client cert/key/CA passed to the staging Git
+process through GIT_SSL_CERT/GIT_SSL_KEY/GIT_SSL_CAINFO from a trusted host.
+Service must be isolated and launched only after verified source selection;
+source must be the existing replica or a transient filesystem snapshot of
+it, not a third persistent data copy. CLI verifies read-only mount and exact
+refs; it does not mount disks or prove physical isolation. Tests use a
+stable disposable repo and real mTLS Git fetch, not a real provider mount.
