@@ -19,7 +19,7 @@ spec:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE", "DELETE"]
-        resources: ["namespaces", "namespaces/finalize"]
+        resources: ["namespaces", "namespaces/finalize", "namespaces/status"]
         scope: Cluster
   matchConditions:
     - name: tenant-namespace
@@ -34,7 +34,7 @@ spec:
     - name: actor
       expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:gtm-writer-fence"'
   validations:
-    - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && request.subResource == "" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
+    - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && request.subResource != "finalize" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
       message: "GTMD frozen namespace marker is immutable; deletion and finalization are denied"
       reason: Forbidden
     - expression: '!(variables.key in variables.after) || variables.after[variables.key].matches("^[a-f0-9]{64}$")'
