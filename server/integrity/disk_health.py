@@ -218,6 +218,8 @@ def collect(config, state_dir, poll=probe):
     except (OSError, ValueError, TypeError):
         # Replace previous green metrics with unknown inventory, never keep stale success.
         atomic_write(Path(state_dir) / "gtmd_disk_health.prom", metrics([], time.time(), False), 0o644)
+        atomic_write(Path(state_dir) / "disk-health.json",
+                     json.dumps({"checkedUnix": time.time(), "inventoryOk": False, "disks": []}) + "\n", 0o600)
         print(json.dumps({"event": "gtmd_disk_health", "state": "unknown",
                           "reason": "inventory_unavailable"}), flush=True)
         return False
@@ -229,7 +231,7 @@ def collect(config, state_dir, poll=probe):
     private = [{"byId": d["byId"], "serial": d["serial"], **v}
                for d, v in zip(disks, results)]
     atomic_write(Path(state_dir) / "disk-health.json",
-                 json.dumps({"checkedUnix": now, "disks": private}) + "\n", 0o600)
+                 json.dumps({"checkedUnix": now, "inventoryOk": True, "disks": private}) + "\n", 0o600)
     for v in results:
         print(json.dumps({"event": "gtmd_disk_health", **v}, separators=(",", ":")), flush=True)
     return True

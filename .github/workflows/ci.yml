@@ -44,6 +44,9 @@ jobs:
           python3 tests/integration/logical-history.py
           python3 tests/integration/git-integrity.py
           python3 tests/integration/disk-health.py
+          python3 tests/integration/storage-controller.py
+          python3 tests/integration/authorized-rebuild.py
+          python3 tests/integration/worktree-integrity.py
           python3 tests/integration/history-purge-candidate.py
       - name: Test storage-health Prometheus alert rules
         run: |
@@ -66,6 +69,8 @@ jobs:
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
       - name: Verify immutable backup rejects weak retention
         run: bash tests/security/worm-fail-closed.sh
+      - name: Build shared storage controller image
+        run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build standalone shared SMTP gateway image
@@ -85,9 +90,12 @@ jobs:
         with:
           cluster_name: gtm
           config: infrastructure/kind/config.yaml
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.17.4
       - name: Load real images and start API
         run: |
-          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci
+          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci gtm/storage-controller:ci
           docker tag gtm/controlplane:ci gtm/controlplane:dev
           docker tag gtm/sync:ci gtm/sync:dev
           docker tag gtm/history:ci gtm/history:dev
@@ -98,6 +106,8 @@ jobs:
             --from-literal=jwt="$(openssl rand -hex 32)" \
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
+      - name: Verify storage controller against real Kubernetes PV binder
+        run: bash tests/integration/storage-controller-kind.sh
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &
@@ -175,6 +185,20 @@ jobs:
             --set-string recovery.ageRecipient=ci-render-only > /tmp/gtm-backup.yaml
           grep -q 'name: state-backup' /tmp/gtm-backup.yaml
           grep -q 'name: GTM_BACKUP_ENDPOINT_A' /tmp/gtm-backup.yaml
+      - name: Validate optional storage controller and audit-only default
+        run: |
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set storageController.enabled=true \
+            --set storageController.inventoryConfigMap=ci-inventory > /tmp/storage-controller.yaml
+          grep -q 'name: gtm-storage-controller' /tmp/storage-controller.yaml
+          ! grep -q -- '--reserve-available' /tmp/storage-controller.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane \
+            --set storageController.enabled=true \
+            --set storageController.inventoryConfigMap=ci-inventory \
+            --set storageController.reserveAvailable=true \
+            --set storageController.managedClasses[0]=ci-local > /tmp/storage-controller-write.yaml
+          grep -q -- '--reserve-available' /tmp/storage-controller-write.yaml
+          grep -q 'kind: ValidatingAdmissionPolicyBinding' /tmp/storage-controller-write.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0

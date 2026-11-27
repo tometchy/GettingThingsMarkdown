@@ -1,0 +1,148 @@
+{{- if .Values.storageController.enabled }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gtm-storage-reports
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gtm-storage-quarantine
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gtm-storage-controller
+  namespace: {{ .Values.namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gtm-storage-controller
+rules:
+  - apiGroups: [""]
+    resources: [nodes, persistentvolumes, persistentvolumeclaims]
+    verbs: [get, list]
+  {{- if .Values.storageController.reserveAvailable }}
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [patch]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gtm-storage-controller
+subjects:
+  - kind: ServiceAccount
+    name: gtm-storage-controller
+    namespace: {{ .Values.namespace | quote }}
+roleRef:
+  kind: ClusterRole
+  name: gtm-storage-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gtm-storage-report-reader
+  namespace: gtm-storage-reports
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gtm-storage-report-reader
+  namespace: gtm-storage-reports
+subjects:
+  - kind: ServiceAccount
+    name: gtm-storage-controller
+    namespace: {{ .Values.namespace | quote }}
+roleRef:
+  kind: Role
+  name: gtm-storage-report-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-controller
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gtm-storage-controller
+  template:
+    metadata:
+      labels:
+        app: gtm-storage-controller
+    spec:
+      serviceAccountName: gtm-storage-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: controller
+          image: {{ .Values.storageController.image | quote }}
+          args:
+            - --inventory
+            - /config/inventory.json
+            {{- if .Values.storageController.reserveAvailable }}
+            - --reserve-available
+            {{- end }}
+          ports:
+            - {name: metrics, containerPort: 8391}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ required "storageController.inventoryConfigMap required" .Values.storageController.inventoryConfigMap | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-controller-metrics
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  selector:
+    app: gtm-storage-controller
+  ports:
+    - {name: metrics, port: 8391, targetPort: metrics}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: storage-controller-metrics
+  namespace: {{ .Values.namespace | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      app: gtm-storage-controller
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gtm-monitoring
+          podSelector:
+            matchLabels:
+              app: gtm-prometheus
+      ports:
+        - {protocol: TCP, port: 8391}
+{{- end }}

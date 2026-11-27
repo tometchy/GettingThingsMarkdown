@@ -1,0 +1,19 @@
+{
+  "storageClasses": [
+    "gtmd-local-hdd"
+  ],
+  "nodes": [
+    {
+      "name": "storage-node-a",
+      "uid": "replace-with-real-kubernetes-node-uid",
+      "hostname": "storage-node-a",
+      "cloud": "provider-a",
+      "disks": [
+        {
+          "id": "0123456789abcdef01234567",
+          "mount": "/srv/gtmd/disks/disk-a"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{{- if and .Values.storageController.enabled .Values.storageController.reserveAvailable }}
+{{- if not .Values.storageController.managedClasses }}
+{{- fail "storageController.managedClasses required in write mode" }}
+{{- end }}
+{{- $classes := .Values.storageController.managedClasses }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-storage-reservation-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["persistentvolumes"]
+        scope: Cluster
+  matchConditions:
+    - name: controller-identity
+      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:gtm-storage-controller"'
+  validations:
+    - expression: 'has(oldObject.spec.local) && has(object.spec.local) && oldObject.spec.local == object.spec.local && oldObject.spec.storageClassName in {{ $classes | toJson }} && object.spec.storageClassName == oldObject.spec.storageClassName'
+      message: "Only explicitly managed local PVs may be reserved"
+    - expression: 'oldObject.status.phase == "Available" && oldObject.spec.persistentVolumeReclaimPolicy == "Retain" && !has(oldObject.spec.claimRef) && !has(oldObject.metadata.deletionTimestamp)'
+      message: "Only available unclaimed Retain PVs may be reserved"
+    - expression: 'has(object.spec.claimRef) && object.spec.claimRef.namespace == "gtm-storage-quarantine" && object.spec.claimRef.name.matches("^quarantine-[a-f0-9]{32}$") && object.spec.claimRef.kind == "PersistentVolumeClaim" && object.spec.claimRef.apiVersion == "v1" && !has(object.spec.claimRef.uid) && !has(object.spec.claimRef.resourceVersion) && !has(object.spec.claimRef.fieldPath)'
+      message: "Only the quarantine claim reservation may be added"
+    - expression: 'object.spec.capacity == oldObject.spec.capacity && object.spec.accessModes == oldObject.spec.accessModes && object.spec.persistentVolumeReclaimPolicy == oldObject.spec.persistentVolumeReclaimPolicy && object.spec.nodeAffinity == oldObject.spec.nodeAffinity && object.spec.volumeMode == oldObject.spec.volumeMode && (has(object.spec.mountOptions) == has(oldObject.spec.mountOptions)) && (!has(object.spec.mountOptions) || object.spec.mountOptions == oldObject.spec.mountOptions)'
+      message: "Reservation must not change PV storage properties"
+    - expression: '(has(object.spec.volumeAttributesClassName) == has(oldObject.spec.volumeAttributesClassName)) && (!has(object.spec.volumeAttributesClassName) || object.spec.volumeAttributesClassName == oldObject.spec.volumeAttributesClassName)'
+      message: "Reservation must not change volume attributes class"
+    - expression: 'object.status == oldObject.status && (has(object.metadata.labels) == has(oldObject.metadata.labels)) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && (has(object.metadata.annotations) == has(oldObject.metadata.annotations)) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && (has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && (has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)'
+      message: "Reservation must not change PV metadata or status"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-storage-reservation-only
+spec:
+  policyName: gtmd-storage-reservation-only
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-quarantine-no-pvcs
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["persistentvolumeclaims"]
+        scope: Namespaced
+  matchConditions:
+    - name: quarantine-namespace
+      expression: 'request.namespace == "gtm-storage-quarantine"'
+  validations:
+    - expression: "false"
+      message: "Quarantine claim names are intentionally unbindable"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-quarantine-no-pvcs
+spec:
+  policyName: gtmd-quarantine-no-pvcs
+  validationActions: [Deny]
+{{- end }}
