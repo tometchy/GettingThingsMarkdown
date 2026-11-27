@@ -86,3 +86,8 @@ storageController:
 # Irreversible development admission barrier; no patch RBAC by default.
 writerFence:
   enabled: false
+
+# One-shot repair allocation; no new running service. Requires storage report namespace.
+repairAllocator:
+  enabled: false
+  storageClass: "" # dedicated static no-provisioner class; pre-created spare PVs only
