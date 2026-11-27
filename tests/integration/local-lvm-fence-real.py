@@ -20,6 +20,7 @@ import local_lvm_fence as f
 import lvm_mount_binding as binding
 import stage_mount_guard as stage_guard
 import stage_runner
+import sync_startup
 from controller import inventory as storage_inventory
 from recovery_crypto import RecoveryError, digest, sign
 
@@ -161,6 +162,10 @@ def main():
             actual=verify_stage()
             assert actual["filesystem"]=="ext4"
             assert stage_runner.validate_mount(mount,actual["device"])==mount
+            entries=sync_startup.mount_entries(Path("/proc/self/mountinfo").read_text())
+            assert sync_startup.check_mount(mount,entries,actual["device"])["filesystem"]=="ext4"
+            reject(lambda: sync_startup.check_mount(mount,entries,"999:1"),"startup_data_mount_mismatch")
+            reject(lambda: sync_startup.check_mount(mount,entries,readonly=True),"startup_trust_mount_not_read_only")
             pinned=os.open(mount,os.O_RDONLY|os.O_DIRECTORY)
             try:
                 assert run("umount",str(mount),check=False).returncode!=0
@@ -173,6 +178,8 @@ def main():
             assert lvm_report(vg, name)["lv_attr"][1] == "w"
             run("umount", str(mount))
             reject(verify_stage, "pvc_not_exactly_one_mount")
+            reject(lambda: sync_startup.check_mount(mount,sync_startup.mount_entries(
+                Path("/proc/self/mountinfo").read_text()),actual["device"]),"missing_or_stacked_startup_mount")
             reject(lambda: binding.verify_mount(mount, backend.inspect(cfg, pvc),
                         Path("/proc/self/mountinfo").read_text()), "pvc_not_exactly_one_mount")
             assert reconcile(False)["state"] == "isolation_required"
