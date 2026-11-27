@@ -222,6 +222,10 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(RecoveryError,"startup_identity_digest_mismatch"):
                 preflight()
             (data/"syncthing"/"config.xml").write_bytes(original)
+            run("git","--git-dir",str(data/"git"),"symbolic-ref","HEAD","refs/heads/gtm-tenant")
+            with self.assertRaisesRegex(RecoveryError,"startup_head_not_main"):
+                preflight()
+            run("git","--git-dir",str(data/"git"),"symbolic-ref","HEAD","refs/heads/main")
             (data/"files"/"empty").unlink()
             with self.assertRaisesRegex(IntegrityError,"missing_worktree_file"):
                 preflight()
