@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 
 from recovery_crypto import RecoveryError, read, decode, digest, verify as verify_signature
 from writer_guard import Guard
-from git_integrity import IntegrityError, refs, OID
+from git_integrity import IntegrityError, git, refs, OID
 from worktree_integrity import verify
 from sync_identity import DEVICE_ID, validate_config, verify_device, require
 
@@ -167,12 +167,16 @@ def preflight(root,trust,tenant,identity,*,timeout=86400,mountinfo="/proc/self/m
     check_paths(entries)
     check_identity(root/"syncthing",cfg)
     repo=root/"git"
-    require(refs(repo,min(60,remaining()))==cfg["refs"],"startup_refs_mismatch")
+    def check_refs():
+        require(git(repo,"symbolic-ref","HEAD",capture=True,timeout=min(60,remaining())).strip()
+                =="refs/heads/main","startup_head_not_main")
+        require(refs(repo,min(60,remaining()))==cfg["refs"],"startup_refs_mismatch")
+    check_refs()
     # One read-only scan per start, no periodic additional job. Unknown files,
     # uncommitted changes or unexpected technical files block rather than
     # silently deleting/committing them. Full ordinary restart policy is open.
     result=verify(repo,root/"files",cfg["refs"]["refs/heads/main"],remaining())
-    require(refs(repo,min(60,remaining()))==cfg["refs"],"startup_refs_changed")
+    check_refs()
     entries=read_mounts()
     check_mount(trust,entries,readonly=True)
     check_paths(entries)
