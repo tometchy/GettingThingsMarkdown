@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/"server/integrity"))
 import sync_state as s
 import sync_startup as startup
-from recovery_crypto import sign
+from recovery_crypto import sign, digest
 from git_integrity import refs, stage_rebuild, IntegrityError
 from recovery_crypto import RecoveryError
 
@@ -185,6 +185,9 @@ class Tests(unittest.TestCase):
         permit={"schema":1,"kind":"writer_permit","tenant":tenant,"role":"sync",
                 "epoch":1,"identity":ids,"sequence":1,"issuedUnix":now,"expiresUnix":now+60}
         (trust/"permit.json").write_text(json.dumps(sign(permit,key)))
+        cfg["anchor"]=sign({"schema":1,"kind":"generation","tenant":tenant,"generation":1,
+                           "previousDigest":None,"refsDigest":digest(self.manifest),
+                           "committedUnix":now},key)
         def save():
             (trust/"startup.json").write_text(json.dumps(cfg))
         save()
@@ -197,6 +200,12 @@ class Tests(unittest.TestCase):
                 return startup.preflight(data,trust,tenant,ids,timeout=60,mountinfo=fake_mountinfo)
             self.assertEqual(preflight()["files"],2)
             self.assertFalse(preflight()["activationAuthorizedByPreflight"])
+            old_anchor=cfg["anchor"]
+            cfg["anchor"]=sign({**old_anchor["payload"],"refsDigest":"0"*64},key)
+            save()
+            with self.assertRaisesRegex(RecoveryError,"startup_anchor_mismatch"):
+                preflight()
+            cfg["anchor"]=old_anchor
             cfg["epoch"]=2
             save()
             with self.assertRaisesRegex(RecoveryError,"startup_epoch_mismatch"):
