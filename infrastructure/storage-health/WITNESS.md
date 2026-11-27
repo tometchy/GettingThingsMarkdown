@@ -29,9 +29,13 @@ and pins all refs and target identity. Staging must occur on a verified
 new volume, never an existing live repo. The target trusted agent signs
 the receipt after independently verifying its provenance. The witness
 requires physicalScrub=true and matching ticket digest/identity. It records
-staged_verified, never activation. Repeated issue before expiry returns the
-same ticket; after expiry a new attempt is generated. Abort only after ticket
-expiry. The CLI and optional private mTLS API are for trusted orchestration; actual
+staged_verified, never activation. Repeated issue always returns the same ticket, even after expiry. Expiry
+is not proof that a running transfer stopped. A new attempt or abort after
+issuance requires fresh signed target evidence that the expired attempt is
+stopped and isolated (retire-attempt). A completed attempt can still submit
+its signed receipt; staged_verified never authorizes activation. The trusted
+target must actually establish stop/isolation before signing; no automatic
+provider fence is inferred. The CLI and optional private mTLS API are for trusted orchestration; actual
 agent authentication channel, external monotonic watermark,
 automatic ticket worker or storage/job binding yet. A ticket expiry governs
 start, not guaranteed termination of an in-flight rebuild. Do not activate
@@ -54,7 +58,7 @@ TLS certificate/key/client CA. The API defaults to loopback, bind to a private
 interface only after firewall approval. TLS 1.3 and mutual certificate
 authentication plus exact SHA256 DER coordinator certificate allowlist are
 required. No public ingress or general admin API. POST /v1/recovery supports
-status, challenge, anchor, start-repair, ticket, receipt, abort; never
+status, challenge, anchor, start-repair, ticket, receipt, retire-attempt, abort; never
 initialize or activate. Use witness_client.py with a pinned server CA and
 coordinator cert/key. API cert holder still cannot forge either replica's
 independent evidence. CI tests real TLS with approved and unapproved certs.
@@ -67,8 +71,10 @@ verified separately provisioned mount (real mountpoint + expected device
 major:minor + restrictive owner permissions), and locks the staging root.
 It rebuilds into a unique attempt directory, runs physical scrub, signs and
 submits a receipt. If submission fails after completion, a repeat on the
-same unexpired attempt re-verifies all staged data before signing again.
-Incomplete staging is never overwritten; use a separately authorized attempt.
+same attempt re-verifies all staged data before signing again, even after
+expiry. An expired ticket cannot begin a new fetch.
+Incomplete staging is never overwritten; retire the old attempt with
+verified target evidence before separately authorizing another attempt.
 The allocator must establish the real PVC→mount/device identity outside this
 worker; these checks alone cannot prove Kubernetes binding. The target signing
 key and mTLS credentials belong to a trusted host/repair service, never a

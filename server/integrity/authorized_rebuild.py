@@ -38,7 +38,7 @@ def unique_object(pairs):
 
 def verify_ticket(ticket_path, sig_path, public_key, *, tenant, generation,
                   target_role, target_cloud, target_pvc_uid, now=None,
-                  allow_local_test_source=False):
+                  allow_local_test_source=False, allow_expired_for_receipt=False):
     now = time.time() if now is None else now
     def bounded(path, size):
         with open(path, "rb") as src:
@@ -88,7 +88,8 @@ def verify_ticket(ticket_path, sig_path, public_key, *, tenant, generation,
                 type(generation) is not int or generation != t["generation"]):
             raise IntegrityError("ticket_generation_mismatch")
         if (type(t["issuedUnix"]) is not int or type(t["expiresUnix"]) is not int or
-                not t["issuedUnix"] <= now < t["expiresUnix"] or
+                not t["issuedUnix"] <= now or
+                (now >= t["expiresUnix"] and not allow_expired_for_receipt) or
                 not 0 < t["expiresUnix"] - t["issuedUnix"] <= 3600):
             raise IntegrityError("ticket_expired_or_invalid")
         if not isinstance(t["sourceUrl"], str):

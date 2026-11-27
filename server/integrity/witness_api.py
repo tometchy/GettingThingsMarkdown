@@ -27,6 +27,7 @@ def dispatch(witness, data):
     fields = {"status": set(), "challenge": {"kind", "targetRole", "targetPvcUid"},
               "anchor": {"sync", "history"}, "start-repair": {"evidence"},
               "ticket": {"operation"}, "receipt": {"operation", "evidence"},
+              "retire-attempt": {"operation", "evidence"},
               "abort": {"operation"}}
     require(isinstance(operation, str) and operation in fields and set(data) == base | fields[operation],
             "invalid_request_fields")
@@ -47,6 +48,8 @@ def dispatch(witness, data):
                 "activationAllowed": False}
     if operation == "receipt":
         return witness.receipt(tenant, data["operation"], data["evidence"])
+    if operation == "retire-attempt":
+        return witness.retire_attempt(tenant, data["operation"], data["evidence"])
     return witness.abort(tenant, data["operation"])
 
 

@@ -228,7 +228,7 @@ class Witness:
             s["repair"] = {"operation": op, "generation": s["generation"], "anchorDigest": s["anchorDigest"],
                            "sourceRole": source, "targetRole": target, "targetPvcUid": ch["targetPvcUid"],
                            "state": "authorized", "attempt": 0, "ticket": None, "receipt": None,
-                           "createdUnix": self.now()}
+                           "createdUnix": self.now(), "retiredAttempts": []}
             s["challenge"] = None
             return dict(s["repair"])
 
@@ -240,8 +240,9 @@ class Witness:
             require(repair["generation"] == s["generation"] and repair["anchorDigest"] == s["anchorDigest"],
                     "repair_generation_changed")
             now = self.now()
-            # Retry only after old ticket expiration; no overlapping attempts.
-            if repair["ticket"] and now < repair["ticket"]["expiresUnix"]:
+            # Expiry prevents new execution, not an already running transfer.
+            # Return the existing ticket until a trusted target retires it.
+            if repair["ticket"]:
                 t = repair["ticket"]
             else:
                 repair["attempt"] += 1
@@ -279,12 +280,38 @@ class Witness:
             # Receipt does not unlock generation changes or authorize cutover.
             return {"operation": operation, "state": repair["state"], "activationAllowed": False}
 
+    def retire_attempt(self, tenant, operation, envelope):
+        with self.transaction(tenant) as s:
+            repair = s["repair"]
+            require(repair and repair["operation"] == operation and repair["state"] == "ticket_issued",
+                    "no_active_ticket")
+            ticket = repair["ticket"]
+            require(ticket and self.now() >= ticket["expiresUnix"], "ticket_still_valid")
+            data = verify(envelope, self.cfg[tenant][repair["targetRole"]]["publicKey"])
+            expected = {"schema": 1, "kind": "attempt_retired", "operation": ticket["operation"],
+                        "tenant": tenant, "generation": s["generation"],
+                        "targetPvcUid": ticket["targetPvcUid"],
+                        "ticketSha256": hashlib.sha256(canonical(ticket)).hexdigest(),
+                        "stagingStopped": True, "stagingIsolated": True}
+            require(isinstance(data, dict) and set(data) == set(expected) | {"verifiedUnix"}
+                    and all(data.get(k) == v for k, v in expected.items())
+                    and data.get("stagingStopped") is True and data.get("stagingIsolated") is True,
+                    "invalid_retirement_evidence")
+            require(type(data["verifiedUnix"]) is int and ticket["expiresUnix"] <= data["verifiedUnix"] <= self.now()
+                    and self.now() - data["verifiedUnix"] <= 600, "retirement_evidence_stale")
+            require(len(repair["retiredAttempts"]) < 32, "attempt_limit")
+            # This is trusted target evidence, not provider-level fencing.
+            # Staged data are kept isolated; no delete or reuse authorized.
+            repair["retiredAttempts"].append({"operation": ticket["operation"], "digest": digest(data)})
+            repair["ticket"] = None
+            repair["state"] = "authorized"
+            return {"operation": operation, "state": "authorized", "activationAllowed": False}
+
     def abort(self, tenant, operation):
         with self.transaction(tenant) as s:
             repair = s["repair"]
             require(repair and repair["operation"] == operation, "unknown_repair")
-            require(not repair["ticket"] or self.now() >= repair["ticket"]["expiresUnix"],
-                    "ticket_still_valid")
+            require(repair["ticket"] is None, "retirement_required_before_abort")
             s["lastClosedRepair"] = {"operation": operation, "generation": repair["generation"],
                                      "state": "aborted", "closedUnix": self.now()}
             s["repair"] = None
@@ -311,6 +338,9 @@ def main():
     c.add_argument("operation")
     c.add_argument("output")
     c = sub.add_parser("receipt")
+    c.add_argument("operation")
+    c.add_argument("evidence")
+    c = sub.add_parser("retire-attempt")
     c.add_argument("operation")
     c.add_argument("evidence")
     c = sub.add_parser("abort")
@@ -341,6 +371,8 @@ def main():
             result = {"state": "ticket_issued", "activationAllowed": False}
         elif args.cmd == "receipt":
             result = w.receipt(tenant, args.operation, decode(read(args.evidence)))
+        elif args.cmd == "retire-attempt":
+            result = w.retire_attempt(tenant, args.operation, decode(read(args.evidence)))
         else:
             result = w.abort(tenant, args.operation)
         print(json.dumps(result, separators=(",", ":")))

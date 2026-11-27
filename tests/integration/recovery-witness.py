@@ -136,9 +136,22 @@ class Tests(unittest.TestCase):
         with self.assertRaises(crypto.RecoveryError):
             self.w.abort(TENANT,op)
         self.now+=w.TICKET_TTL
+        self.assertEqual(first,json.loads(self.w.ticket(TENANT,op)[0]))
+        with self.assertRaises(crypto.RecoveryError):
+            self.w.abort(TENANT,op)
+        def retire(ticket):
+            evidence={"schema":1,"kind":"attempt_retired","operation":ticket["operation"],
+                "tenant":TENANT,"generation":1,"targetPvcUid":"new-pvc",
+                "ticketSha256":hashlib.sha256(crypto.canonical(ticket)).hexdigest(),
+                "stagingStopped":True,"stagingIsolated":True,"verifiedUnix":self.now}
+            with self.assertRaises(crypto.RecoveryError):
+                self.w.retire_attempt(TENANT,op,crypto.sign(evidence,self.keys["history"]))
+            self.w.retire_attempt(TENANT,op,crypto.sign(evidence,self.keys["sync"]))
+        retire(first)
         second=json.loads(self.w.ticket(TENANT,op)[0])
         self.assertNotEqual(first["operation"],second["operation"])
         self.now+=w.TICKET_TTL
+        retire(second)
         self.assertEqual(self.w.abort(TENANT,op)["state"],"aborted")
         self.assertIsNone(self.w.status(TENANT)["repair"])
 

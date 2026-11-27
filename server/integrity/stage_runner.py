@@ -68,7 +68,8 @@ def run(api, identity, operation, root, witness_public, target_key, timeout=8640
             ticket_path.write_bytes(raw)
             sig_path.write_bytes(sig)
             ticket,digest = verify_ticket(ticket_path,sig_path,witness_public,
-                    **identity,allow_local_test_source=allow_local_test_source)
+                    **identity,allow_local_test_source=allow_local_test_source,
+                    allow_expired_for_receipt=True)
         require(ticket["operation"].startswith(operation+"-"),"ticket_operation_mismatch")
         destination=root/ticket["operation"]
         receipt_path=destination/"receipt.json"
@@ -89,6 +90,7 @@ def run(api, identity, operation, root, witness_public, target_key, timeout=8640
             # and verify the staged contents against the authenticated ticket.
             scrub(destination/"repository.git",timeout,ticket["refs"])
         else:
+            require(time.time() < ticket["expiresUnix"], "ticket_expired_before_execution")
             receipt=execute(ticket,digest,destination,timeout,physical=True)
         require(receipt.get("state")=="staged_verified","invalid_receipt")
         return api.call({"action":"receipt","tenant":identity["tenant"],

@@ -95,6 +95,18 @@ class Tests(unittest.TestCase):
         self.assertFalse(signed["activationAllowed"])
         self.assertEqual(self.run_stage()["state"],"already_recorded")
 
+    def test_expired_ticket_cannot_start_new_execution(self):
+        # Expired signature is valid only for receipt recovery from an already
+        # completed staging directory, never for a new fetch.
+        raw=base64.b64decode(self.api.ticket["ticket"])
+        t=json.loads(raw)
+        t["issuedUnix"]=int(time.time())-1200
+        t["expiresUnix"]=int(time.time())-600
+        self.api=FakeAPI(t,self.keys["witness"][0])
+        with self.assertRaisesRegex(c.RecoveryError,"ticket_expired_before_execution"):
+            self.run_stage()
+        self.assertFalse((self.root/"repair-1-1").exists())
+
     def test_incomplete_staging_never_overwritten(self):
         stage=self.root/"repair-1-1"
         stage.mkdir()
