@@ -6,6 +6,13 @@ tmp="$(mktemp -d)"
 ns=gtm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 class=gtmd-ci-local
 cleanup() {
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    kubectl -n gtm-system logs deployment/storage-controller --tail=100 || true
+    kubectl get pv ci-gtmd-free ci-gtmd-bound ci-gtmd-healthy -o yaml || true
+    kubectl get validatingadmissionpolicy gtmd-storage-reservation-only -o yaml || true
+    if [ -f "$tmp/denial" ]; then cat "$tmp/denial"; fi
+  fi
   kubectl -n gtm-system delete deployment storage-controller --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete validatingadmissionpolicybinding gtmd-storage-reservation-only gtmd-quarantine-no-pvcs --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete validatingadmissionpolicy gtmd-storage-reservation-only gtmd-quarantine-no-pvcs --ignore-not-found >/dev/null 2>&1 || true
@@ -109,10 +116,17 @@ for _ in $(seq 1 30); do
   fi
   sleep 3
 done
-test "$(kubectl get pv ci-gtmd-free -o jsonpath='{.spec.claimRef.namespace}')" = gtm-storage-quarantine
+if [ "$(kubectl get pv ci-gtmd-free -o jsonpath='{.spec.claimRef.namespace}')" != gtm-storage-quarantine ]; then
+  echo "Expected free PV to be quarantined" >&2
+  actor=system:serviceaccount:gtm-system:gtm-storage-controller
+  kubectl --as="$actor" patch pv ci-gtmd-free --type=merge --dry-run=server \
+    -p '{"spec":{"claimRef":{"apiVersion":"v1","kind":"PersistentVolumeClaim","namespace":"gtm-storage-quarantine","name":"quarantine-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}' || true
+  exit 1
+fi
 test "$(kubectl get pv ci-gtmd-bound -o jsonpath='{.spec.claimRef.uid}')" = "$bound_uid"
 test -z "$(kubectl get pv ci-gtmd-healthy -o jsonpath='{.spec.claimRef.name}')"
-kubectl -n gtm-system logs deployment/storage-controller | grep -q '"action":"repair_required"'
+kubectl -n gtm-system logs deployment/storage-controller > "$tmp/controller.log"
+grep -q '"action":"repair_required"' "$tmp/controller.log"
 kubectl apply -f "$tmp/pending.json"
 sleep 8
 test "$(kubectl -n "$ns" get pvc should-stay-pending -o jsonpath='{.status.phase}')" = Pending

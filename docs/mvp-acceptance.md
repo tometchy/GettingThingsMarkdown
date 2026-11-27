@@ -209,3 +209,6 @@ Requirements: MVP-SPECIFICATION.md §17.1. Plan only; not implemented or tested 
 - Runtime write-mode guard: a forbidden dry-run reservation must receive the expected admission-policy denial before any actual CAS mutation; absent/ambiguous policy or conflict results in review, not write. Tested with fake API and included in real kind fixture. No live activation.
 
 - Added offline/stable-snapshot ciphertext working-tree verification against independently expected main OID, stream Git tree and disk-backed path metadata, hash every actual regular file using Git blob format, reject missing/extra/symlink/mismatch, then verify full Git; tests include same-size corruption and raw filename bytes. No technical path exemptions until verified by snapshot/provisioner. Live writer coordination and scheduling remain open; no automatic overwrite of user changes.
+
+### Follow-up 2026-11-27: PR #18 CI
+PR #18 was merged with CI 45966709186 failing the real kind PV binder fixture (free PV not reserved within 90s); Python/safety, .NET, browser and infrastructure passed. Root cause not yet proven because cleanup removed controller logs. Added pre-cleanup logs, redacted rejection classification, dry-run diagnostics and optional-field-aware CEL. Do not mark quarantine integration passed until new CI proves it.
