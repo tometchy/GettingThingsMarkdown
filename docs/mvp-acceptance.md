@@ -212,3 +212,6 @@ Requirements: MVP-SPECIFICATION.md §17.1. Plan only; not implemented or tested 
 
 ### Follow-up 2026-11-27: PR #18 CI
 PR #18 was merged with CI 45966709186 failing the real kind PV binder fixture (free PV not reserved within 90s); Python/safety, .NET, browser and infrastructure passed. Root cause not yet proven because cleanup removed controller logs. Added pre-cleanup logs, redacted rejection classification, dry-run diagnostics and optional-field-aware CEL. Do not mark quarantine integration passed until new CI proves it.
+
+### Recovery witness implementation increment (2026-11-27)
+- Independent metadata-only reference witness: distinct pinned Ed25519 keys per replica/witness, single-use signed challenge, dual full Git evidence/append-only ancestry, monotonic generation and protected ref checks, atomic per-tenant flock/fsync state. Durable staging operation, signed ticket compatible with existing worker, retry/expiry, signed physical-scrub receipt and explicit activationAllowed=false. Real Git and OpenSSL tests including stale/forged evidence, replay, rollback, concurrent challenge and restart. No network API, actual replica credential provisioning, externally protected watermark, witness HA, live writer fencing or automatic cutover. No third full copy or paid infrastructure. See infrastructure/storage-health/WITNESS.md.
