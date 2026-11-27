@@ -44,6 +44,8 @@ def make_source(address, tls, repo, expected, fingerprints, timeout=86400):
     require(bool(fingerprints) and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in fingerprints),
             "invalid_source_client_fingerprint")
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def log_message(self, *_):
             pass
 
@@ -80,6 +82,9 @@ def make_source(address, tls, repo, expected, fingerprints, timeout=86400):
             except (OSError, ValueError):
                 self.close_connection = True
 
+        def write_chunk(self, block):
+            self.wfile.write(("%x\r\n" % len(block)).encode("ascii") + block + b"\r\n")
+
         def serve_git(self, advertise, body):
             proc = None
             started = False
@@ -113,10 +118,11 @@ def make_source(address, tls, repo, expected, fingerprints, timeout=86400):
                                      ("advertisement" if advertise else "result"))
                     self.send_header("Cache-Control","no-store")
                     self.send_header("Connection","close")
+                    self.send_header("Transfer-Encoding","chunked")
                     self.end_headers()
                     started=True
                     if advertise:
-                        self.wfile.write(SERVICE)
+                        self.write_chunk(SERVICE)
                     deadline=time.monotonic()+timeout
                     with selectors.DefaultSelector() as sel:
                         sel.register(proc.stdout,selectors.EVENT_READ)
@@ -129,9 +135,13 @@ def make_source(address, tls, repo, expected, fingerprints, timeout=86400):
                             block=os.read(proc.stdout.fileno(),CHUNK)
                             if not block:
                                 break
-                            self.wfile.write(block)
+                            self.write_chunk(block)
                     if proc.wait(timeout=5)!=0:
                         raise OSError("upload_pack_failed")
+                    # Explicit successful end-of-stream; TLS EOF alone is not
+                    # a reliable completion marker for libcurl/GnuTLS.
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
             except (OSError,IntegrityError,subprocess.SubprocessError):
                 if not started:
                     self.send_error(503)

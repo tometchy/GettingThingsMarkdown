@@ -77,7 +77,17 @@ class Tests(unittest.TestCase):
                                            ("GIT_SSL_KEY","target.key"))}
         with patch.dict(os.environ,env):
             staged=self.root/"staged.git"
-            git.stage_rebuild(self.url,staged,self.expected,60)
+            try:
+                git.stage_rebuild(self.url,staged,self.expected,60)
+            except git.IntegrityError:
+                # Synthetic CI fixture only. Production git helper continues
+                # to suppress repository paths and credentials in diagnostics.
+                diagnostic=subprocess.run(["git","--git-dir",str(staged),"-c","http.followRedirects=false",
+                    "fetch","--no-tags","--",self.url,"+refs/*:refs/*"],
+                    env={**os.environ,"GIT_TRACE_CURL":"1","GIT_TRACE_CURL_NO_DATA":"1"},
+                    stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20)
+                print(diagnostic.stderr.decode(errors="replace"),file=sys.stderr)
+                raise
             self.assertEqual(git.refs(staged),self.expected)
             with self.assertRaises(git.IntegrityError):
                 git.git(staged,"push",self.url,"main:refs/heads/forbidden",timeout=15)
