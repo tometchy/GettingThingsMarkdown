@@ -36,7 +36,9 @@ class Client:
                 return decode(response.read(MAX + 1))
         except urllib.error.HTTPError as exc:
             # Server sends only fixed rejection categories, no credentials.
-            raise RecoveryError("witness_http_" + str(exc.code)) from None
+            code = exc.code
+            exc.close()
+            raise RecoveryError("witness_http_" + str(code)) from None
 
 
 def main():

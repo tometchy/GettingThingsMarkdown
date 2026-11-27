@@ -15,8 +15,8 @@ cluster="${names[0]}=http://${names[0]}:2380,${names[1]}=http://${names[1]}:2380
 args=()
 for n in "${names[@]}"; do
   docker run -d --name "$n" --network "$network" -p 127.0.0.1::2379 \
-    quay.io/coreos/etcd:v3.5.21 \
-    /usr/local/bin/etcd --name "$n" --data-dir /etcd-data \
+    --entrypoint /usr/local/bin/etcd quay.io/coreos/etcd:v3.5.21 \
+    --name "$n" --data-dir /etcd-data \
     --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls "http://$n:2379" \
     --listen-peer-urls http://0.0.0.0:2380 --initial-advertise-peer-urls "http://$n:2380" \
     --initial-cluster "$cluster" --initial-cluster-state new --initial-cluster-token "$network" >/dev/null

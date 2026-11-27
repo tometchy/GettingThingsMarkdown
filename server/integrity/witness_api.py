@@ -101,18 +101,21 @@ def make_server(address, tls, witness, fingerprints):
 
         def do_POST(self):
             cert = self.connection.getpeercert(binary_form=True)
-            if not cert or hashlib.sha256(cert).hexdigest() not in fingerprints:
-                self.send_json(403, {"error": "coordinator_not_authorized"})
-                return
-            if self.path != "/v1/recovery":
-                self.send_json(404, {"error": "not_found"})
-                return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
                 require(0 < size <= MAX and self.headers.get_content_type() == "application/json"
                         and not self.headers.get("Transfer-Encoding"), "invalid_request_size")
                 raw = self.rfile.read(size)
                 require(len(raw) == size, "truncated_request")
+                # Drain only a bounded valid request before rejecting a
+                # CA-valid but unapproved cert, avoiding TCP reset on unread
+                # payload. Never parse or dispatch unauthorized requests.
+                if not cert or hashlib.sha256(cert).hexdigest() not in fingerprints:
+                    self.send_json(403, {"error": "coordinator_not_authorized"})
+                    return
+                if self.path != "/v1/recovery":
+                    self.send_json(404, {"error": "not_found"})
+                    return
                 self.send_json(200, dispatch(witness, decode(raw)))
             except (RecoveryError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 self.send_json(409, {"error": str(exc) if isinstance(exc, RecoveryError) else "invalid_request"})
