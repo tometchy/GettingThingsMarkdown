@@ -32,6 +32,9 @@ def assess(data, exit_code, expected_serial):
     if serial != expected_serial:
         return "unknown", ["identity_mismatch"], {}
     if exit_code & 7:
+        # SMART can report both incomplete commands and a known failed health bit.
+        if exit_code & 24:
+            return "failed", ["smart_command_incomplete", "smart_health_failed"], {}
         return "unknown", ["smart_command_incomplete"], {}
     reasons = []
     counters = {}
@@ -96,6 +99,11 @@ def assess(data, exit_code, expected_serial):
             flag("failed", "nvme_spare_below_threshold")
     else:
         flag("unknown", "unsupported_media_telemetry")
+    temperature = data.get("temperature")
+    if isinstance(temperature, dict):
+        val = number(temperature.get("current"))
+        if val is not None:
+            counters["temperature_celsius"] = val
     if passed is not True and passed is not False:
         flag("unknown", "smart_status_missing")
     # An explicit observed failure must not be hidden by incomplete fields.

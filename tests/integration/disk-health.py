@@ -40,6 +40,7 @@ class DiskHealthTests(unittest.TestCase):
     def test_failed_media(self):
         self.assertEqual(self.assess(self.ata(), 8), "failed")
         self.assertEqual(self.assess(self.ata(), 16), "failed")
+        self.assertEqual(self.assess(self.ata(), 12), "failed")
         self.assertEqual(self.assess(self.nvme(critical_warning=4)), "failed")
         self.assertEqual(self.assess(self.nvme(available_spare=1)), "failed")
         d = self.ata()
@@ -59,6 +60,14 @@ class DiskHealthTests(unittest.TestCase):
         self.assertEqual(self.assess({"serial_number": "OTHER"}, 0), "unknown")
         self.assertEqual(self.assess(self.nvme(media_errors=None)), "unknown")
         self.assertEqual(self.assess(self.ata(), -9), "unknown")
+
+    def test_temperature_and_interface_counter(self):
+        d = self.ata(interface_crc=42)
+        d["temperature"] = {"current": 47}
+        state, _, counters = h.assess(d, 0, "DRIVE1")
+        self.assertEqual(state, "healthy")
+        self.assertEqual(counters["temperature_celsius"], 47)
+        self.assertEqual(counters["interface_crc"], 42)
 
     def test_missing_device(self):
         d = {"byId": "gtmd-ci-impossible-device-123", "serial": "DRIVE1", "id": "a"}

@@ -49,3 +49,9 @@ groups:
           severity: critical
         annotations:
           summary: "GTMD individual disk check overdue"
+      - alert: GTMDStorageInterfaceErrorsIncreasing
+        expr: delta(gtmd_disk_health_counter{counter="interface_crc"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD disk interface CRC errors increasing; check cabling/controller"

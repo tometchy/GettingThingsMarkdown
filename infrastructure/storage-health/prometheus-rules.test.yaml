@@ -1,0 +1,76 @@
+rule_files:
+  - prometheus-rules.yaml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="node",instance="lost",gtmd_storage_node="true"}'
+        values: '0+0x12'
+      - series: 'up{job="node",instance="missing",gtmd_storage_node="true"}'
+        values: '1+0x12'
+      - series: 'gtmd_disk_health_last_poll_unixtime{job="node",instance="stale"}'
+        values: '0+0x12'
+      - series: 'gtmd_disk_health_inventory_ok{job="node",instance="invalid"}'
+        values: '0+0x12'
+      - series: 'gtmd_disk_health_expected_disks{job="node",instance="invalid"}'
+        values: '0+0x12'
+      - series: 'gtmd_disk_health_state{job="node",instance="host",disk="d1",state="suspect"}'
+        values: '1+0x12'
+      - series: 'gtmd_disk_health_state{job="node",instance="host",disk="d2",state="unknown"}'
+        values: '1+0x12'
+      - series: 'gtmd_disk_health_state{job="node",instance="host",disk="d3",state="failed"}'
+        values: '1+0x12'
+      - series: 'gtmd_disk_health_state{job="node",instance="host",disk="d4",state="healthy"}'
+        values: '1+0x12'
+      - series: 'gtmd_disk_health_counter{job="node",instance="host",disk="d4",counter="interface_crc"}'
+        values: '0+1x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: GTMDStorageNodeExporterDown
+        exp_alerts:
+          - exp_labels: {job: node, instance: lost, gtmd_storage_node: "true", severity: critical}
+            exp_annotations: {summary: "GTMD storage node exporter unavailable"}
+      - eval_time: 6m
+        alertname: GTMDStorageDiskProbeMissing
+        exp_alerts:
+          - exp_labels: {job: node, instance: missing, gtmd_storage_node: "true", severity: critical}
+            exp_annotations: {summary: "GTMD storage health telemetry missing"}
+      - eval_time: 6m
+        alertname: GTMDStorageInventoryInvalid
+        exp_alerts:
+          - exp_labels: {job: node, instance: invalid, severity: critical}
+            exp_annotations: {summary: "GTMD expected disk inventory missing or invalid"}
+      - eval_time: 6m
+        alertname: GTMDStorageDiskSuspect
+        exp_alerts:
+          - exp_labels: {job: node, instance: host, disk: d1, state: suspect, severity: warning}
+            exp_annotations: {summary: "GTMD disk shows hardware degradation; investigate evacuation"}
+      - eval_time: 6m
+        alertname: GTMDStorageDiskFailedOrUnverified
+        exp_alerts:
+          - exp_labels: {job: node, instance: host, disk: d2, state: unknown, severity: critical}
+            exp_annotations: {summary: "GTMD disk failed or cannot be verified"}
+          - exp_labels: {job: node, instance: host, disk: d3, state: failed, severity: critical}
+            exp_annotations: {summary: "GTMD disk failed or cannot be verified"}
+      - eval_time: 6m
+        alertname: GTMDStorageInterfaceErrorsIncreasing
+        exp_alerts:
+          - exp_labels: {job: node, instance: host, disk: d4, counter: interface_crc, severity: warning}
+            exp_annotations: {summary: "GTMD disk interface CRC errors increasing; check cabling/controller"}
+  - interval: 30s
+    input_series:
+      - series: 'gtmd_disk_health_last_poll_unixtime{job="node",instance="stale"}'
+        values: '1+0x20'
+      - series: 'gtmd_disk_health_checked_unixtime{job="node",instance="stale",disk="d1"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: GTMDStorageDiskProbeStale
+        exp_alerts:
+          - exp_labels: {job: node, instance: stale, severity: critical}
+            exp_annotations: {summary: "GTMD disk inspection stalled"}
+      - eval_time: 8m
+        alertname: GTMDStorageDiskCheckStale
+        exp_alerts:
+          - exp_labels: {job: node, instance: stale, disk: d1, severity: critical}
+            exp_annotations: {summary: "GTMD individual disk check overdue"}

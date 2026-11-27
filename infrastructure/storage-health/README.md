@@ -29,9 +29,9 @@ A disappeared, substituted, unreadable, unsupported or unresponsive disk is
 UNKNOWN, a current SMART fail is FAILED; historical error log entries and
 nonzero media defect counters are conservatively SUSPECT. ATA attribute raw
 values and thresholds vary by vendor; validate and tune on actual models.
-SMART PASS is not evidence of Git or filesystem integrity.
+SMART PASS is not evidence of Git or filesystem integrity. Generic temperature telemetry is exported when present; validate model-specific thresholds before alerting. Increasing interface CRC errors raise a separate warning.
 
-Connect the existing private node_exporter to
+Provision or connect a private node_exporter (not currently deployed by this change) to
 --collector.textfile.directory=/var/lib/gtmd-disk-health (if already configured,
 integrate into its existing textfile path; never overwrite another collector's
 files). Ensure node_exporter can read the metrics file, but not
@@ -50,7 +50,7 @@ hardware ticket adapter. If config becomes invalid, metrics become explicitly
 unknown; the old private JSON is retained only as historical diagnostic data,
 not current authorization. Do not act on it without fresh successful telemetry.
 
-Pending: independent Git scan metrics and working-tree/physical scrub,
+CI validates Python fixtures and Prometheus rule behavior with promtool. Pending: independent Git scan metrics and working-tree/physical scrub,
 kernel journal I/O error events, persistent expected node+PV mapping, operator
 quarantine/fencing, source authentication and automatic volume rebuild,
 provider ticket submission, failover and real hardware/throughput validation.
