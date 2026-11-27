@@ -82,3 +82,7 @@ storageController:
   inventoryConfigMap: "" # pre-created independent node/disk inventory in chart namespace
   reserveAvailable: false # explicit opt-in; never touches bound volumes
   managedClasses: [] # explicit allowlist required by admission policy in write mode
+
+# Irreversible development admission barrier; no patch RBAC by default.
+writerFence:
+  enabled: false
