@@ -106,3 +106,25 @@ only through explicit loopback test mode, not CLI production config.
 Real multi-cloud mTLS/IaC, peer latency and failure-domain validation,
 external anti-rollback watermark after full cluster restore, writer
 enforcement/fencing and independent retention are not yet complete.
+
+## Writer freeze and short-lived permits (opt-in)
+Offline enroll-writers binds both roles to exact pod, PVC and node UIDs. The
+trusted host agent signs renewal requests with its role key and publishes
+witness-signed 60s permits in a host-owned directory, mounted read-only at
+/run/gtmd-writer-fence with pinned witness.pub. Renew every 10–15s, not via
+slow Kubernetes Secret refresh. The data image uses GTM_WRITER_FENCE_MODE=required,
+GTM_FENCE_TENANT, GTM_FENCE_POD_UID, GTM_FENCE_PVC_UID, GTM_FENCE_NODE_UID;
+the guard must be PID1 in an unshared container PID namespace. Default
+development mode preserves legacy behavior and is NOT production fenced.
+No deployment automatically sets these variables yet. Provisioner must
+verify exact mount and identity and forbid override/bypass/exec and shared PID.
+Freeze-writers advances epoch atomically and denies renewals. Both roles must
+provide signed stop/isolation evidence after all prior permits expire plus
+clock-skew allowance. A stopped pod status, elapsed lease or deleted API
+object is NOT by itself proof of actual isolation. Trusted host or provider
+adapter must establish runtime stop, revoked write access and isolated volume.
+Only then can an enrolled tenant proceed to a repair challenge. The source
+must be served by a separately authenticated read-only snapshot endpoint;
+normal Gitea/Syncthing writers are stopped. That endpoint and collection of
+actual provider/host evidence are not implemented yet. No release/unfreeze
+or replacement writer activation. cutover-status lists mandatory blockers.
