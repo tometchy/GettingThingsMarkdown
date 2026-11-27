@@ -53,6 +53,8 @@ jobs:
           python3 tests/integration/writer-fencing.py
           python3 tests/integration/host-runtime-fence.py
           python3 tests/integration/namespace-fence.py
+          python3 tests/integration/local-lvm-fence.py
+          python3 tests/integration/lvm-mount-binding.py
           python3 tests/integration/recovery-source.py
           python3 tests/integration/recovery-binding.py
           python3 tests/integration/history-purge-candidate.py
@@ -66,6 +68,17 @@ jobs:
         run: |
           docker build -f server/controlplane-backup/Dockerfile -t gtm/controlplane-backup:ci .
           bash tests/integration/controlplane-backup.sh
+  storage-lvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LVM test prerequisites on ephemeral runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends lvm2 e2fsprogs
+      - name: Verify per-PVC isolation on real loop-backed Linux device mapper
+        run: sudo --preserve-env=GITHUB_ACTIONS python3 tests/integration/local-lvm-fence-real.py
   images:
     runs-on: ubuntu-latest
     timeout-minutes: 45

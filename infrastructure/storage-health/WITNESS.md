@@ -294,3 +294,80 @@ real witness signatures and a scoped service account token, attempts
 alternate pod access to the old claim, tests immutable marker and
 cross-tenant isolation, and verifies StatefulSet recreation rejection.
 These are development tests, not production multi-cloud proof.
+
+
+## Experimental per-PVC LVM isolation (development only)
+
+Local PV directories on a shared filesystem cannot be individually fenced
+by making the whole block device read-only: that affects other tenants.
+This candidate backend requires a dedicated **linear, single-segment LV per
+PVC**, on an independently provisioned shared storage VG. It is not a choice
+of final storage filesystem, nor a migration of existing volumes. No thin
+pools, snapshots, RAID/cache, multi-segment or shared tenant LV supported.
+Each LV is named pvc-<PVC UID> in a gtmd-<pool> VG and tagged
+gtmd.tenant.<tenant>, gtmd.role.<role>, gtmd.pvc.<PVC UID>. Provisioning must
+independently pin VG and LV UUIDs, machine-id, Kubernetes Namespace UID and
+all enrolled PVC/pod/node UIDs in root-owned inventory, and verify the
+actual PVC to LV/filesystem/mountpoint relationship. That provisioning and
+mount lifecycle is not yet implemented; tags alone are not proof of ownership.
+
+Install local_lvm_fence.py and existing integrity/storage-controller
+modules on the trusted host (PYTHONPATH includes both directories), LVM2
+and crictl. Example inventory schema:
+
+    {"tenant":"gtm-<32 hex>","role":"sync","namespaceUid":"<UUID>",
+     "machineId":"<32 hex>","identity":{"podUid":"<UUID>","nodeUid":"<UUID>",
+      "pvcUids":["<UUID>"]},"volumes":{"<PVC UID>":{"vgName":"gtmd-pool",
+      "vgUuid":"<LVM UUID>","lvUuid":"<LVM UUID>"}}}
+
+CLI requires root, root-owned non-writable trust files, private token/key,
+local CRI socket, witness mTLS credentials and pinned signing public key,
+Kubernetes CA/endpoint and token with GET on exactly the tenant namespace.
+No kube writes. A host lock excludes concurrent local adapter invocations.
+Read-only by default; explicit --apply-development-isolation only on an
+approved disposable host. Fetch the current signed witness challenge and
+matching immutable namespace marker before each transition; wait out all
+prior writer permits. Read LVM metadata and match the exact device-mapper
+UUID in sysfs, not an unstable major:minor alone. Require all enrolled
+volumes, no live or replacement writer, no process, no mount in visible
+namespaces, no open LV and no stacked holder. No forced/lazy unmount and
+no automatic removal of a live mount. Existing host filesystem mount must
+be cleanly unmounted through trusted lifecycle; busy/unreachable/unknown
+state blocks. Never unmount a shared host disk.
+
+Persist read-only LV permission and activation-skip flag via lvchange
+with exact VG/LV UUID/name selection, then deactivate and verify metadata
+and absence of device-mapper mappings. On partial failure do not undo
+restrictions; re-read and retry idempotently. Explicit root override can
+reactivate the LV, but persistent read-only metadata remains unless root
+changes it. Normal activation should respect skip; verify this in CI.
+Reference: https://man7.org/linux/man-pages/man8/lvchange.8.html and
+https://man7.org/linux/man-pages/man8/lvs.8.html .
+
+This only protects a specific locally reachable, correctly provisioned
+device under the trusted-host assumption. It does not prove durable
+provider fencing, rollback resistance of LVM metadata, protection against
+raw access to the underlying PV or privileged host/cluster actors, or
+prevent empty directory fallback if mount lifecycle is misconfigured.
+Neither a namespace marker nor clean CRI sample proves those properties.
+A healthy source still needs a separately authorized read-only export
+lifecycle; do not apply this adapter to it expecting the existing export
+to remain online. There is no unfreeze/activation operation. The adapter
+always returns stopEvidenceEligible=false and activationAllowed=false;
+never feed this observation to confirm-writer-stop as a stop proof.
+CI loop devices are not physical hardware or a two-provider test.
+
+
+Pre-enrollment read-only lvm_mount_binding.py checks the actual API
+Namespace/node/pod/PVC/PV identities, exact Retain local PV path
+<managed-root>/<PVC UID>, hostname affinity, RWO Filesystem mode,
+non-privileged pod with expected claims, and the actual host mountinfo
+entry plus stat.st_dev against the LVM device-mapper identity. Reject
+missing/stacked/subdirectory mounts, read-only filesystem and parent
+filesystem fallback. Currently candidate ext4/XFS only. No mount creation,
+no enrollment action. CLI takes --inventory, --node-name, --mount-root,
+--kube-endpoint, --kube-ca, --kube-token. Root-owned independent
+configuration and narrowly scoped read-only API credentials required.
+Checks are repeated, not an atomic enrollment or runtime mount guard;
+the caller must prevent changes during enrollment. Full provisioning
+and enforced mount lifecycle remain open.
