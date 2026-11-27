@@ -14,6 +14,7 @@ import os
 import re
 from pathlib import Path
 import stat
+import subprocess
 import time
 import tempfile
 
@@ -177,7 +178,7 @@ def main():
         result=run(witness,identity,a.operation,Path(host["mount"]),
                    a.witness_public,a.target_key,a.timeout,guard=guard)
         print(json.dumps(result,separators=(",",":")))
-    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError) as exc:
+    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError,subprocess.SubprocessError) as exc:
         print(json.dumps({"event":"gtmd_stage_runner","state":"failed",
             "reason":str(exc) if isinstance(exc,(RecoveryError,IntegrityError)) else type(exc).__name__}))
         return 1
