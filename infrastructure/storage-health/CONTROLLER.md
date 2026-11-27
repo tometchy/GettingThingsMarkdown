@@ -84,3 +84,10 @@ controller is expected; absent(up) intentionally alarms when it disappears.
 Metrics are aggregate counts and a reconciliation freshness gauge, never
 filenames or credentials. The kind CI fixture uses synthetic PVs and a real
 API server/binder to test reservation and bound-claim preservation.
+
+Before each write the controller dry-runs a deliberately forbidden reservation
+variant and requires the specific admission-policy denial from the real API.
+If the policy is missing, the response is ambiguous or the PV has raced a
+binder, no real mutation is attempted and observability reports manual review.
+The real reservation retains its CAS. This is a runtime guard, not a guarantee
+against a cluster administrator removing the policy between requests.

@@ -61,6 +61,7 @@ class Fake:
                     pv("n2", D2, "candidate"), pv("n3", D3, "other-cloud")]
         self.patches = []
         self.conflict = False
+        self.admission_active = True
 
     def list(self, path):
         return iter({"/api/v1/nodes": self.nodes,
@@ -75,6 +76,8 @@ class Fake:
         self.patches.append((path, ops))
         if self.conflict:
             raise ApiError(409)
+        if path.endswith('?dryRun=All') and self.admission_active:
+            raise ApiError(403, reservation_policy_denied=True)
 
 
 class Tests(unittest.TestCase):
@@ -100,8 +103,9 @@ class Tests(unittest.TestCase):
         c.reconcile(self.api, self.config, now=NOW)
         self.assertFalse(self.api.patches)
         c.reconcile(self.api, self.config, apply=True, now=NOW)
-        self.assertEqual(len(self.api.patches), 1)
-        path, patch = self.api.patches[0]
+        self.assertEqual(len(self.api.patches), 2)
+        self.assertTrue(self.api.patches[0][0].endswith('?dryRun=All'))
+        path, patch = self.api.patches[1]
         self.assertTrue(path.endswith("/free"))
         self.assertIn({"op": "test", "path": "/metadata/resourceVersion", "value": "1"}, patch)
         self.assertEqual(patch[-1]["value"]["namespace"], c.RESERVATION_NAMESPACE)
@@ -111,6 +115,13 @@ class Tests(unittest.TestCase):
         self.api.conflict = True
         result = c.reconcile(self.api, self.config, apply=True, now=NOW)
         self.assertEqual(len(self.api.patches), 1)
+        self.assertEqual(result["manualReview"], 1)
+
+    def test_admission_probe_must_deny_before_mutation(self):
+        self.api.admission_active = False
+        result = c.reconcile(self.api, self.config, apply=True, now=NOW)
+        self.assertEqual(len(self.api.patches), 1)
+        self.assertTrue(self.api.patches[0][0].endswith("?dryRun=All"))
         self.assertEqual(result["manualReview"], 1)
 
     def test_missing_stale_or_replaced_node_is_unknown(self):

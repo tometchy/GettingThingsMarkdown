@@ -10,8 +10,9 @@ MAX_RESPONSE = 32 * 1024 * 1024
 
 
 class ApiError(Exception):
-    def __init__(self, code):
+    def __init__(self, code, reservation_policy_denied=False):
         self.code = code
+        self.reservation_policy_denied = reservation_policy_denied
         super().__init__("kubernetes_http_" + str(code))
 
 
@@ -49,7 +50,17 @@ class Kube:
                     raise ValueError("api_response_too_large")
                 return json.loads(raw)
         except urllib.error.HTTPError as exc:
-            raise ApiError(exc.code) from None
+            # Recognize only the expected admission denial. Never log the body.
+            denied = False
+            try:
+                body = json.loads(exc.read(65536))
+                message = body.get("message", "")
+                denied = (exc.code == 403 and isinstance(message, str)
+                          and "gtmd-storage-reservation-only" in message
+                          and "Only the quarantine claim reservation may be added" in message)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            raise ApiError(exc.code, denied) from None
 
     def get(self, path):
         return self.request("GET", path)

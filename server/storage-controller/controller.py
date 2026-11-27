@@ -5,6 +5,7 @@ No bound PV, PVC, workload or data is modified. A repair proposal is not a
 lease or a trusted recovery manifest, and cannot authorize live cutover.
 """
 import argparse
+import copy
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
@@ -211,6 +212,30 @@ def plan(config, live_nodes, reports, volumes, pvcs, now):
     return states, records
 
 
+def reserve(api, record):
+    """Dry-run a deliberately forbidden variation before each real reservation.
+
+    If admission is absent, incorrectly configured, or races a binder, stop.
+    The real patch still has its own CAS. Operators must not remove the policy
+    while the controller retains write RBAC.
+    """
+    endpoint = "/api/v1/persistentvolumes/" + record["pv"]
+    forbidden = copy.deepcopy(record["patch"])
+    forbidden[-1]["value"]["namespace"] = "default"
+    try:
+        api.patch(endpoint + "?dryRun=All", forbidden)
+    except ApiError as exc:
+        if not exc.reservation_policy_denied:
+            return "reservation_conflict" if exc.code in (409, 422) else "admission_unverified"
+    else:
+        return "admission_unverified"
+    try:
+        api.patch(endpoint, record["patch"])
+        return "reservation_requested"
+    except ApiError as exc:
+        return "reservation_conflict" if exc.code in (409, 422) else "reservation_failed"
+
+
 def reconcile(api, config, apply=False, now=None):
     now = time.time() if now is None else now
     nodes = list(api.list("/api/v1/nodes"))
@@ -220,13 +245,7 @@ def reconcile(api, config, apply=False, now=None):
     states, records = plan(config, nodes, reports, pvs, pvcs, now)
     for record in records:
         if record["action"] == "reserve_available" and apply:
-            try:
-                api.patch("/api/v1/persistentvolumes/" + record["pv"], record["patch"])
-                record["action"] = "reservation_requested"
-            except ApiError as exc:
-                # A concurrent binder or API rejection must never be retried
-                # against stale data. Re-read entire inventory next cycle.
-                record["action"] = "reservation_conflict" if exc.code in (409, 422) else "reservation_failed"
+            record["action"] = reserve(api, record)
         record.pop("patch", None)
         # opaque IDs only; no mount paths, customer content or credentials.
         if record["action"] != "none":
@@ -237,7 +256,7 @@ def reconcile(api, config, apply=False, now=None):
                "unhealthyDisks": sum(s != "healthy" for v in states.values() for s in v.values()),
                "boundRepairs": sum(x["action"] == "repair_required" for x in records),
                "reservations": sum(x["action"] in ("reserved", "reservation_requested") for x in records),
-               "manualReview": sum(x["action"] in ("manual_review", "reservation_conflict", "reservation_failed") for x in records)}
+               "manualReview": sum(x["action"] in ("manual_review", "reservation_conflict", "reservation_failed", "admission_unverified") for x in records)}
     print(json.dumps(summary, separators=(",", ":")), flush=True)
     return summary
 
