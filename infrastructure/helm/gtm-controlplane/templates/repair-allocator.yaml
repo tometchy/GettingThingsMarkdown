@@ -1,0 +1,158 @@
+{{- if .Values.repairAllocator.enabled }}
+{{- $class := required "repairAllocator.storageClass required" .Values.repairAllocator.storageClass }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gtm-recovery
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gtm-repair-allocator
+  namespace: {{ .Values.namespace | quote }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gtm-repair-allocator
+rules:
+  - apiGroups: [""]
+    resources: [nodes, persistentvolumeclaims]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list]
+  - apiGroups: ["storage.k8s.io"]
+    resources: [storageclasses]
+    resourceNames: [{{ $class | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gtm-repair-allocator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gtm-repair-allocator
+subjects:
+  - kind: ServiceAccount
+    name: gtm-repair-allocator
+    namespace: {{ .Values.namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gtm-repair-allocator
+  namespace: gtm-recovery
+rules:
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gtm-repair-allocator
+  namespace: gtm-recovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gtm-repair-allocator
+subjects:
+  - kind: ServiceAccount
+    name: gtm-repair-allocator
+    namespace: {{ .Values.namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gtm-repair-health-reader
+  namespace: gtm-storage-reports
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gtm-repair-health-reader
+  namespace: gtm-storage-reports
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gtm-repair-health-reader
+subjects:
+  - kind: ServiceAccount
+    name: gtm-repair-allocator
+    namespace: {{ .Values.namespace | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-recovery-no-pods
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+        scope: Namespaced
+  matchConditions:
+    - name: recovery-namespace
+      expression: 'request.namespace == "gtm-recovery"'
+  validations:
+    - expression: "false"
+      message: "GTMD recovery namespace is host-staging only; pods are forbidden"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-recovery-no-pods
+spec:
+  policyName: gtmd-recovery-no-pods
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-recovery-claims
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["persistentvolumeclaims"]
+        scope: Namespaced
+  matchConditions:
+    - name: recovery-namespace
+      expression: 'request.namespace == "gtm-recovery"'
+  validations:
+    - expression: 'request.operation != "CREATE" || request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:gtm-repair-allocator"'
+      message: "GTMD recovery claims may only be created by the allocator"
+      reason: Forbidden
+    - expression: 'request.operation != "DELETE"'
+      message: "GTMD recovery claims cannot be deleted by the allocator or ordinary API lifecycle"
+      reason: Forbidden
+    - expression: 'request.operation != "CREATE" || (object.metadata.name.matches("^repair-[a-f0-9]{32}$") && has(object.metadata.annotations) && ["gtmd.io/tenant","gtmd.io/role","gtmd.io/freeze-digest","gtmd.io/old-pvc-uid","gtmd.io/target-pv-uid"].all(k, k in object.metadata.annotations) && object.metadata.annotations["gtmd.io/tenant"].matches("^gtm-[a-f0-9]{32}$") && object.metadata.annotations["gtmd.io/role"] in ["sync","history"] && object.metadata.annotations["gtmd.io/freeze-digest"].matches("^[a-f0-9]{64}$") && object.metadata.name == "repair-" + object.metadata.annotations["gtmd.io/freeze-digest"].substring(0,32) && has(object.spec.volumeName) && object.spec.volumeName != "" && object.spec.storageClassName == {{ $class | toJson }} && object.spec.volumeMode == "Filesystem" && object.spec.accessModes == ["ReadWriteOnce"] && has(object.spec.selector) && object.spec.selector.matchLabels == {"gtmd.io/repair-spare":"true"} && !has(object.spec.dataSource) && !has(object.spec.dataSourceRef))'
+      message: "GTMD recovery claims must explicitly select one static spare PV and immutable incident"
+      reason: Forbidden
+    - expression: 'request.operation != "UPDATE" || (object.spec == oldObject.spec && has(object.metadata.annotations) && ["gtmd.io/tenant","gtmd.io/role","gtmd.io/freeze-digest","gtmd.io/old-pvc-uid","gtmd.io/target-pv-uid"].all(k, k in object.metadata.annotations && k in oldObject.metadata.annotations && object.metadata.annotations[k] == oldObject.metadata.annotations[k]))'
+      message: "GTMD recovery claim binding and incident are immutable"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-recovery-claims
+spec:
+  policyName: gtmd-recovery-claims
+  validationActions: [Deny]
+{{- end }}
