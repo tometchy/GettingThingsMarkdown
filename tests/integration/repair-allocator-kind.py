@@ -84,7 +84,7 @@ def main():
                          "persistentVolumeReclaimPolicy": "Retain",
                          "local": {"path": n["disks"][0]["mount"]+"/"+name},
                          "nodeAffinity": {"required": {"nodeSelectorTerms": [{"matchExpressions": [
-                             {"key": "kubernetes.io/hostname", "operator": "In", "values": [n["hostname"]]}]}]}}}
+                             {"key": "kubernetes.io/hostname", "operator": "In", "values": [n["hostname"]]}]}]}}}}
 
     def reports():
         for n in ns:
