@@ -455,3 +455,62 @@ a guarantee of latest configuration anchoring. Production must coordinate
 all writers to gtm-tenant and verify the current committed state.
 Reference: https://docs.syncthing.net/users/syncthing and
 https://docs.syncthing.net/dev/device-ids.html .
+
+
+## Strict Sync startup (development reference, not production activation)
+
+GTM_WRITER_FENCE_MODE=required now runs sync_startup.py before any
+mkdir, Git config/bootstrap/commit, mail/identity/commit loop or
+Syncthing serve. Requires GTM_RECOVERY_LAYOUT=git-only and no LFS.
+The existing PID1 lease supervisor must wrap the entrypoint. The new
+check does not grant a permit or override the frozen witness.
+Legacy development retains fresh initialization, but missing config
+with a remaining certificate/key refuses regeneration.
+
+Trusted root host runs sync_startup_record.py once before launch
+(PYTHONPATH=server/integrity:server/storage-controller). Arguments:
+--inventory (existing LVM binding inventory), --expected-identity,
+--node-name, --mount-root, --permit-directory and existing kube/witness
+CA, token/mTLS and signing-public-key arguments. Read-only default;
+--apply-development-publish atomically creates startup.json, idempotent
+only for identical contents. Use a fresh, independently assigned
+root-owned directory per enrolled startup. Do not overwrite stale
+records or bind private keys into the pod. Expected identity JSON:
+
+    {"deviceId":"<expected original ID>","folderId":"<expected folder>",
+     "identitySha256":{"config.xml":"<sha256>","cert.pem":"<sha256>","key.pem":"<sha256>"}}
+
+Supply the hashes from independently verified provisioned or restored
+identity, not blindly from the potentially faulty live files.
+The publisher verifies actual named sync-data and sync-live PVCs,
+mountinfo, LVM UUID/device, node/pod identity, current OPEN witness
+enrollment and signed anchor, local refs digest and repeated samples.
+It publishes only public metadata (no private key or plaintext content).
+Mount the permit directory read-only into the container at
+/run/gtmd-writer-fence, alongside witness.pub and renewed permit.json.
+
+The pod checks exact two different ext4/XFS filesystem-root mounts
+/data and /data/files against the host device numbers, rejects missing,
+stacked and unexpected nested mounts, verifies root-owned read-only
+trust mount, signed permit/epoch, signed anchor and all refs including
+the four required branches and HEAD=main. It verifies exact expected
+identity bytes, receiveencrypted folder, actual Device ID and matching
+certificate/private key, then existing worktree_integrity.verify checks
+all ciphertext blobs and Git. Recheck identities, mounts and permit
+before returning. Required mode refuses missing repo or identity rather
+than initializing. The preflight itself performs no writes to tenant
+storage and is not an independent activation authorization.
+
+No new daemon or persistent storage. One full scan per strict start
+can be expensive for large tenants; measure RTO and consider a verified
+host snapshot/checkpoint optimization later, not a silent bypass.
+This development mode intentionally blocks dirty trees, legitimate
+unanchored changes, unexpected technical files and obsolete startup
+records. No automatic cleanup. An ordinary restart and deletion-safe
+Syncthing index reconstruction still need a coordinated protocol.
+The host record is current at publication; it is not a durable
+external rollback watermark and cannot prove the latest generation
+after a rollback. Production provisioning must enforce the trusted
+mounts, entrypoint and host record lifecycle; History startup and
+replacement enrollment/cutover remain gated. The current implementation
+does not launch a new writer from a frozen incident.

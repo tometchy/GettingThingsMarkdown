@@ -4,6 +4,10 @@
 Run with --network none. No Syncthing serve, customer data or remote service.
 """
 import io
+import hashlib
+import json
+import time
+import uuid
 import importlib.util
 import os
 from pathlib import Path
@@ -18,6 +22,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/"server/integrity"))
 import sync_state as s
+import sync_startup as startup
+from recovery_crypto import sign, digest
 from git_integrity import refs, stage_rebuild, IntegrityError
 from recovery_crypto import RecoveryError
 
@@ -153,6 +159,78 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(RecoveryError,"insufficient_sync_staging_capacity"):
                 self.prepare()
         self.assertFalse(self.dest.exists())
+
+    def test_strict_startup_real_git_syncthing_and_signed_permit(self):
+        self.prepare()
+        data=self.root/"live"
+        trust=self.root/"trust"
+        data.mkdir()
+        trust.mkdir()
+        self.repo.rename(data/"git")
+        (self.dest/"files").rename(data/"files")
+        (self.dest/"syncthing").rename(data/"syncthing")
+        tenant="gtm-"+"b"*32
+        ids={"podUid":str(uuid.uuid4()),"nodeUid":str(uuid.uuid4()),
+             "pvcUids":sorted([str(uuid.uuid4()),str(uuid.uuid4())])}
+        cfg={"schema":1,"tenant":tenant,"role":"sync","identity":ids,"epoch":1,
+             "mounts":{"data":"253:1","files":"253:2"},"refs":self.manifest,
+             "deviceId":self.device,"folderId":self.cfg["folderId"],
+             "identitySha256":{n:hashlib.sha256((data/"syncthing"/n).read_bytes()).hexdigest()
+                               for n in s.IDENTITY_FILES}}
+        key=trust/"witness.key"
+        pub=trust/"witness.pub"
+        run("openssl","genpkey","-algorithm","ED25519","-out",str(key))
+        run("openssl","pkey","-in",str(key),"-pubout","-out",str(pub))
+        now=int(time.time())
+        permit={"schema":1,"kind":"writer_permit","tenant":tenant,"role":"sync",
+                "epoch":1,"identity":ids,"sequence":1,"issuedUnix":now,"expiresUnix":now+60}
+        (trust/"permit.json").write_text(json.dumps(sign(permit,key)))
+        cfg["anchor"]=sign({"schema":1,"kind":"generation","tenant":tenant,"generation":1,
+                           "previousDigest":None,"refsDigest":digest(self.manifest),
+                           "committedUnix":now},key)
+        def save():
+            (trust/"startup.json").write_text(json.dumps(cfg))
+        save()
+        fake_mountinfo=trust/"mountinfo"
+        fake_mountinfo.write_text("")
+        # The real LVM job checks kernel mount identity independently.
+        # This image test exercises actual signed permit, Git and Syncthing.
+        with patch.object(startup,"check_mount"),patch.object(startup,"trusted_file",side_effect=Path):
+            def preflight():
+                return startup.preflight(data,trust,tenant,ids,timeout=60,mountinfo=fake_mountinfo)
+            self.assertEqual(preflight()["files"],2)
+            self.assertFalse(preflight()["activationAuthorizedByPreflight"])
+            old_anchor=cfg["anchor"]
+            cfg["anchor"]=sign({**old_anchor["payload"],"refsDigest":"0"*64},key)
+            save()
+            with self.assertRaisesRegex(RecoveryError,"startup_anchor_mismatch"):
+                preflight()
+            cfg["anchor"]=old_anchor
+            cfg["epoch"]=2
+            save()
+            with self.assertRaisesRegex(RecoveryError,"startup_epoch_mismatch"):
+                preflight()
+            cfg["epoch"]=1
+            cfg["mounts"]["files"]=cfg["mounts"]["data"]
+            save()
+            with self.assertRaisesRegex(RecoveryError,"invalid_startup_mounts"):
+                preflight()
+            cfg["mounts"]["files"]="253:2"
+            save()
+            original=(data/"syncthing"/"config.xml").read_bytes()
+            (data/"syncthing"/"config.xml").write_bytes(b"wrong")
+            with self.assertRaisesRegex(RecoveryError,"startup_identity_digest_mismatch"):
+                preflight()
+            (data/"syncthing"/"config.xml").write_bytes(original)
+            run("git","--git-dir",str(data/"git"),"symbolic-ref","HEAD","refs/heads/gtm-tenant")
+            with self.assertRaisesRegex(RecoveryError,"startup_head_not_main"):
+                preflight()
+            run("git","--git-dir",str(data/"git"),"symbolic-ref","HEAD","refs/heads/main")
+            (data/"files"/"empty").unlink()
+            with self.assertRaisesRegex(IntegrityError,"missing_worktree_file"):
+                preflight()
+            self.assertFalse((data/"files"/"empty").exists())
+            self.assertEqual(refs(data/"git"),self.manifest)
 
     def test_wrong_device_id_rejected(self):
         cfg={**self.cfg,"deviceId":"AAAAAAA-"*7+"AAAAAAA"}

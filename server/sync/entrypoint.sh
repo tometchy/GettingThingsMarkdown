@@ -3,17 +3,27 @@ set -eu
 : "${GTM_SYNCTHING_API_KEY:?Missing Syncthing API key}"
 : "${GTM_GIT_URL:?Missing Git HTTPS destination}"
 : "${GTM_GIT_PASSWORD:?Missing Git writer password}"
-mkdir -p /data/files /data/git /data/syncthing
+# Required mode runs only under the existing PID1 permit supervisor.
+# Verify all restored paths, original identity and exact anchored tree
+# BEFORE mkdir, config changes, bootstrap commits or starting any worker.
+if [ "${GTM_WRITER_FENCE_MODE:-development}" = "required" ]; then
+  python3 /usr/local/bin/sync_startup.py
+else
+  mkdir -p /data/files /data/git /data/syncthing
+fi
 
 # This config, including cert.pem and key.pem, lives on a persistent PVC.
 # Syncthing must never generate a new Device ID on container restart.
 if [ ! -f /data/syncthing/config.xml ]; then
+  [ "${GTM_WRITER_FENCE_MODE:-development}" != "required" ] || exit 1
+  [ ! -e /data/syncthing/cert.pem ] && [ ! -e /data/syncthing/key.pem ] || { echo "Incomplete Syncthing identity; refusing regeneration" >&2; exit 1; }
   syncthing generate --home=/data/syncthing
 fi
 
 export GIT_DIR=/data/git
 export GIT_WORK_TREE=/data/files
 if [ ! -f /data/git/HEAD ]; then
+  [ "${GTM_WRITER_FENCE_MODE:-development}" != "required" ] || exit 1
   git init -q -b main
   git config user.name 'GettingThingsMarkdown encrypted archive'
   git config user.email 'archive@localhost.invalid'
@@ -34,6 +44,7 @@ git config --local transfer.fsckObjects true
 # Make the default branch available before receiving the first mail, even
 # if no client has paired yet. No files are added in this bootstrap commit.
 if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+  [ "${GTM_WRITER_FENCE_MODE:-development}" != "required" ] || exit 1
   git commit -q --allow-empty -m 'Initialize encrypted archive'
 fi
 # Git's exclusion metadata lives outside the Syncthing folder.

@@ -14,16 +14,15 @@ import subprocess
 import tarfile
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 
 from git_integrity import git, refs, IntegrityError, atomic_json
 from worktree_integrity import verify, rows
 from recovery_crypto import decode, read
 from recovery_witness import require
 from physical_scrub import scrub
+from sync_identity import DEVICE_ID, validate_config, verify_device
 
 MAX_IDENTITY = 4 * 1024 * 1024
-DEVICE_ID = re.compile(r"[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}\Z")
 IDENTITY_FILES = {"config.xml", "cert.pem", "key.pem"}
 BRANCHES = {"refs/heads/gtm-tenant", "refs/heads/gtm-recovery"}
 
@@ -92,22 +91,6 @@ def identity_bundle(repo, manifest, cfg, age_key, deadline):
     return result
 
 
-def validate_config(raw, cfg):
-    xml = raw.decode("utf-8", errors="strict")
-    require("<!DOCTYPE" not in xml.upper() and "<!ENTITY" not in xml.upper(),
-            "unsupported_identity_xml")
-    root = ET.fromstring(xml)
-    require(root.tag == "configuration", "invalid_syncthing_configuration")
-    folders = root.findall("folder")
-    require(len(folders) == 1 and folders[0].get("id") == cfg["folderId"]
-            and folders[0].get("type") == "receiveencrypted"
-            and folders[0].get("path") == "/data/files", "unexpected_syncthing_folder")
-    require(sum(d.get("id") == cfg["deviceId"] for d in root.findall("device")) == 1,
-            "device_id_not_in_config")
-    require(not any((x.text or "").strip() for x in root.iter("encryptionPassword")),
-            "unexpected_plaintext_folder_secret")
-
-
 def verify_identity(home, bundle, cfg, deadline):
     require(home.is_dir() and not home.is_symlink(), "invalid_identity_directory")
     require({p.name for p in home.iterdir()} == IDENTITY_FILES, "unexpected_identity_contents")
@@ -118,17 +101,7 @@ def verify_identity(home, bundle, cfg, deadline):
                 and s.st_size == len(expected) and path.read_bytes() == expected,
                 "restored_identity_mismatch")
     validate_config(bundle["config.xml"], cfg)
-    # Use the actual Syncthing CLI, not a hand-rolled Device ID algorithm.
-    # Neither device-id nor OpenSSL launches a synchronization process.
-    actual = command(["syncthing", "device-id", "--home="+str(home)],
-                     min(30, remaining(deadline))).decode("ascii").strip()
-    require(actual == cfg["deviceId"], "restored_device_id_mismatch")
-    cert = command(["openssl", "x509", "-in", str(home/"cert.pem"), "-pubkey", "-noout"],
-                   min(30, remaining(deadline)))
-    key = command(["openssl", "pkey", "-in", str(home/"key.pem"), "-pubout"],
-                  min(30, remaining(deadline)))
-    require(cert == key, "restored_certificate_key_mismatch")
-
+    verify_device(home, cfg, min(30, remaining(deadline)))
 
 def check_tree_capacity(repo, parent, main, deadline, identity_bytes):
     # One streamed tree traversal before checkout: reject unsafe entries
