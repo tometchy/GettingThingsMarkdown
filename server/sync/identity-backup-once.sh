@@ -2,6 +2,11 @@
 # No plaintext server identity is pushed to the second cloud.
 # Runs inside the existing Syncthing+Git container, never as an extra pod.
 set -eu
+case "${GTM_RECOVERY_LAYOUT:-legacy}" in
+  git-only) exec python3 /usr/local/bin/identity-backup-git.py ;;
+  legacy) ;;
+  *) echo "Invalid recovery Git layout" >&2; exit 1 ;;
+esac
 # This script runs as a subprocess of the Sync entrypoint, whose GIT_DIR and
 # GIT_WORK_TREE refer to customer ciphertext. NEVER commit recovery secrets
 # to that Git tree; this must be an independent local recovery branch.
