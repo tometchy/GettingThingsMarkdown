@@ -119,7 +119,21 @@ class Tests(unittest.TestCase):
             self.prepare(cfg=cfg)
         self.assertFalse((self.dest/"ready.json").exists())
 
-    def test_unsafe_archive_and_mismatched_certificate(self):
+    def test_mismatched_key_and_cert_rejected(self):
+        other=self.root/"other"
+        run("syncthing","generate","--home="+str(other),"--no-port-probing")
+        bundle={n:(self.home/n).read_bytes() for n in s.IDENTITY_FILES}
+        bundle["key.pem"]=(other/"key.pem").read_bytes()
+        home=self.root/"mismatch"
+        home.mkdir()
+        for name,data in bundle.items():
+            (home/name).write_bytes(data)
+            (home/name).chmod(0o600)
+        # Syncthing may reject a mismatched pair itself; either check blocks.
+        with self.assertRaises((RecoveryError,IntegrityError)):
+            s.verify_identity(home,bundle,self.cfg,s.time.monotonic()+30)
+
+    def test_unsafe_archive(self):
         self.git("checkout","-q","gtm-tenant")
         extra=tarfile.TarInfo("evil")
         extra.type=tarfile.SYMTYPE
