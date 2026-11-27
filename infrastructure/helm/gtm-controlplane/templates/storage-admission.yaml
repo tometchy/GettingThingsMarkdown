@@ -25,6 +25,7 @@ spec:
     - expression: 'oldObject.status.phase == "Available" && oldObject.spec.persistentVolumeReclaimPolicy == "Retain" && !has(oldObject.spec.claimRef) && !has(oldObject.metadata.deletionTimestamp)'
       message: "Only available unclaimed Retain PVs may be reserved"
     - expression: 'has(object.spec.claimRef) && object.spec.claimRef.namespace == "gtm-storage-quarantine" && object.spec.claimRef.name.matches("^quarantine-[a-f0-9]{32}$") && object.spec.claimRef.kind == "PersistentVolumeClaim" && object.spec.claimRef.apiVersion == "v1" && (!has(object.spec.claimRef.uid) || object.spec.claimRef.uid == "") && (!has(object.spec.claimRef.resourceVersion) || object.spec.claimRef.resourceVersion == "") && (!has(object.spec.claimRef.fieldPath) || object.spec.claimRef.fieldPath == "")'
+      reason: Forbidden
       message: "Only the quarantine claim reservation may be added"
     - expression: 'object.spec.capacity == oldObject.spec.capacity && object.spec.accessModes == oldObject.spec.accessModes && object.spec.persistentVolumeReclaimPolicy == oldObject.spec.persistentVolumeReclaimPolicy && object.spec.nodeAffinity == oldObject.spec.nodeAffinity && (has(object.spec.volumeMode) == has(oldObject.spec.volumeMode)) && (!has(object.spec.volumeMode) || object.spec.volumeMode == oldObject.spec.volumeMode) && (has(object.spec.mountOptions) == has(oldObject.spec.mountOptions)) && (!has(object.spec.mountOptions) || object.spec.mountOptions == oldObject.spec.mountOptions)'
       message: "Reservation must not change PV storage properties"

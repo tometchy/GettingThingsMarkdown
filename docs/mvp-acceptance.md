@@ -227,3 +227,6 @@ PR #18 was merged with CI 45966709186 failing the real kind PV binder fixture (f
 - mTLS test follow-up: strict Python 3.14 CA key usage and leaf extensions fixed; approved cert and no remote activation tests passed on intermediate CI. Unauthorized valid-cert test exposed TCP reset caused by closing with unread request body; bounded body drain before authorization denial (no parse/dispatch) and explicit HTTP error close added. Final CI required.
 
 - Moved real PV binder/admission integration to dedicated storage-controller-kind CI job, independent of .NET and tenant image builds; preserve failure diagnostics before cleanup. PR #18 and merged main had red binder checks; do not mark the fix proven until this job is green.
+
+### PR #19 follow-up (2026-11-27)
+Merged main 1231371b5581932c5985a910facaf6c6e85bd756 CI 46007938584: all jobs passed except storage-controller-kind. Diagnostic log 140535758154 proves a legitimate reservation dry-run succeeds, but deliberately forbidden dry-run returns HTTP 422 with reservation admission rejection; client only recognized 403. Accept either status ONLY with exact expected policy name/message; explicitly set admission reason Forbidden. Capacity CEL type-check warning remains to review; do not remove capacity checks. Real binder test must pass before write-mode use.
