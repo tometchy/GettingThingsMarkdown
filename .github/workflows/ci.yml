@@ -168,21 +168,26 @@ jobs:
       - name: Build only the storage controller
         run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
       - uses: helm/kind-action@v1.14.0
+        id: kind_ready
         with:
           cluster_name: gtm
           config: infrastructure/kind/config.yaml
       - uses: azure/setup-helm@v4.3.0
+        id: helm_ready
         with:
           version: v3.17.4
       - name: Load controller and create its system namespace
+        id: controller_ready
         run: |
           kind load docker-image --name gtm gtm/storage-controller:ci
           kubectl create namespace gtm-system
       - name: Verify storage controller against real Kubernetes PV binder
         run: bash tests/integration/storage-controller-kind.sh
       - name: Verify real host CRI inspection and scoped sandbox stop
+        if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
         run: python3 tests/integration/host-runtime-kind.py
       - name: Verify signed freeze admission barrier against real Kubernetes
+        if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
         run: python3 tests/integration/namespace-fence-kind.py
   infrastructure:
     runs-on: ubuntu-latest
