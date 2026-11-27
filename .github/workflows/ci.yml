@@ -52,6 +52,7 @@ jobs:
           python3 tests/integration/recovery-witness.py
           python3 tests/integration/witness-api.py
           python3 tests/integration/stage-runner.py
+          python3 tests/integration/stage-mount-guard.py
           python3 tests/integration/writer-fencing.py
           python3 tests/integration/host-runtime-fence.py
           python3 tests/integration/namespace-fence.py
