@@ -5,13 +5,12 @@ import json
 import os
 from pathlib import Path
 import secrets
-import stat
+import tempfile
 import time
 
 from recovery_crypto import sign, verify, RecoveryError
 from recovery_witness import require
 from witness_client import Client
-from git_integrity import atomic_json
 
 
 def renew(api, tenant, role, identity, epoch, key, public, output, now=None):
@@ -27,8 +26,22 @@ def renew(api, tenant, role, identity, epoch, key, public, output, now=None):
     # permit is not a secret, but role and witness private keys are.
     output=Path(output)
     require(output.parent.is_dir() and not output.parent.is_symlink(), "invalid_permit_directory")
-    atomic_json(output,result)
-    os.chmod(output,0o644)
+    # Set readable permissions before atomic publication; no transient 0600
+    # window that would unnecessarily fence the unprivileged data process.
+    with tempfile.NamedTemporaryFile(mode="w",dir=output.parent,delete=False) as tmp:
+        name=tmp.name
+        try:
+            os.fchmod(tmp.fileno(),0o644)
+            json.dump(result,tmp,separators=(",",":"))
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(name,output)
+    finally:
+        Path(name).unlink(missing_ok=True)
     return {"state":"permit_published","expiresUnix":value["expiresUnix"]}
 
 

@@ -82,7 +82,10 @@ def freeze(w, tenant, incident):
         if f["phase"] != "open":
             require(f["freeze"]["incident"] == incident, "different_freeze_active")
             return sign(f["freeze"]["challenge"], w.key)
-        require(s["repair"] is None and s["challenge"] is None, "witness_busy")
+        require(s["repair"] is None, "witness_busy")
+        # An emergency freeze supersedes a pending anchor scan; its evidence
+        # can no longer commit. Never wait 48h for an abandoned challenge.
+        s["challenge"] = None
         now = w.now()
         prior = f["epoch"]
         f["epoch"] += 1

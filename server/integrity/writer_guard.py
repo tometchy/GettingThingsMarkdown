@@ -44,6 +44,8 @@ class Guard:
                 or epoch <= 0 or seq <= 0 or not 0 < expires-issued <= MAX_TTL
                 or issued > wall+SKEW or wall >= expires-SKEW):
             raise RecoveryError("writer_permit_expired_or_invalid")
+        if self.epoch is not None and mono >= self.deadline:
+            raise RecoveryError("writer_permit_monotonic_expiry")
         # A running process never transitions to another epoch.
         if self.epoch is not None and (epoch != self.epoch or seq < self.sequence):
             raise RecoveryError("writer_permit_rollback_or_epoch_change")
@@ -94,7 +96,7 @@ def supervise(guard, permit, command, poll=1, require_pid1=True):
             if child.poll() is not None:
                 return child.returncode
             guard.check(decode(read(permit)))
-            time.sleep(poll)
+            time.sleep(min(poll,max(0,guard.deadline-guard.mono())))
         return 1
     except (RecoveryError,OSError,ValueError,TypeError) as exc:
         print(json.dumps({"event":"gtmd_writer_guard","state":"fenced",

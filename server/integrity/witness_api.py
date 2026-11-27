@@ -45,7 +45,7 @@ def dispatch(witness, data):
     if operation == "status":
         s = witness.status(tenant)
         return {"tenant": tenant, "generation": s["generation"], "revision": s["revision"],
-                "anchorDigest": s["anchorDigest"], "repair": s["repair"],
+                "anchorDigest": s["anchorDigest"], "anchor": s.get("anchor"), "repair": s["repair"],
                 "challenge": s["challenge"], "writerFence": s.get("writerFence"), "activationAllowed": False}
     if operation == "challenge":
         return witness.challenge(tenant, data["kind"], data["targetRole"], data["targetPvcUid"])

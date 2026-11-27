@@ -200,6 +200,7 @@ class Witness:
                 require_repair_frozen(s)
                 require(s["generation"] > 0 and target_role in ROLES and identifier(target_pvc), "invalid_repair_target")
             else:
+                require(s.get("writerFence") is None or s["writerFence"]["phase"] == "open", "writers_frozen")
                 require(target_role is None and target_pvc is None, "invalid_anchor_target")
             challenge = {"schema": 1, "kind": kind, "tenant": tenant, "nonce": secrets.token_hex(32),
                          "generation": s["generation"], "anchorDigest": s["anchorDigest"],
