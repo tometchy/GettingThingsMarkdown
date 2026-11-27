@@ -143,3 +143,16 @@ source must be the existing replica or a transient filesystem snapshot of
 it, not a third persistent data copy. CLI verifies read-only mount and exact
 refs; it does not mount disks or prove physical isolation. Tests use a
 stable disposable repo and real mTLS Git fetch, not a real provider mount.
+
+## Restartable orchestration
+recovery_orchestrator.py reconciles one immutable incident in the witness.
+plan-repair atomically freezes enrolled writers and pins target role, NEW
+PVC UID, anchor and generation. The orchestrator accepts fresh trusted stop
+proofs, waits for both, issues or resumes a signed source challenge, consumes
+source evidence and creates/reuses a durable staging operation. The separate
+stage runner fetches the signed ticket and submits its receipt. Later calls
+report staged_verified with cutover blockers. Pass challenge-output to write
+private challenge metadata; ordinary status logs omit refs. No automatic
+allocator/host fencing evidence collection, staging Job scheduling, live PVC
+changes, unfreeze or provider API operations. The controller is not yet wired
+to this orchestrator; run only in trusted test/orchestration environment.

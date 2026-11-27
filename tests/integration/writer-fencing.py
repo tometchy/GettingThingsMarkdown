@@ -11,6 +11,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"server/integrity"))
 import writer_fence as f
 import writer_guard as guard
 import writer_permit_agent as agent
+import recovery_orchestrator as orchestration
+import witness_api as api
 import recovery_crypto as c
 import recovery_witness as w
 
@@ -141,6 +143,36 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["state"],"permit_published")
         self.assertEqual(out.stat().st_mode&0o777,0o644)
         self.assertEqual(c.verify(json.loads(out.read_text()),self.keys["witness"][1])["identity"],IDS["sync"])
+
+    def test_orchestrator_persists_target_and_resumes(self):
+        # Reference state-machine test: real signatures, synthetic refs;
+        # full Git attestation and HTTPS fetch have separate real-Git tests.
+        ch=self.w.challenge(TENANT,"anchor")
+        refs={r:"1"*40 for r in w.REQUIRED}
+        def evidence(ch,role):
+            return c.sign({"schema":1,"kind":"replica_scan","tenant":TENANT,"role":role,
+                "cloud":role,"challengeDigest":c.digest(ch["payload"]),"refs":refs,
+                "verifiedUnix":self.now,"appendOnlyVerified":True},self.keys[role][0])
+        self.w.anchor(TENANT,evidence(ch,"sync"),evidence(ch,"history"))
+        class API:
+            def call(_,value):
+                return api.dispatch(self.w,value)
+        client=API()
+        def run(**kwargs):
+            return orchestration.reconcile(client,TENANT,"incident-2","sync","new-pvc",**kwargs)
+        self.assertEqual(run()["state"],"awaiting_writer_stop")
+        with self.assertRaises(c.RecoveryError):
+            orchestration.reconcile(client,TENANT,"incident-2","sync","other-pvc")
+        freeze=self.w.status(TENANT)["writerFence"]["freeze"]["challenge"]
+        self.now=freeze["notBeforeUnix"]
+        ch={"payload":freeze}
+        result=run(stop_proofs={role:self.stop(ch,role) for role in ("sync","history")})
+        self.assertEqual(result["state"],"awaiting_source_evidence")
+        self.assertEqual(run()["challenge"],result["challenge"])
+        result=run(evidence=evidence(result["challenge"],"history"))
+        self.assertEqual(result["state"],"awaiting_staging_worker")
+        self.assertEqual(result,run())
+        self.assertFalse(result["activationAllowed"])
 
     def test_freeze_concurrent_with_renewal_never_reopens(self):
         req=self.request()

@@ -30,13 +30,21 @@ def dispatch(witness, data):
               "retire-attempt": {"operation", "evidence"},
               "abort": {"operation"}, "writer-permit": {"role","evidence"},
               "freeze-writers": {"incident"}, "confirm-writer-stop": {"role","evidence"},
-              "cutover-status": set()}
+              "cutover-status": set(), "plan-repair": {"incident","targetRole","targetPvcUid"},
+              "resume-challenge": set()}
     require(isinstance(operation, str) and operation in fields and set(data) == base | fields[operation],
             "invalid_request_fields")
-    if operation in ("writer-permit","freeze-writers","confirm-writer-stop","cutover-status"):
+    if operation == "resume-challenge":
+        from recovery_crypto import sign
+        ch = witness.status(tenant).get("challenge")
+        require(ch is not None and witness.now() < ch["expiresUnix"], "no_active_challenge")
+        return sign(ch,witness.key)
+    if operation in ("writer-permit","freeze-writers","confirm-writer-stop","cutover-status","plan-repair"):
         import writer_fence as fence
         if operation == "writer-permit":
             return fence.permit(witness,tenant,data["role"],data["evidence"])
+        if operation == "plan-repair":
+            return fence.freeze(witness,tenant,data["incident"],data["targetRole"],data["targetPvcUid"])
         if operation == "freeze-writers":
             return fence.freeze(witness,tenant,data["incident"])
         if operation == "confirm-writer-stop":

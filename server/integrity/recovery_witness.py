@@ -197,7 +197,7 @@ class Witness:
             require(s["repair"] is None, "repair_already_active")
             if kind == "repair":
                 from writer_fence import require_repair_frozen
-                require_repair_frozen(s)
+                require_repair_frozen(s, target_role, target_pvc)
                 require(s["generation"] > 0 and target_role in ROLES and identifier(target_pvc), "invalid_repair_target")
             else:
                 require(s.get("writerFence") is None or s["writerFence"]["phase"] == "open", "writers_frozen")
@@ -249,6 +249,7 @@ class Witness:
             ch = s["challenge"]
             require(ch is not None and ch["kind"] == "repair" and s["repair"] is None, "no_repair_challenge")
             target = ch["targetRole"]
+            require_repair_frozen(s, target, ch["targetPvcUid"])
             source = "history" if target == "sync" else "sync"
             require(self.evidence(s, source, evidence) == s["refs"], "source_not_current_anchor")
             op = "repair-" + secrets.token_hex(16)

@@ -75,12 +75,19 @@ def permit(w, tenant, role, envelope):
         return result
 
 
-def freeze(w, tenant, incident):
+def freeze(w, tenant, incident, target_role=None, target_pvc=None):
     require(identifier(incident), "invalid_incident")
+    require((target_role is None and target_pvc is None) or
+            (target_role in ROLES and identifier(target_pvc)), "invalid_repair_plan")
     with w.transaction(tenant) as s:
         f = state(s)
+        plan = None if target_role is None else {"targetRole": target_role, "targetPvcUid": target_pvc,
+                   "generation": s["generation"], "anchorDigest": s["anchorDigest"]}
+        if plan is not None:
+            require(s["generation"] > 0 and target_pvc not in [v["pvcUid"] for v in f["writers"].values()],
+                    "repair_requires_new_volume_and_anchor")
         if f["phase"] != "open":
-            require(f["freeze"]["incident"] == incident, "different_freeze_active")
+            require(f["freeze"]["incident"] == incident and f["freeze"].get("plan") == plan, "different_freeze_active")
             return sign(f["freeze"]["challenge"], w.key)
         require(s["repair"] is None, "witness_busy")
         # An emergency freeze supersedes a pending anchor scan; its evidence
@@ -98,7 +105,7 @@ def freeze(w, tenant, incident):
                      "writers": f["writers"], "notBeforeUnix": deadline,
                      "issuedUnix": now}
         f["phase"] = "freezing"
-        f["freeze"] = {"incident": incident, "challenge": challenge, "proofs": {}}
+        f["freeze"] = {"incident": incident, "challenge": challenge, "proofs": {}, "plan": plan}
         return sign(challenge, w.key)
 
 
@@ -132,11 +139,18 @@ def confirm_stop(w, tenant, role, envelope):
         return {"epoch": f["epoch"], "phase": f["phase"], "activationAllowed": False}
 
 
-def require_repair_frozen(s):
+def require_repair_frozen(s, target_role=None, target_pvc=None):
     # Legacy reference staging can remain non-activating. Once enrolled,
     # no new repair challenge or ticket may bypass the writer freeze.
     if s.get("writerFence") is not None:
-        require(state(s)["phase"] == "frozen", "writers_not_confirmed_frozen")
+        f = state(s)
+        require(f["phase"] == "frozen", "writers_not_confirmed_frozen")
+        plan = f["freeze"].get("plan")
+        require(plan is not None and plan["generation"] == s["generation"]
+                and plan["anchorDigest"] == s["anchorDigest"], "frozen_repair_plan_missing")
+        if target_role is not None:
+            require(plan["targetRole"] == target_role and plan["targetPvcUid"] == target_pvc,
+                    "frozen_repair_target_mismatch")
 
 
 def cutover_status(s):
