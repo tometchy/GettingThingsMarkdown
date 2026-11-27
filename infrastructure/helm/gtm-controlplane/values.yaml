@@ -74,3 +74,10 @@ stateBackup:
     limits:
       cpu: "1"
       memory: 1536Mi
+
+# Opt-in shared storage controller. Audit-only by default, no PV write RBAC.
+storageController:
+  enabled: false
+  image: gtm/storage-controller:dev
+  inventoryConfigMap: "" # pre-created independent node/disk inventory in chart namespace
+  reserveAvailable: false # explicit opt-in; never touches bound volumes

@@ -1,0 +1,42 @@
+# Render/provision one set per real host. Names and node UID are examples.
+# Use a short-lived renewable scoped credential, not an admin kubeconfig.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-node-a
+  namespace: gtm-storage-reports
+  annotations:
+    gtmd.io/node-uid: "replace-with-real-kubernetes-node-uid"
+data:
+  report.json: "{}"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storage-node-a
+  namespace: gtm-storage-reports
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: report-storage-node-a
+  namespace: gtm-storage-reports
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [storage-node-a]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: report-storage-node-a
+  namespace: gtm-storage-reports
+subjects:
+  - kind: ServiceAccount
+    name: storage-node-a
+    namespace: gtm-storage-reports
+roleRef:
+  kind: Role
+  name: report-storage-node-a
+  apiGroup: rbac.authorization.k8s.io
