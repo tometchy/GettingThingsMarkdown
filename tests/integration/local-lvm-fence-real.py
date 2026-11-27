@@ -12,11 +12,15 @@ import sys
 import tempfile
 import time
 import uuid
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "server/integrity"), str(ROOT / "server/storage-controller")]
 import local_lvm_fence as f
 import lvm_mount_binding as binding
+import stage_mount_guard as stage_guard
+import stage_runner
+from controller import inventory as storage_inventory
 from recovery_crypto import RecoveryError, digest, sign
 
 
@@ -122,12 +126,53 @@ def main():
             def reconcile(apply):
                 return f.reconcile(backend, Cri(), Kube(), Witness(), public, cfg,
                                    cfg["machineId"], apply=apply)
+            # Real Linux mount + real LVM UUID, with the native allocator
+            # API result simulated here (actual binder is exercised in kind).
+            pv_uid, node_uid = uid(), uid()
+            stage_cfg = {"tenant":tenant,"role":"sync","incident":"ci-lvm",
+                         "machineId":cfg["machineId"],"nodeName":"ci-node",
+                         "pvName":"ci-pv","pvUid":pv_uid,"pvcUid":pvc,"mount":str(mount),
+                         **cfg["volumes"][pvc]}
+            storage = storage_inventory({"storageClasses":["repair"],"nodes":[
+                {"name":"ci-node","uid":node_uid,"hostname":"ci-host","cloud":"a",
+                 "disks":[{"id":"a"*24,"mount":str(root)}]}]})
+            pv = {"metadata":{"uid":pv_uid,"annotations":{"gtmd.io/node":"ci-node",
+                    "gtmd.io/node-uid":node_uid,"gtmd.io/disk-id":"a"*24}},
+                  "spec":{"local":{"path":str(mount)},"claimRef":{"uid":pvc},
+                          "nodeAffinity":{"required":{"nodeSelectorTerms":[{"matchExpressions":[
+                              {"key":"kubernetes.io/hostname","operator":"In","values":["ci-host"]}]}]}}},
+                  "status":{"phase":"Bound"}}
+            class StageKube:
+                def get(self,path):
+                    assert path=="/api/v1/persistentvolumes/ci-pv"
+                    return pv
+            class StageWitness:
+                def call(self,request):
+                    return {"generation":1,"writerFence":{"phase":"frozen"},
+                            "repair":{"operation":"ci-op","targetPvcUid":pvc,
+                                      "targetRole":"sync","state":"ticket_issued"}}
+            stage_identity={"tenant":tenant,"generation":1,"target_role":"sync",
+                            "target_cloud":"a","target_pvc_uid":pvc}
+            def verify_stage():
+                with patch.object(stage_guard,"inspect_allocation",return_value={
+                    "state":"allocated","targetPvcUid":pvc,"targetPV":"ci-pv","activationAllowed":False}):
+                    return stage_guard.verify_binding(StageKube(),StageWitness(),public,storage,"repair",
+                         stage_cfg,stage_identity,"ci-op",backend,cfg["machineId"])
+            actual=verify_stage()
+            assert actual["filesystem"]=="ext4"
+            assert stage_runner.validate_mount(mount,actual["device"])==mount
+            pinned=os.open(mount,os.O_RDONLY|os.O_DIRECTORY)
+            try:
+                assert run("umount",str(mount),check=False).returncode!=0
+            finally:
+                os.close(pinned)
             assert backend.inspect(cfg, pvc)["open"]
             assert binding.verify_mount(mount, backend.inspect(cfg, pvc),
                                         Path("/proc/self/mountinfo").read_text())["filesystem"] == "ext4"
             reject(lambda: reconcile(True), "lvm_volume_still_mounted_or_open")
             assert lvm_report(vg, name)["lv_attr"][1] == "w"
             run("umount", str(mount))
+            reject(verify_stage, "pvc_not_exactly_one_mount")
             reject(lambda: binding.verify_mount(mount, backend.inspect(cfg, pvc),
                         Path("/proc/self/mountinfo").read_text()), "pvc_not_exactly_one_mount")
             assert reconcile(False)["state"] == "isolation_required"
@@ -162,7 +207,7 @@ def main():
                 stream.write(b"neighbor remains writable")
                 stream.seek(0)
                 assert stream.read(25) == b"neighbor remains writable"
-            print("PASS: real LVM metadata read-only + activation skip + inactive device; mounted refusal, retry and shared-disk neighbor isolation.")
+            print("PASS: real LVM metadata read-only + activation skip + inactive device; mounted refusal, retry and shared-disk neighbor isolation; stage binding and mount pin verified.")
         finally:
             run("umount", str(mount), check=False)
             if made_vg:
