@@ -179,6 +179,57 @@ class Tests(unittest.TestCase):
         self.assertEqual(result,run())
         self.assertFalse(result["activationAllowed"])
 
+    def test_emergency_freeze_can_attach_one_target_after_capacity_returns(self):
+        anchor=self.w.challenge(TENANT,"anchor")
+        refs={r:"1"*40 for r in w.REQUIRED}
+        def scan(role):
+            return c.sign({"schema":1,"kind":"replica_scan","tenant":TENANT,"role":role,
+                "cloud":role,"challengeDigest":c.digest(anchor["payload"]),"refs":refs,
+                "verifiedUnix":self.now,"appendOnlyVerified":True},self.keys[role][0])
+        self.w.anchor(TENANT,scan("sync"),scan("history"))
+        ch=f.freeze(self.w,TENANT,"emergency")
+        self.assertIsNone(self.w.status(TENANT)["writerFence"]["freeze"]["plan"])
+        self.now=ch["payload"]["notBeforeUnix"]
+        f.confirm_stop(self.w,TENANT,"sync",self.stop(ch,"sync"))
+        self.assertEqual(f.freeze(self.w,TENANT,"emergency","sync","new-pvc"),ch)
+        self.assertEqual(f.freeze(self.w,TENANT,"emergency"),ch)
+        self.assertEqual(f.freeze(self.w,TENANT,"emergency","sync","new-pvc"),ch)
+        self.assertIn("sync",self.w.status(TENANT)["writerFence"]["freeze"]["proofs"])
+        for incident,role,pvc in [("other","sync","new-pvc"),("emergency","history","new-pvc"),
+                                  ("emergency","sync","other-pvc")]:
+            with self.assertRaises(c.RecoveryError):
+                f.freeze(self.w,TENANT,incident,role,pvc)
+
+    def test_orchestrator_collects_stop_proofs_before_allocation(self):
+        ch=self.w.challenge(TENANT,"anchor")
+        refs={r:"1"*40 for r in w.REQUIRED}
+        def evidence(role):
+            return c.sign({"schema":1,"kind":"replica_scan","tenant":TENANT,"role":role,
+                "cloud":role,"challengeDigest":c.digest(ch["payload"]),"refs":refs,
+                "verifiedUnix":self.now,"appendOnlyVerified":True},self.keys[role][0])
+        self.w.anchor(TENANT,evidence("sync"),evidence("history"))
+        class API:
+            def call(_,value):
+                return api.dispatch(self.w,value)
+        client=API()
+        frozen=f.freeze(self.w,TENANT,"pending")
+        self.now=frozen["payload"]["notBeforeUnix"]
+        allocation={"tenant":TENANT,"incident":"pending","role":"sync",
+                    "activationAllowed":False,"state":"waiting_for_capacity"}
+        def run(**kwargs):
+            return orchestration.reconcile_with_allocator(client,TENANT,"pending","sync",
+                                                           lambda:allocation,**kwargs)
+        result=run(stop_proofs={role:self.stop(frozen,role) for role in ("sync","history")})
+        self.assertEqual(result["state"],"waiting_for_capacity")
+        self.assertEqual(result["missingRoles"],[])
+        self.assertEqual(result["freezeChallenge"],frozen)
+        self.assertEqual(self.w.status(TENANT)["writerFence"]["phase"],"frozen")
+        f.freeze(self.w,TENANT,"pending","sync","new-pvc")
+        allocation.update(state="allocated",targetPvcUid="new-pvc")
+        result=run()
+        self.assertEqual(result["state"],"awaiting_source_evidence")
+        self.assertFalse(result["activationAllowed"])
+
     def test_freeze_concurrent_with_renewal_never_reopens(self):
         req=self.request()
         def call():

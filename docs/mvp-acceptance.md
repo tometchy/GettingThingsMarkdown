@@ -272,3 +272,12 @@ Merged main 1231371b5581932c5985a910facaf6c6e85bd756 CI 46007938584: all jobs pa
 
 - Initial run 46043475439: real loop-backed LVM test and safety passed; read-only metadata, skipped ordinary activation, read-only override and preserved neighboring volume verified in actual Linux. Additional pre-enrollment mount check added: exact Kubernetes binding and real mountinfo/device match, no fallback to parent filesystem; actual ext4 mount/unmount rejection test plus unit fixtures. Final CI pending.
 - PR #22 final run 46041997232: all six jobs succeeded, including Images/E2E.
+
+
+### Freeze-first repair allocation (2026-11-27)
+- PR #23 merged at faad4bf7c5368a6e21c0990a43d3aee6544e8d01; all seven jobs in run 46043818901 passed, including real LVM and Kubernetes, safety and Images/E2E.
+- Freeze immediately without target capacity; witness CAS can attach exactly one target later, preserving challenge/epoch/deadline and stop proofs. Existing orchestrator resumes emergency freezes.
+- One-shot repair_allocator.py selects best-fit pre-created static local spare in same cloud on distinct healthy node/disk, verifies old enrolled primary claim and native binding, deterministic incident claim and exact PV UID. No PV write, delete, dynamic provision, extra daemon/DB/queue or paid resource. One shared spare pool. Optional host-only recovery namespace, restricted RBAC and native admission. No live cutover.
+- Tests added for freeze-first, idempotence, lost POST response, capacity/health, overlap and substitution; real kind native binder, denied ordinary claims, pods and mutation. CI pending. Physical mounted target verification, provisioning spare slots, full sync role (including live PVC), external rollback watermark, independent retention and provider fence remain open.
+
+- Run 46048172956: safety, real LVM, infrastructure, .NET passed. The new kind fixture failed parsing a missing closing brace before reaching the API; corrected and added early compileall in safety. Integrated allocator into existing orchestrator via --allocate-development; stop proofs can be recorded while capacity is unavailable. Final integrated kind CI pending.

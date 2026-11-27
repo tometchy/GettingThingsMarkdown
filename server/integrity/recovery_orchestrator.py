@@ -21,12 +21,17 @@ def reconcile(api, tenant, incident, target_role, target_pvc, *, evidence=None, 
         return api.call({"tenant":tenant,"action":action,**fields})
     s=call("status")
     require(s.get("writerFence"), "writer_fencing_not_enrolled")
-    # Initial mutation writes target identity and freezes in one witness CAS.
-    # Every later retry must match the immutable intent.
+    # An emergency freeze may precede allocation. Attach the target once;
+    # every later retry must match the immutable incident and intent.
     if s["writerFence"]["phase"]=="open":
         call("plan-repair",incident=incident,targetRole=target_role,targetPvcUid=target_pvc)
         s=call("status")
     freeze=s["writerFence"]["freeze"]
+    if freeze.get("plan") is None:
+        require(freeze["incident"]==incident,"repair_intent_mismatch")
+        call("plan-repair",incident=incident,targetRole=target_role,targetPvcUid=target_pvc)
+        s=call("status")
+        freeze=s["writerFence"]["freeze"]
     plan=freeze.get("plan")
     require(freeze["incident"]==incident and plan and plan["targetRole"]==target_role
             and plan["targetPvcUid"]==target_pvc and plan["generation"]==s["generation"]
@@ -76,10 +81,45 @@ def reconcile(api, tenant, incident, target_role, target_pvc, *, evidence=None, 
             "targetPvcUid":target_pvc,"generation":s["generation"],"activationAllowed":False}
 
 
+def reconcile_with_allocator(api, tenant, incident, target_role, allocate, *,
+                             evidence=None, stop_proofs=None):
+    """One invocation of the existing orchestrator, no new worker or DB."""
+    allocation = allocate()
+    require(allocation.get("activationAllowed") is False
+            and allocation.get("tenant") == tenant and allocation.get("incident") == incident
+            and allocation.get("role") == target_role, "allocation_identity_mismatch")
+    if allocation["state"] == "allocated":
+        result = reconcile(api, tenant, incident, target_role, allocation["targetPvcUid"],
+                           evidence=evidence, stop_proofs=stop_proofs)
+        return {**result, "allocation": allocation}
+    require(allocation["state"] in ("waiting_for_capacity", "waiting_for_binding",
+                                    "waiting_for_anchor"), "allocation_not_ready")
+    # Stop evidence can arrive before capacity. Preserve it in the witness
+    # rather than waiting or adding another incident record.
+    def call(action, **fields):
+        return api.call({"tenant": tenant, "action": action, **fields})
+    status = call("status")
+    freeze = status["writerFence"]["freeze"]
+    require(freeze["incident"] == incident, "repair_intent_mismatch")
+    for role, proof in (stop_proofs or {}).items():
+        if role not in freeze["proofs"]:
+            call("confirm-writer-stop", role=role, evidence=proof)
+    status = call("status")
+    freeze = status["writerFence"]["freeze"]
+    return {**allocation, "missingRoles": [r for r in ROLES if r not in freeze["proofs"]],
+            "notBeforeUnix": freeze["challenge"]["notBeforeUnix"],
+            "freezeChallenge": call("resume-freeze"), "activationAllowed": False}
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    for field in ("endpoint","ca","cert","tls-key","tenant","incident","target-role","target-pvc"):
+    for field in ("endpoint","ca","cert","tls-key","tenant","incident","target-role"):
         p.add_argument("--"+field,required=True)
+    target = p.add_mutually_exclusive_group(required=True)
+    target.add_argument("--target-pvc")
+    target.add_argument("--allocate-development", action="store_true")
+    for field in ("inventory", "repair-class", "kube-endpoint", "kube-ca", "kube-token", "witness-public"):
+        p.add_argument("--"+field)
     p.add_argument("--source-evidence")
     p.add_argument("--sync-stop")
     p.add_argument("--history-stop")
@@ -90,8 +130,26 @@ def main():
         def load(path):
             return decode(read(path)) if path else None
         proofs={r:load(v) for r,v in (("sync",a.sync_stop),("history",a.history_stop)) if v}
-        result=reconcile(Client(a.endpoint,a.ca,a.cert,a.tls_key),a.tenant,a.incident,a.target_role,
-                          a.target_pvc,evidence=load(a.source_evidence),stop_proofs=proofs)
+        api = Client(a.endpoint,a.ca,a.cert,a.tls_key)
+        evidence = load(a.source_evidence)
+        if a.allocate_development:
+            from controller import inventory
+            from kube_client import Kube, ApiError
+            from repair_allocator import reconcile as allocate
+            require(all((a.inventory, a.repair_class, a.kube_endpoint, a.kube_ca,
+                         a.kube_token, a.witness_public)), "allocation_configuration_missing")
+            kube = Kube(a.kube_endpoint, a.kube_ca, a.kube_token)
+            cfg = inventory(load(a.inventory))
+            try:
+                result = reconcile_with_allocator(api, a.tenant, a.incident, a.target_role,
+                    lambda: allocate(kube, api, a.witness_public, cfg, a.repair_class,
+                                     a.tenant, a.incident, a.target_role, apply=True),
+                    evidence=evidence, stop_proofs=proofs)
+            except ApiError as exc:
+                raise RecoveryError("allocation_kubernetes_http_" + str(exc.code)) from None
+        else:
+            result=reconcile(api,a.tenant,a.incident,a.target_role,a.target_pvc,
+                             evidence=evidence,stop_proofs=proofs)
         freeze_challenge=result.pop("freezeChallenge",None)
         if freeze_challenge is not None and a.freeze_output:
             from git_integrity import atomic_json
@@ -102,7 +160,7 @@ def main():
             from git_integrity import atomic_json
             atomic_json(Path(a.challenge_output),challenge)
         print(json.dumps(result,separators=(",",":")))
-    except (RecoveryError,OSError,ValueError,KeyError,TypeError) as exc:
+    except (RecoveryError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError) as exc:
         print(json.dumps({"event":"gtmd_recovery_orchestrator","state":"blocked",
             "reason":str(exc) if isinstance(exc,RecoveryError) else type(exc).__name__}))
         return 1

@@ -37,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Compile Python host code and integration fixtures
+        run: python3 -m compileall -q server/integrity server/storage-controller tests/integration
       - name: Verify Git-only mailbox commit and failed push retry
         run: |
           python3 tests/integration/git-mail-writer.py
@@ -55,6 +57,7 @@ jobs:
           python3 tests/integration/namespace-fence.py
           python3 tests/integration/local-lvm-fence.py
           python3 tests/integration/lvm-mount-binding.py
+          python3 tests/integration/repair-allocator.py
           python3 tests/integration/recovery-source.py
           python3 tests/integration/recovery-binding.py
           python3 tests/integration/history-purge-candidate.py
@@ -202,6 +205,9 @@ jobs:
       - name: Verify signed freeze admission barrier against real Kubernetes
         if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
         run: python3 tests/integration/namespace-fence-kind.py
+      - name: Verify native static repair allocation against real Kubernetes
+        if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
+        run: python3 tests/integration/repair-allocator-kind.py
   infrastructure:
     runs-on: ubuntu-latest
     steps:
