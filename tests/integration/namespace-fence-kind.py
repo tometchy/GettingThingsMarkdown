@@ -15,8 +15,8 @@ import namespace_fence as f
 import recovery_witness as w
 import writer_fence
 import witness_api
-from recovery_crypto import RecoveryError
-from kube_client import Kube
+from recovery_crypto import RecoveryError, digest
+from kube_client import Kube, ApiError
 
 POLICIES = ["gtmd-writer-freeze-marker", "gtmd-frozen-namespace-no-writers"]
 
@@ -144,9 +144,15 @@ def main():
                 first = f.reconcile(api, Client(), pub, cfg, apply=True)
                 assert first["state"] == "marker_present"
                 assert first == f.reconcile(api, Client(), pub, cfg, apply=True)
-            except RecoveryError:
-                # Show type-check warnings on real API; never fall back to
-                # bypassing the policy or granting broader permissions.
+            except (RecoveryError, ApiError):
+                # Disposable fixture only: include the server's exact CEL
+                # rejection for the valid CAS patch, without printing tokens.
+                current = get("get", "namespace", ns)["metadata"]
+                signed = witness_api.dispatch(witness, {"tenant": ns, "action": "resume-freeze"})
+                diagnostic = k("--as=" + actor, "patch", "namespace", ns, "--type=json",
+                               "--dry-run=server", "-p", json.dumps(f.patch_marker(current, digest(signed["payload"]))),
+                               check=False)
+                print("Valid marker dry-run diagnostics:", diagnostic.stderr.decode())
                 print(k("get", "validatingadmissionpolicy", *POLICIES, "-o", "yaml").stdout.decode())
                 raise
         reason = "GTMD tenant namespace is frozen; writer admission denied"
