@@ -74,3 +74,36 @@ tests:
         exp_alerts:
           - exp_labels: {job: node, instance: stale, disk: d1, severity: critical}
             exp_annotations: {summary: "GTMD individual disk check overdue"}
+  - interval: 30s
+    input_series:
+      - series: 'up{job="gtmd-git-integrity",instance="lost"}'
+        values: '0+0x12'
+      - series: 'up{job="gtmd-git-integrity",instance="missing"}'
+        values: '1+0x12'
+      - series: 'gtmd_git_integrity_health{job="gtmd-git-integrity",instance="critical",severity="critical"}'
+        values: '1+0x12'
+      - series: 'gtmd_git_integrity_health{job="gtmd-git-integrity",instance="warning",severity="warning"}'
+        values: '1+0x12'
+      - series: 'gtmd_git_integrity_health{job="gtmd-git-integrity",instance="healthy",severity="critical"}'
+        values: '0+0x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: GTMDGitIntegrityEndpointDown
+        exp_alerts:
+          - exp_labels: {job: gtmd-git-integrity, instance: lost, severity: critical}
+            exp_annotations: {summary: "GTMD repository integrity metrics endpoint unavailable"}
+      - eval_time: 6m
+        alertname: GTMDGitIntegrityMetricsMissing
+        exp_alerts:
+          - exp_labels: {job: gtmd-git-integrity, instance: missing, severity: critical}
+            exp_annotations: {summary: "GTMD repository integrity telemetry missing"}
+      - eval_time: 6m
+        alertname: GTMDGitIntegrityCritical
+        exp_alerts:
+          - exp_labels: {job: gtmd-git-integrity, instance: critical, severity: critical}
+            exp_annotations: {summary: "GTMD local Git verification failed, missing or overdue"}
+      - eval_time: 6m
+        alertname: GTMDGitIntegrityWarning
+        exp_alerts:
+          - exp_labels: {job: gtmd-git-integrity, instance: warning, severity: warning}
+            exp_annotations: {summary: "GTMD local Git verification incomplete or overdue"}
