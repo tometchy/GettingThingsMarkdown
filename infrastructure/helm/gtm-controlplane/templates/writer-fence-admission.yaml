@@ -24,19 +24,21 @@ spec:
       expression: 'oldObject != null && has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {}'
     - name: after
       expression: 'object != null && has(object.metadata.annotations) ? object.metadata.annotations : {}'
+    - name: subresource
+      expression: 'has(request.subResource) ? request.subResource : ""'
     - name: actor
       expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:" + (request.operation == "DELETE" ? oldObject.metadata.name : object.metadata.name) + "-fence"'
   validations:
-    - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && request.subResource != "finalize" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
+    - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && variables.subresource != "finalize" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
       message: "GTMD frozen namespace marker is immutable; deletion and finalization are denied"
       reason: Forbidden
     - expression: '!(variables.key in variables.after) || variables.after[variables.key].matches("^[a-f0-9]{64}$")'
       message: "GTMD freeze marker must be a SHA-256 digest"
       reason: Forbidden
-    - expression: '!(variables.key in variables.after) || variables.key in variables.before || (request.operation == "UPDATE" && request.subResource == "" && variables.actor)'
+    - expression: '!(variables.key in variables.after) || variables.key in variables.before || (request.operation == "UPDATE" && variables.subresource == "" && variables.actor)'
       message: "GTMD freeze marker may only be installed by the dedicated actor"
       reason: Forbidden
-    - expression: '!variables.actor || (request.operation == "UPDATE" && request.subResource == "" && variables.key in variables.after && object.spec == oldObject.spec && object.status == oldObject.status && (has(object.metadata.labels) == has(oldObject.metadata.labels)) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && (has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && (has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && variables.before.all(k, k == variables.key || (k in variables.after && variables.before[k] == variables.after[k])) && variables.after.all(k, k == variables.key || (k in variables.before && variables.before[k] == variables.after[k])))'
+    - expression: '!variables.actor || (request.operation == "UPDATE" && variables.subresource == "" && variables.key in variables.after && object.spec == oldObject.spec && object.status == oldObject.status && (has(object.metadata.labels) == has(oldObject.metadata.labels)) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && (has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && (has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && variables.before.all(k, k == variables.key || (k in variables.after && variables.before[k] == variables.after[k])) && variables.after.all(k, k == variables.key || (k in variables.before && variables.before[k] == variables.after[k])))'
       message: "GTMD freeze actor may only add the immutable freeze marker"
       reason: Forbidden
 ---
