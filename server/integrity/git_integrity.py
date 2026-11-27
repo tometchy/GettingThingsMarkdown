@@ -25,7 +25,7 @@ class IntegrityError(Exception):
     pass
 
 
-def git(repo, *args, timeout=DAY, capture=False):
+def git(repo, *args, timeout=DAY, capture=False, output=None):
     # Do not inherit repository/index/alternate overrides from callers.
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("GIT_") or k in (
@@ -42,7 +42,7 @@ def git(repo, *args, timeout=DAY, capture=False):
     try:
         result = subprocess.run(command + list(args), env=env,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture else output if output is not None else subprocess.DEVNULL,
             timeout=timeout, check=True)
     except (subprocess.SubprocessError, OSError) as exc:
         # Do not expose Git diagnostics (paths, refs, credentials) to logs.

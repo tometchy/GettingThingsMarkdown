@@ -91,3 +91,17 @@ If the policy is missing, the response is ambiguous or the PV has raced a
 binder, no real mutation is attempted and observability reports manual review.
 The real reservation retains its CAS. This is a runtime guard, not a guarantee
 against a cluster administrator removing the policy between requests.
+
+## Working-tree verification
+
+Sync image includes worktree_integrity.py. It requires a consistent offline
+snapshot or independently fenced directory and the expected main OID from
+the trusted coordinator. It streams NUL-delimited Git tree entries into a
+private temporary SQLite index (only ephemeral path metadata), hashes the
+actual ciphertext file bytes with Git's blob format, detects missing, extra,
+changed or nonregular entries, and validates all Git refs/objects. No path
+names are logged. It intentionally refuses unknown extra files including
+Syncthing technical files; a future snapshot/provisioner must explicitly
+validate those before excluding them. It never resets a live working tree or
+mistakes uncommitted user changes for permission to repair. Integrating it
+with continuous scheduling and stable snapshots remains a release blocker.
