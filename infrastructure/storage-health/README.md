@@ -50,7 +50,7 @@ hardware ticket adapter. If config becomes invalid, metrics become explicitly
 unknown; the old private JSON is retained only as historical diagnostic data,
 not current authorization. Do not act on it without fresh successful telemetry.
 
-CI validates Python fixtures and Prometheus rule behavior with promtool. Pending: independent Git scan metrics and working-tree/physical scrub,
+CI validates Python fixtures and Prometheus rule behavior with promtool. Both tenant images now also expose a minimal private port 8390 /metrics endpoint for local Git status, including independent scrape and stale/failure alert rules. Tenant NetworkPolicies allow only the gtm-monitoring namespace AND app=gtm-prometheus pod label to scrape this port, no public Service. See git-scrape-example.yaml. Actual Prometheus deployment, CNI NetworkPolicy enforcement, dedicated scraper RBAC and expected-tenant inventory reconciliation remain pending; dynamic pod discovery alone cannot detect a fully deleted target. Local Git health is not cross-cloud agreement or physical disk scrub. Pending: working-tree/physical scrub,
 kernel journal I/O error events, persistent expected node+PV mapping, operator
 quarantine/fencing, source authentication and automatic volume rebuild,
 provider ticket submission, failover and real hardware/throughput validation.

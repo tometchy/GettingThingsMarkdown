@@ -6,6 +6,8 @@ cross-cloud agreement, or immutable retention. No live cutover is performed.
 """
 import argparse
 import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import math
 import json
 import os
 from pathlib import Path
@@ -233,6 +235,50 @@ def status_health(path, now=None, scan_timeout=DAY, interval=300):
         return "critical", "status_missing_or_invalid"
 
 
+def metrics_text(path):
+    """Minimal private metrics, no refs, paths, tenant content or error details."""
+    severity, _ = status_health(path)
+    last = 0
+    try:
+        value = json.loads(Path(path).read_text()).get("lastSuccessfulUnix")
+        if type(value) in (int, float) and math.isfinite(value) and 0 < value <= time.time():
+            last = value
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    lines = ["# TYPE gtmd_git_integrity_health gauge"]
+    for level in ("info", "warning", "critical"):
+        lines.append(f'gtmd_git_integrity_health{{severity="{level}"}} {int(level == severity)}')
+    lines.extend(["# TYPE gtmd_git_integrity_last_success_unixtime gauge",
+                  f"gtmd_git_integrity_last_success_unixtime {last:.3f}"])
+    return "\n".join(lines) + "\n"
+
+
+def serve_metrics(path, port):
+    class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            self.request.settimeout(3)
+            super().setup()
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path != "/metrics":
+                self.send_error(404)
+                return
+            payload = metrics_text(path).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    # Only reachable from private monitoring peers via tenant NetworkPolicy.
+    # No credentials or mutation endpoints; bounded single-connection handler.
+    with HTTPServer(("0.0.0.0", port), Handler) as http:
+        http.serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -249,6 +295,9 @@ def main():
     p = sub.add_parser("watchdog")
     p.add_argument("status")
     p.add_argument("--role", choices=("sync", "history"), required=True)
+    p = sub.add_parser("metrics")
+    p.add_argument("status")
+    p.add_argument("--port", type=int, default=8390)
     p = sub.add_parser("stage-rebuild")
     p.add_argument("source")
     p.add_argument("destination")
@@ -264,6 +313,8 @@ def main():
             while True:
                 cycle(args.repo, args.status, args.role, args.timeout)
                 time.sleep(args.interval)
+        elif args.action == "metrics":
+            serve_metrics(args.status, args.port)
         elif args.action == "watchdog":
             # Separate process from the scanner; reports stalled/missing state.
             # Cluster-level monitoring must still detect a missing entire pod.

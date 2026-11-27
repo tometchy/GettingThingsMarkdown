@@ -48,6 +48,7 @@ fi
 # The worker does not authorize failover or destructive repair.
 python3 /usr/local/bin/git_integrity.py watch /data/git /data/integrity.json --role sync &
 python3 /usr/local/bin/git_integrity.py watchdog /data/integrity.json --role sync &
+python3 /usr/local/bin/git_integrity.py metrics /data/integrity.json &
 # Already encrypted mail has a separate Git branch, never native receiveencrypted bytes.
 python3 /usr/local/bin/mail-files.py &
 if [ "${GTM_GIT_LFS_ENABLED:-false}" = "true" ]; then

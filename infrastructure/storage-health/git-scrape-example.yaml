@@ -1,0 +1,22 @@
+# Fragment for private Prometheus configuration, NOT a deployable standalone file.
+# Use a dedicated SA with read-only list/watch/get pods only, no secrets/exec.
+# The scraper must run in namespace gtm-monitoring with pod label app=gtm-prometheus.
+- job_name: gtmd-git-integrity
+  scrape_interval: 30s
+  scrape_timeout: 5s
+  kubernetes_sd_configs:
+    - role: pod
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      regex: integrity
+      action: keep
+    - source_labels: [__meta_kubernetes_pod_label_gtm_io_role]
+      regex: sync|history
+      action: keep
+    - source_labels: [__meta_kubernetes_pod_label_gtm_io_tenant]
+      regex: .+
+      action: keep
+    - source_labels: [__meta_kubernetes_pod_label_gtm_io_tenant]
+      target_label: tenant
+    - source_labels: [__meta_kubernetes_pod_label_gtm_io_role]
+      target_label: replica

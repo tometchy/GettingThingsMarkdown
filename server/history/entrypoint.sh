@@ -66,5 +66,6 @@ if [ "${GTM_WORM_BACKUP_ENABLED:-false}" = "true" ]; then
 fi
 python3 /usr/local/bin/git_integrity.py watch "$REPO" /var/lib/gitea/integrity.json --role history &
 python3 /usr/local/bin/git_integrity.py watchdog /var/lib/gitea/integrity.json --role history &
+python3 /usr/local/bin/git_integrity.py metrics /var/lib/gitea/integrity.json &
 echo 'Gitea archive initialized. Waiting for server.'
 wait "$server_pid"

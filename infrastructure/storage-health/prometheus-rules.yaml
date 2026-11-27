@@ -55,3 +55,31 @@ groups:
           severity: warning
         annotations:
           summary: "GTMD disk interface CRC errors increasing; check cabling/controller"
+      - alert: GTMDGitIntegrityEndpointDown
+        expr: up{job="gtmd-git-integrity"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD repository integrity metrics endpoint unavailable"
+      - alert: GTMDGitIntegrityMetricsMissing
+        expr: (up{job="gtmd-git-integrity"} == 1) unless on(job,instance) gtmd_git_integrity_health{severity="critical"}
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD repository integrity telemetry missing"
+      - alert: GTMDGitIntegrityCritical
+        expr: gtmd_git_integrity_health{severity="critical"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD local Git verification failed, missing or overdue"
+      - alert: GTMDGitIntegrityWarning
+        expr: gtmd_git_integrity_health{severity="warning"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD local Git verification incomplete or overdue"

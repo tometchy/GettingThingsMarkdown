@@ -193,3 +193,5 @@ Requirements: MVP-SPECIFICATION.md §17.1. Plan only; not implemented or tested 
 - Host service intentionally not deployed as a privileged tenant DaemonSet; SMART requires host privileges. Still open: real node_exporter wiring and expected-node disappearance, kernel logs, mapping disks→PV, automated quarantine and rebuild, physical uncached Git scrub, provider tickets, independent retention and quorum. No automatic repair claim. See infrastructure/storage-health/README.md.
 
 - Added optional temperature telemetry and increasing interface CRC alert, explicit failing SMART status even when other commands fail, and executable promtool rule fixtures for missing/stale/unknown/degraded/failed hardware. No claim of a running production monitoring stack.
+
+- Added minimal private local Git health metrics endpoint in both existing containers and tenant NetworkPolicy ingress restricted to the dedicated monitoring namespace/pod label; scrape configuration example and alert rules, no public Service or content. No actual monitoring cluster deployment; expected-tenant target disappearance and real CNI enforcement need tests, as does physical scrub.

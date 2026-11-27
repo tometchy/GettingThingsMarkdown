@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 spec = importlib.util.spec_from_file_location("git_integrity",
@@ -149,6 +150,19 @@ class IntegrityTests(unittest.TestCase):
         p.write_text(str(self.repo / "objects"))
         with self.assertRaises(integrity.IntegrityError):
             integrity.scan(self.repo)
+
+    def test_private_metrics(self):
+        status = self.root / "status.json"
+        self.assertIn('severity="critical"} 1', integrity.metrics_text(status))
+        now = time.time()
+        integrity.atomic_json(status, {"state": "verified", "lastSuccessfulUnix": now - 60,
+                                      "updatedUnix": now - 60, "secret": "DO_NOT_EXPORT"})
+        text = integrity.metrics_text(status)
+        self.assertIn('severity="info"} 1', text)
+        self.assertNotIn("DO_NOT_EXPORT", text)
+        integrity.atomic_json(status, {"state": "scanning", "lastSuccessfulUnix": now - 90000,
+                                      "updatedUnix": now - 100})
+        self.assertIn('severity="warning"} 1', integrity.metrics_text(status))
 
     def test_good_status_does_not_leak_refs(self):
         status = self.root / "status.json"
