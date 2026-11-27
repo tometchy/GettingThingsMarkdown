@@ -18,7 +18,6 @@ import witness_api
 from recovery_crypto import RecoveryError
 from kube_client import Kube
 
-ACTOR = "system:serviceaccount:gtm-system:gtm-writer-fence"
 POLICIES = ["gtmd-writer-freeze-marker", "gtmd-frozen-namespace-no-writers"]
 
 
@@ -71,7 +70,8 @@ def keypair(root, name):
 
 def main():
     ns, other = ["gtm-" + uuid.uuid4().hex for _ in range(2)]
-    role = "ci-fence-" + uuid.uuid4().hex[:12]
+    role = ns + "-fence"
+    actor = "system:serviceaccount:gtm-system:" + role
     try:
         rendered = run("helm", "template", "gtm", str(ROOT / "infrastructure/helm/gtm-controlplane"),
                        "--show-only", "templates/writer-fence-admission.yaml",
@@ -79,15 +79,12 @@ def main():
         k("apply", "-f", "-", data=rendered)
         for n in (ns, other):
             k("create", "namespace", n)
-        k("create", "clusterrole", role, "--verb=get,patch", "--resource=namespaces",
-          "--resource-name=" + ns)
-        k("create", "clusterrolebinding", role, "--clusterrole=" + role,
-          "--serviceaccount=gtm-system:gtm-writer-fence")
-        assert k("auth", "can-i", "patch", "namespace/" + other, "--as=" + ACTOR,
+        k("apply", "-f", "-", data=json.dumps(f.actor_manifest(ns)).encode())
+        assert k("auth", "can-i", "patch", "namespace/" + other, "--as=" + actor,
                  check=False).stdout.strip() == b"no"
         assert k("auth", "can-i", "patch", "validatingadmissionpolicy/" + POLICIES[0],
-                 "--as=" + ACTOR, check=False).stdout.strip() == b"no"
-        assert k("auth", "can-i", "delete", "pod", "-n", ns, "--as=" + ACTOR,
+                 "--as=" + actor, check=False).stdout.strip() == b"no"
+        assert k("auth", "can-i", "delete", "pod", "-n", ns, "--as=" + actor,
                  check=False).stdout.strip() == b"no"
         node = get("get", "nodes")["items"][0]
         node_name = node["metadata"]["name"]
@@ -140,7 +137,7 @@ def main():
             cluster = kubeconfig["clusters"][0]["cluster"]
             ca, token = root / "ca", root / "token"
             ca.write_bytes(base64.b64decode(cluster["certificate-authority-data"]))
-            token.write_bytes(k("-n", "gtm-system", "create", "token", "gtm-writer-fence",
+            token.write_bytes(k("-n", "gtm-system", "create", "token", role,
                                 "--duration=10m").stdout)
             api = Kube(cluster["server"], str(ca), str(token))
             try:
@@ -165,7 +162,7 @@ def main():
         denied(["create", "--dry-run=server", "-f", "-"], reason, json.dumps(new_pvc).encode())
         denied(["annotate", "ns", ns, f.MARKER + "-", "--dry-run=server"],
                "GTMD frozen namespace marker is immutable")
-        denied(["--as=" + ACTOR, "annotate", "ns", ns, "unexpected=yes", "--dry-run=server"],
+        denied(["--as=" + actor, "annotate", "ns", ns, "unexpected=yes", "--dry-run=server"],
                "GTMD freeze actor may only add the immutable freeze marker")
         denied(["delete", "ns", ns, "--dry-run=server"], "GTMD frozen namespace marker is immutable")
         # Actual StatefulSet replacement attempt after removing the old pod.
@@ -189,6 +186,7 @@ def main():
         k("delete", "validatingadmissionpolicy", *POLICIES, "--ignore-not-found", check=False)
         k("delete", "clusterrolebinding", role, "--ignore-not-found", check=False)
         k("delete", "clusterrole", role, "--ignore-not-found", check=False)
+        k("-n", "gtm-system", "delete", "serviceaccount", role, "--ignore-not-found", check=False)
         k("delete", "ns", ns, other, "--ignore-not-found", "--wait=false", check=False)
 
 
