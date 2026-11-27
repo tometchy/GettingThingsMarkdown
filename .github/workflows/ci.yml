@@ -53,6 +53,8 @@ jobs:
           python3 tests/integration/witness-api.py
           python3 tests/integration/stage-runner.py
           python3 tests/integration/stage-mount-guard.py
+          python3 tests/integration/sync-startup-record.py
+          sudo python3 tests/integration/sync-startup-record.py
           python3 tests/integration/writer-fencing.py
           python3 tests/integration/host-runtime-fence.py
           python3 tests/integration/namespace-fence.py
@@ -108,6 +110,15 @@ jobs:
         run: docker build -f server/history/Dockerfile -t gtm/history:ci .
       - name: Verify encrypted Syncthing identity backup and restore
         run: bash tests/integration/identity-backup.sh
+      - name: Verify strict Sync entrypoint cannot bootstrap missing state
+        run: |
+          root=$(mktemp -d)
+          chmod 0777 "$root"
+          if docker run --rm --network none -v "$root:/data" -e GTM_WRITER_FENCE_MODE=required -e GTM_RECOVERY_LAYOUT=git-only -e GTM_SYNCTHING_API_KEY=test -e GTM_GIT_URL=https://invalid.example/git -e GTM_GIT_PASSWORD=test --entrypoint sh gtm/sync:ci /usr/local/bin/entrypoint.sh; then
+            echo "Strict startup unexpectedly succeeded" >&2; exit 1
+          fi
+          test -z "$(ls -A "$root")"
+          rmdir "$root"
       - name: Verify offline Sync state with real Syncthing and age
         run: docker run --rm --network none -v "$PWD:/src:ro" --entrypoint python3 gtm/sync:ci -B /src/tests/integration/sync-state-real.py
       - name: Prove full Git restoration in both directions (without LFS)
