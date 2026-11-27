@@ -79,7 +79,7 @@ def main():
         # Exercise actual CRI stop only for this disposable enrolled sandbox.
         stopped = before["exact"]
         for sandbox in stopped:
-            run("docker", "exec", node, "crictl", "stopp", sandbox)
+            run("docker", "exec", node, "crictl", "--timeout", "15s", "stopp", sandbox)
         # Kubelet may recreate a sandbox; never interpret this as fencing.
         pods, containers = cri()
         for p in pods:
