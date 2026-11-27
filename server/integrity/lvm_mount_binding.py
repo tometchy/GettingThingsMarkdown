@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 
 from recovery_crypto import RecoveryError, decode, read
 from recovery_witness import require
@@ -162,7 +163,7 @@ def main():
                          Path("/etc/machine-id").read_text().strip())
         print(json.dumps(result, separators=(",", ":")))
     except (RecoveryError, ApiError, OSError, ValueError, TypeError, KeyError, AttributeError,
-            RuntimeError) as exc:
+            RuntimeError, subprocess.SubprocessError) as exc:
         print(json.dumps({"state": "blocked", "reason": str(exc) if isinstance(exc, RecoveryError)
                           else type(exc).__name__, "enrollmentAuthorized": False,
                           "activationAllowed": False}))
