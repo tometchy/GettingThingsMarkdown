@@ -42,6 +42,7 @@ jobs:
           python3 tests/integration/git-mail-writer.py
           python3 tests/integration/storage-budget.py
           python3 tests/integration/logical-history.py
+          python3 tests/integration/git-integrity.py
           python3 tests/integration/history-purge-candidate.py
       - name: Build and test independent encrypted Control Plane backup
         run: |
