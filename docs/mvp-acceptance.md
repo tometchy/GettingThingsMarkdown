@@ -225,3 +225,5 @@ PR #18 was merged with CI 45966709186 failing the real kind PV binder fixture (f
 - Optional consensus backend: etcd v3 linearizable range + mod_revision CAS for signed metadata; 3 voting members intended across A/B/witness, mTLS required in production, no blind mutation replay on ambiguous timeout. Disposable real etcd three-member CI fixture races transitions, removes majority and restores. No deployed cluster, no full-cluster-rollback protection or actual writer fencing yet.
 
 - mTLS test follow-up: strict Python 3.14 CA key usage and leaf extensions fixed; approved cert and no remote activation tests passed on intermediate CI. Unauthorized valid-cert test exposed TCP reset caused by closing with unread request body; bounded body drain before authorization denial (no parse/dispatch) and explicit HTTP error close added. Final CI required.
+
+- Moved real PV binder/admission integration to dedicated storage-controller-kind CI job, independent of .NET and tenant image builds; preserve failure diagnostics before cleanup. PR #18 and merged main had red binder checks; do not mark the fix proven until this job is green.

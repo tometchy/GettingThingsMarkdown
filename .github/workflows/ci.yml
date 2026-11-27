@@ -76,8 +76,6 @@ jobs:
         run: bash tests/security/worm-fail-closed.sh
       - name: Build independent witness image
         run: docker build -f server/recovery-witness/Dockerfile -t gtm/recovery-witness:ci .
-      - name: Build shared storage controller image
-        run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
       - name: Build Control Plane image
         run: docker build -f src/ControlPlane/Dockerfile -t gtm/controlplane:ci .
       - name: Build standalone shared SMTP gateway image
@@ -97,12 +95,9 @@ jobs:
         with:
           cluster_name: gtm
           config: infrastructure/kind/config.yaml
-      - uses: azure/setup-helm@v4.3.0
-        with:
-          version: v3.17.4
       - name: Load real images and start API
         run: |
-          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci gtm/storage-controller:ci
+          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci
           docker tag gtm/controlplane:ci gtm/controlplane:dev
           docker tag gtm/sync:ci gtm/sync:dev
           docker tag gtm/history:ci gtm/history:dev
@@ -113,8 +108,6 @@ jobs:
             --from-literal=jwt="$(openssl rand -hex 32)" \
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
-      - name: Verify storage controller against real Kubernetes PV binder
-        run: bash tests/integration/storage-controller-kind.sh
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &
@@ -162,6 +155,26 @@ jobs:
             kubectl -n "$ns" logs sync-0 --tail=60 || true
             kubectl -n "$ns" logs history-0 --tail=60 || true
           done
+  storage-controller-kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build only the storage controller
+        run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
+      - uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: gtm
+          config: infrastructure/kind/config.yaml
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.17.4
+      - name: Load controller and create its system namespace
+        run: |
+          kind load docker-image --name gtm gtm/storage-controller:ci
+          kubectl create namespace gtm-system
+      - name: Verify storage controller against real Kubernetes PV binder
+        run: bash tests/integration/storage-controller-kind.sh
   infrastructure:
     runs-on: ubuntu-latest
     steps:
