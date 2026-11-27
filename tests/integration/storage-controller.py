@@ -150,6 +150,16 @@ class Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 p.publish(self.api, path, "n1", "wrong-uid", NOW)
 
+    def test_controller_metrics_fail_closed(self):
+        s = c.Status()
+        self.assertIn("gtmd_storage_controller_ok 0", s.text(NOW))
+        s.value = {"updatedUnix": NOW-1, "boundRepairs": 2, "unhealthyDisks": 1}
+        self.assertIn("gtmd_storage_controller_ok 1", s.text(NOW))
+        self.assertIn("gtmd_storage_controller_bound_repairs 2", s.text(NOW))
+        self.assertIn("gtmd_storage_controller_ok 0", s.text(NOW+301))
+        s.value["state"] = "failed"
+        self.assertIn("gtmd_storage_controller_ok 0", s.text(NOW))
+
     def test_reserved_pv_never_auto_released(self):
         self.api.pvs[0]["spec"]["claimRef"] = {"namespace": c.RESERVATION_NAMESPACE,
                                                "name": "quarantine-test"}

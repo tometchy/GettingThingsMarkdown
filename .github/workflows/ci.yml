@@ -89,9 +89,12 @@ jobs:
         with:
           cluster_name: gtm
           config: infrastructure/kind/config.yaml
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.17.4
       - name: Load real images and start API
         run: |
-          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci
+          kind load docker-image --name gtm gtm/controlplane:ci gtm/sync:ci gtm/history:ci gtm/mail-ingress:ci gtm/storage-controller:ci
           docker tag gtm/controlplane:ci gtm/controlplane:dev
           docker tag gtm/sync:ci gtm/sync:dev
           docker tag gtm/history:ci gtm/history:dev
@@ -102,6 +105,8 @@ jobs:
             --from-literal=jwt="$(openssl rand -hex 32)" \
             --from-literal=admin="$(openssl rand -hex 32)"
           kubectl -n gtm-system rollout status deployment/controlplane --timeout=300s
+      - name: Verify storage controller against real Kubernetes PV binder
+        run: bash tests/integration/storage-controller-kind.sh
       - name: Run real two-tenant provisioning smoke test
         run: |
           kubectl -n gtm-system port-forward service/controlplane 5080:8080 >/tmp/gtm-forward.log 2>&1 &

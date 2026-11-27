@@ -107,3 +107,40 @@ tests:
         exp_alerts:
           - exp_labels: {job: gtmd-git-integrity, instance: warning, severity: warning}
             exp_annotations: {summary: "GTMD local Git verification incomplete or overdue"}
+  - interval: 30s
+    input_series:
+      - series: 'up{job="gtmd-storage-controller",instance="lost"}'
+        values: '0+0x12'
+      - series: 'up{job="gtmd-storage-controller",instance="missing"}'
+        values: '1+0x12'
+      - series: 'up{job="gtmd-storage-controller",instance="working"}'
+        values: '1+0x12'
+      - series: 'gtmd_storage_controller_ok{job="gtmd-storage-controller",instance="working"}'
+        values: '0+0x12'
+      - series: 'gtmd_storage_controller_bound_repairs{job="gtmd-storage-controller",instance="working"}'
+        values: '2+0x12'
+      - series: 'gtmd_storage_controller_manual_review{job="gtmd-storage-controller",instance="working"}'
+        values: '1+0x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: GTMDStorageControllerUnavailable
+        exp_alerts:
+          - exp_labels: {job: gtmd-storage-controller, instance: lost, severity: critical}
+            exp_annotations: {summary: "GTMD shared storage controller unavailable"}
+      - eval_time: 6m
+        alertname: GTMDStorageControllerFailed
+        exp_alerts:
+          - exp_labels: {job: gtmd-storage-controller, instance: missing, severity: critical}
+            exp_annotations: {summary: "GTMD storage controller reconciliation failed or stale"}
+          - exp_labels: {job: gtmd-storage-controller, instance: working, severity: critical}
+            exp_annotations: {summary: "GTMD storage controller reconciliation failed or stale"}
+      - eval_time: 6m
+        alertname: GTMDStorageBoundRepairRequired
+        exp_alerts:
+          - exp_labels: {job: gtmd-storage-controller, instance: working, severity: critical}
+            exp_annotations: {summary: "GTMD bound tenant volumes require verified recovery"}
+      - eval_time: 6m
+        alertname: GTMDStorageReservationReview
+        exp_alerts:
+          - exp_labels: {job: gtmd-storage-controller, instance: working, severity: warning}
+            exp_annotations: {summary: "GTMD storage reservations require review"}

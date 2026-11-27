@@ -132,17 +132,23 @@ def stage_rebuild(source, destination, expected, timeout=DAY):
     protocol. All retained objects must be rooted by protected refs before
     a future coordinator may authorize cutover.
     """
+    started = time.monotonic()
+    def remaining():
+        budget = timeout - (time.monotonic() - started)
+        if budget <= 0:
+            raise IntegrityError("rebuild_timeout")
+        return budget
     dest = Path(destination).absolute()
     # mkdir with exist_ok=False refuses existing data, including symlinks.
     dest.mkdir(mode=0o700)
     fmt = "sha256" if len(next(iter(expected.values()))) == 64 else "sha1"
-    git(None, "init", "--bare", "--object-format=" + fmt, str(dest), timeout=60)
+    git(None, "init", "--bare", "--object-format=" + fmt, str(dest), timeout=min(60, remaining()))
     # Fetch via upload-pack, even for a local source; no hardlinks/alternates.
     # Exact wildcard preserves branches, tags and protected refs.
     git(dest, "-c", "fetch.fsckObjects=true", "fetch", "--no-tags", "--",
-        source, "+refs/*:refs/*", timeout=timeout)
-    git(dest, "symbolic-ref", "HEAD", "refs/heads/main", timeout=60)
-    return scan(dest, expected, timeout=timeout)
+        source, "+refs/*:refs/*", timeout=remaining())
+    git(dest, "symbolic-ref", "HEAD", "refs/heads/main", timeout=min(60, remaining()))
+    return scan(dest, expected, timeout=remaining())
 
 
 def atomic_json(path, value):

@@ -49,6 +49,8 @@ def verify_ticket(ticket_path, sig_path, public_key, *, tenant, generation,
     raw = bounded(ticket_path, MAX_TICKET)
     sig = bounded(sig_path, 1024)
     key = bounded(public_key, 4096)
+    if len(sig) != 64:
+        raise IntegrityError("ticket_signature_invalid")
     # Verify the exact bytes parsed below; don't verify one file and later
     # reread potentially changed bytes. Pinned key comes from separate trust.
     with tempfile.TemporaryDirectory() as root:
@@ -56,6 +58,12 @@ def verify_ticket(ticket_path, sig_path, public_key, *, tenant, generation,
         for n, data in (("ticket", raw), ("signature", sig), ("key", key)):
             (root / n).write_bytes(data)
         try:
+            der = subprocess.check_output(["openssl", "pkey", "-pubin", "-in",
+                                           str(root / "key"), "-outform", "DER"],
+                                          timeout=30, stderr=subprocess.DEVNULL)
+            # RFC 8410 Ed25519 SubjectPublicKeyInfo: fixed OID and 32-byte key.
+            if len(der) != 44 or not der.startswith(bytes.fromhex("302a300506032b6570032100")):
+                raise IntegrityError("ticket_key_not_ed25519")
             subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin",
                             "-inkey", str(root / "key"), "-rawin", "-in", str(root / "ticket"),
                             "-sigfile", str(root / "signature")],
@@ -64,7 +72,7 @@ def verify_ticket(ticket_path, sig_path, public_key, *, tenant, generation,
         except (OSError, subprocess.SubprocessError) as exc:
             raise IntegrityError("ticket_signature_invalid") from exc
         t = json.loads(raw, object_pairs_hook=unique_object)
-        if not isinstance(t, dict) or set(t) != FIELDS or t["schema"] != 1:
+        if not isinstance(t, dict) or set(t) != FIELDS or type(t["schema"]) is not int or t["schema"] != 1:
             raise IntegrityError("invalid_ticket_schema")
         for k in ("operation", "sourceCloud", "targetCloud", "targetPvcUid"):
             if not isinstance(t[k], str) or not ID.fullmatch(t[k]):

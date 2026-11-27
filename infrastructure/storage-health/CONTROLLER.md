@@ -76,3 +76,13 @@ change during scan: detected changes invalidate the result, but this is
 not a replacement for an actual snapshot or writer lease. Do not claim
 a 24/48h physical SLO yet. No filesystem scrub scheduling, encrypted
 working-tree verification or node repair cutover yet.
+
+## Controller observability
+
+Private Service storage-controller-metrics in the configured chart namespace,
+port 8391. Scrape as job gtmd-storage-controller from the authorized
+monitoring namespace/pod. Load controller rules only where the optional
+controller is expected; absent(up) intentionally alarms when it disappears.
+Metrics are aggregate counts and a reconciliation freshness gauge, never
+filenames or credentials. The kind CI fixture uses synthetic PVs and a real
+API server/binder to test reservation and bound-claim preservation.

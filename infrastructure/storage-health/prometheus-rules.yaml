@@ -83,3 +83,30 @@ groups:
           severity: warning
         annotations:
           summary: "GTMD local Git verification incomplete or overdue"
+      - alert: GTMDStorageControllerUnavailable
+        expr: (up{job="gtmd-storage-controller"} == 0) or absent(up{job="gtmd-storage-controller"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD shared storage controller unavailable"
+      - alert: GTMDStorageControllerFailed
+        expr: gtmd_storage_controller_ok == 0 or ((up{job="gtmd-storage-controller"} == 1) unless on(job,instance) gtmd_storage_controller_ok)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD storage controller reconciliation failed or stale"
+      - alert: GTMDStorageBoundRepairRequired
+        expr: gtmd_storage_controller_bound_repairs > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "GTMD bound tenant volumes require verified recovery"
+      - alert: GTMDStorageReservationReview
+        expr: gtmd_storage_controller_manual_review > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GTMD storage reservations require review"

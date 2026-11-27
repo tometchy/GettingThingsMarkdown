@@ -6,6 +6,8 @@ lease or a trusted recovery manifest, and cannot authorize live cutover.
 """
 import argparse
 import hashlib
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 import json
 import math
 import os
@@ -240,6 +242,56 @@ def reconcile(api, config, apply=False, now=None):
     return summary
 
 
+class Status:
+    def __init__(self):
+        self.value = {}
+
+    def update(self, result):
+        self.value = {**result, "updatedUnix": time.time()}
+
+    def text(self, now=None):
+        now = time.time() if now is None else now
+        value = self.value
+        updated = value.get("updatedUnix", 0)
+        ok = updated > 0 and now - updated <= 300 and value.get("state") != "failed"
+        # No per-tenant labels; opaque detailed incidents remain in private logs.
+        lines = ["# TYPE gtmd_storage_controller_ok gauge",
+                 f"gtmd_storage_controller_ok {int(ok)}",
+                 "# TYPE gtmd_storage_controller_last_poll_unixtime gauge",
+                 f"gtmd_storage_controller_last_poll_unixtime {updated:.3f}"]
+        for key, metric in (("unhealthyDisks", "unhealthy_disks"),
+                            ("boundRepairs", "bound_repairs"),
+                            ("manualReview", "manual_review"),
+                            ("reservations", "reservations")):
+            lines.extend([f"# TYPE gtmd_storage_controller_{metric} gauge",
+                          f"gtmd_storage_controller_{metric} {value.get(key, 0)}"])
+        return "\n".join(lines) + "\n"
+
+
+def start_metrics(status, port):
+    class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            self.request.settimeout(3)
+            super().setup()
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path != "/metrics":
+                self.send_error(404)
+                return
+            payload = status.text().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inventory", required=True)
@@ -248,12 +300,17 @@ def main():
     p.add_argument("--token", default="/var/run/secrets/kubernetes.io/serviceaccount/token")
     p.add_argument("--reserve-available", action="store_true")
     p.add_argument("--once", action="store_true")
+    p.add_argument("--metrics-port", type=int, default=8391)
     args = p.parse_args()
     api = Kube(args.endpoint, args.ca, args.token)
+    status = Status()
+    if not args.once:
+        start_metrics(status, args.metrics_port)
     while True:
         try:
-            reconcile(api, inventory(json.loads(Path(args.inventory).read_text())), args.reserve_available)
+            status.update(reconcile(api, inventory(json.loads(Path(args.inventory).read_text())), args.reserve_available))
         except (OSError, ValueError, KeyError, TypeError, AttributeError, ApiError) as exc:
+            status.update({"state": "failed"})
             print(json.dumps({"event": "gtmd_storage_reconcile", "state": "failed",
                               "reason": type(exc).__name__}), flush=True)
             if args.once:
