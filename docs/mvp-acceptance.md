@@ -252,3 +252,11 @@ Merged main 1231371b5581932c5985a910facaf6c6e85bd756 CI 46007938584: all jobs pa
 - Witness mTLS resume-freeze returns the original signed challenge; orchestrator separately exports it for a trusted host. Writer guard ages leases using Linux CLOCK_BOOTTIME (including suspend).
 - New safety tests exercise signed challenges, runtime churn, replacement UID protection, cgroup/mount parsing and real kernel mountinfo. Added real CRI smoke test in existing kind job using disposable pod and exact sandbox stop. New PR CI pending; do not count as passed until verified.
 - No change to cutover/retention blockers, no production provisioning or paid resources. Next integrate durable admission and storage fencing, then allow independently signed role proofs only under those verified conditions.
+
+
+### Kubernetes writer admission barrier increment (2026-11-27)
+- PR #21 merged at 2a6e7026a629b4ae9f425c18ec0c7509748edda7. All six jobs of run 46039675125 passed, including the actual CRI and PV binder tests.
+- Optional writerFence Helm policies deny new pods, alternate pod writers, binding, pod mutations and connections, and PVC changes in a namespace carrying the immutable freeze digest. Prevent removal of the marker, namespace deletion/finalization and unrelated mutations by the dedicated actor. Generated per-tenant service account and exact resourceName GET/PATCH permission; not deployed by default.
+- namespace_fence.py checks a current online signed witness freeze and independent namespace UID/local writer identity, probes expected marker policy rejection, uses resourceVersion/UID CAS, verifies persistence and resumes idempotently. No automatic controller invocation or unfreeze. API-level only: no physical fencing, no guarantee against API cache/in-flight requests or host/root access. Host CLI stop additionally requires active online witness challenge equality.
+- Tests added for actual kind admission and StatefulSet recreation denial, separate tenant access, role scoping, immutable marker, and unit fixtures for conflicts/signature/missing policy. New PR CI pending; do not claim these pass until verified.
+- Durable physical storage fencing, external witness rollback protection, automatic provisioning/allocator and staging, independent retention and cutover remain open. No paid resources or production changes.
