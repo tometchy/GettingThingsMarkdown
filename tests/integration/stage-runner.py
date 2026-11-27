@@ -167,6 +167,34 @@ class Tests(unittest.TestCase):
         self.assertEqual(marker.read_bytes(),b"keep")
         self.assertIsNone(self.api.receipt)
 
+    def test_recorded_sync_requires_matching_witness_receipt(self):
+        try:
+            self.run_stage()
+        except g.IntegrityError as exc:
+            if str(exc)=="direct_io_unsupported":
+                self.skipTest("filesystem does not support direct I/O")
+            raise
+        ticket=json.loads(base64.b64decode(self.api.ticket["ticket"]))
+        receipt=c.verify(self.api.receipt,self.keys["target"][1])
+        original=self.api.call
+        def call(value):
+            if value["action"]=="status":
+                result=original(value)
+                result["writerFence"]={"phase":"frozen"}
+                result["repair"].update(ticket=ticket,receipt=receipt)
+                return result
+            return original(value)
+        self.api.call=call
+        cfg={"deviceId":"unused-in-mock"}
+        with patch("sync_state.prepare",return_value={"state":"sync_state_prepared","activationAllowed":False}) as prepare:
+            self.assertEqual(self.run_stage(sync_config=cfg,sync_age_key="test-only")["state"],"sync_state_prepared")
+            self.assertEqual(prepare.call_count,1)
+            self.assertEqual(prepare.call_args.args[2],ticket["refs"])
+            receipt["ticketSha256"]="0"*64
+            with self.assertRaisesRegex(c.RecoveryError,"sync_state_receipt_mismatch"):
+                self.run_stage(sync_config=cfg,sync_age_key="test-only")
+            self.assertEqual(prepare.call_count,1)
+
     def test_mismatch_and_unverified_mount(self):
         self.identity["target_pvc_uid"]="wrong"
         with self.assertRaises(c.RecoveryError):

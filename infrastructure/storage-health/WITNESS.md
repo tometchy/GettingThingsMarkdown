@@ -400,3 +400,58 @@ configuration and narrowly scoped read-only API credentials required.
 Checks are repeated, not an atomic enrollment or runtime mount guard;
 the caller must prevent changes during enrollment. Full provisioning
 and enforced mount lifecycle remain open.
+
+
+## Offline Sync state preparation (development, not cutover)
+
+After a successful Git staging receipt recorded by the witness, rerun the
+same guarded stage_runner with --sync-inventory and --sync-age-key.
+Both files must be independently provisioned, root-owned and private.
+Inventory:
+
+    {"deviceId":"<original Syncthing Device ID>","folderId":"<expected folder ID>",
+     "identityRef":"refs/heads/gtm-tenant"}
+
+The old explicit refs/heads/gtm-recovery layout is also accepted ONLY
+if the branch is included in the exact authenticated manifest. No
+fallback to unanchored refs or a live remote. The archive must be the
+age ciphertext identity.tar.gz.age at the selected committed ref.
+The key is an infrastructure recovery identity, not a user encryption
+password or vault key. Supply it only to a trusted one-shot host job.
+Do not keep it in the long-lived tenant pod. The stage runner reuses its
+current witness/PV/LVM/mount guard, open mount descriptor and lock;
+requires the exact recorded ticket digest and local Git receipt, and
+does not fetch another repository or start Syncthing.
+
+sync_state.py scrubs existing repository.git, decrypts only the bounded
+identity archive in memory, rejects unexpected/duplicate/link members
+and invalid XML, verifies exactly one expected receiveencrypted folder
+at /data/files and the original Device ID using the actual Syncthing
+CLI (device-id, not serve). OpenSSL checks the certificate/private-key
+pair. All restored identity files are mode 0600. Main is materialized
+with a temporary Git index in sync-state/files and verified against the
+anchored raw Git blob hashes. Reject unsafe tree entries, unexpected
+technical paths and any mismatch. A completed marker permits an
+idempotent full recheck; incomplete or conflicting state is preserved
+and blocked rather than erased. No user ciphertext is decrypted.
+The local marker is not witness cutover authorization. It is on the
+primary staging mount in this development implementation; dedicated
+sync-live provisioning, space validation, final placement/ownership,
+index rebuilding in a fully fenced startup, and externally verified
+activation remain open. Do not run Syncthing from this directory.
+Physical retention and rollback protection are unchanged.
+
+For the canonical Git layout set GTM_RECOVERY_LAYOUT=git-only explicitly
+on Sync (legacy default until coordinated production migration). The
+existing identity backup loop calls identity-backup-git.py instead
+of creating the separate recovery/settings repository. It snapshots the
+three files consistently, age-encrypts in memory to at least two distinct
+recipients, commits identity.tar.gz.age and identity.sha256 to gtm-tenant
+in the existing Git repository using a temporary index and CAS update-ref,
+preserves other tenant metadata, retries non-force push even when unchanged.
+No new loop, dual-write or extra repository. This is not automatic
+migration of old branches, full tenant.json.age/vault provisioning or
+a guarantee of latest configuration anchoring. Production must coordinate
+all writers to gtm-tenant and verify the current committed state.
+Reference: https://docs.syncthing.net/users/syncthing and
+https://docs.syncthing.net/dev/device-ids.html .

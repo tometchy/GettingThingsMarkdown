@@ -17,6 +17,8 @@ import stat
 import subprocess
 import time
 import tempfile
+import tarfile
+import xml.etree.ElementTree as ET
 
 from authorized_rebuild import verify_ticket, execute
 from git_integrity import IntegrityError, atomic_json
@@ -67,10 +69,38 @@ def validate_contents(root, operation):
                     and entry.is_dir() and not entry.is_symlink(), "unexpected_staging_content")
 
 
+def prepare_recorded_sync(api, identity, operation, root, cfg, age_key, timeout):
+    from sync_state import prepare
+    require(identity["target_role"] == "sync", "sync_state_requires_sync_role")
+    status = api.call({"action":"status","tenant":identity["tenant"]})
+    repair = status["repair"]
+    require(status["generation"] == identity["generation"] and repair["operation"] == operation
+            and repair["targetRole"] == "sync" and repair["targetPvcUid"] == identity["target_pvc_uid"]
+            and repair["state"] == "staged_verified" and status["writerFence"]["phase"] == "frozen",
+            "sync_state_repair_not_verified")
+    ticket, receipt = repair["ticket"], repair["receipt"]
+    require(ticket["tenant"] == identity["tenant"] and ticket["generation"] == identity["generation"]
+            and ticket["targetPvcUid"] == identity["target_pvc_uid"] and ticket["targetRole"] == "sync"
+            and ticket["targetCloud"] == identity["target_cloud"]
+            and re.fullmatch(re.escape(operation)+r"-[1-9][0-9]*", ticket["operation"])
+            and receipt["ticketSha256"] == hashlib.sha256(canonical(ticket)).hexdigest()
+            and receipt["operation"] == ticket["operation"] and receipt["physicalScrub"] is True
+            and receipt["activationAllowed"] is False and receipt["state"] == "staged_verified",
+            "sync_state_receipt_mismatch")
+    attempt = root/ticket["operation"]
+    require(attempt.is_dir() and not attempt.is_symlink()
+            and (attempt/"repository.git").is_dir() and not (attempt/"repository.git").is_symlink()
+            and (attempt/"receipt.json").is_file() and not (attempt/"receipt.json").is_symlink()
+            and decode(read(attempt/"receipt.json")) == receipt, "sync_state_local_receipt_mismatch")
+    return prepare(attempt/"repository.git", attempt/"sync-state", ticket["refs"], cfg, age_key, timeout)
+
+
 def run(api, identity, operation, root, witness_public, target_key, timeout=86400,
-        allow_local_test_source=False, guard=None):
+        allow_local_test_source=False, guard=None, sync_config=None, sync_age_key=None):
     require(identifier(operation) and TENANT.fullmatch(identity["tenant"]), "invalid_operation")
     root = Path(root)
+    require((sync_config is None and sync_age_key is None) or (sync_config is not None and sync_age_key is not None
+            and identity["target_role"] == "sync"), "invalid_sync_state_request")
     require(guard is not None or allow_local_test_source, "verified_staging_binding_required")
     # Hold the mount open throughout the job: ordinary unmount is busy.
     # No writes before the first real binding check. A privileged lazy
@@ -98,6 +128,11 @@ def run(api, identity, operation, root, witness_public, target_key, timeout=8640
         validate_contents(root, operation)
         pair = get_ticket(api,identity,operation)
         if pair is None:
+            if sync_config is not None:
+                check()
+                result = prepare_recorded_sync(api, identity, operation, root, sync_config, sync_age_key, timeout)
+                check()
+                return result
             return {"state":"already_recorded","activationAllowed":False}
         raw,sig = pair
         with tempfile.TemporaryDirectory() as d:
@@ -146,6 +181,8 @@ def main():
               "target-pvc-uid","operation","witness-public","target-key",
               "binding-inventory","storage-inventory","repair-class","kube-endpoint","kube-ca","kube-token"):
         p.add_argument("--"+k,required=True)
+    p.add_argument("--sync-inventory", help="Optional one-shot offline Sync state after recorded Git receipt")
+    p.add_argument("--sync-age-key", help="One-shot infrastructure identity decryption key")
     p.add_argument("--generation",type=int,required=True)
     p.add_argument("--timeout",type=int,default=86400)
     a=p.parse_args()
@@ -175,10 +212,19 @@ def main():
                                       host,identity,a.operation,lvm,machine)
             except ApiError as exc:
                 raise RecoveryError("staging_kubernetes_http_" + str(exc.code)) from None
+        require(bool(a.sync_inventory) == bool(a.sync_age_key), "sync_inventory_and_key_required")
+        sync_config = None
+        if a.sync_inventory:
+            for path in (a.sync_inventory,a.sync_age_key):
+                st = Path(path).lstat()
+                require(stat.S_ISREG(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o077,
+                        "insecure_sync_restore_file")
+            sync_config = decode(read(a.sync_inventory))
         result=run(witness,identity,a.operation,Path(host["mount"]),
-                   a.witness_public,a.target_key,a.timeout,guard=guard)
+                   a.witness_public,a.target_key,a.timeout,guard=guard,
+                   sync_config=sync_config,sync_age_key=a.sync_age_key)
         print(json.dumps(result,separators=(",",":")))
-    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError,subprocess.SubprocessError) as exc:
+    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError,subprocess.SubprocessError,tarfile.TarError,ET.ParseError,EOFError) as exc:
         print(json.dumps({"event":"gtmd_stage_runner","state":"failed",
             "reason":str(exc) if isinstance(exc,(RecoveryError,IntegrityError)) else type(exc).__name__}))
         return 1

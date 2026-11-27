@@ -108,6 +108,8 @@ jobs:
         run: docker build -f server/history/Dockerfile -t gtm/history:ci .
       - name: Verify encrypted Syncthing identity backup and restore
         run: bash tests/integration/identity-backup.sh
+      - name: Verify offline Sync state with real Syncthing and age
+        run: docker run --rm --network none -v "$PWD:/src:ro" --entrypoint python3 gtm/sync:ci -B /src/tests/integration/sync-state-real.py
       - name: Prove full Git restoration in both directions (without LFS)
         run: bash tests/integration/full-git-recovery.sh
       - name: Verify tenant-prefixed Git LFS in local S3 emulator
