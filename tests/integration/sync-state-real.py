@@ -12,6 +12,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,6 +143,15 @@ class Tests(unittest.TestCase):
             self.prepare(key=wrong)
         with self.assertRaisesRegex(RecoveryError,"identity_ref_not_anchored"):
             self.prepare(cfg={**self.cfg,"identityRef":"refs/heads/gtm-recovery"})
+        self.assertFalse(self.dest.exists())
+
+    def test_insufficient_capacity_blocks_before_state_creation(self):
+        fs=os.statvfs(self.attempt)
+        with patch.object(s.os,"statvfs",return_value=fs._replace(f_bavail=0) if hasattr(fs,"_replace")
+                          else os.statvfs_result((fs.f_bsize,fs.f_frsize,fs.f_blocks,fs.f_bfree,
+                              0,fs.f_files,fs.f_ffree,fs.f_favail,fs.f_flag,fs.f_namemax))):
+            with self.assertRaisesRegex(RecoveryError,"insufficient_sync_staging_capacity"):
+                self.prepare()
         self.assertFalse(self.dest.exists())
 
     def test_wrong_device_id_rejected(self):
