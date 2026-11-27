@@ -54,6 +54,7 @@ jobs:
           python3 tests/integration/host-runtime-fence.py
           python3 tests/integration/namespace-fence.py
           python3 tests/integration/local-lvm-fence.py
+          python3 tests/integration/lvm-mount-binding.py
           python3 tests/integration/recovery-source.py
           python3 tests/integration/recovery-binding.py
           python3 tests/integration/history-purge-candidate.py
