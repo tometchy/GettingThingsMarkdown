@@ -90,7 +90,16 @@ def freeze(w, tenant, incident, target_role=None, target_pvc=None):
             require(s["generation"] > 0 and target_pvc not in {uid for v in f["writers"].values() for uid in v["pvcUids"]},
                     "repair_requires_new_volume_and_anchor")
         if f["phase"] != "open":
-            require(f["freeze"]["incident"] == incident and f["freeze"].get("plan") == plan, "different_freeze_active")
+            require(f["freeze"]["incident"] == incident, "different_freeze_active")
+            existing = f["freeze"].get("plan")
+            # Freeze immediately, even if no spare capacity is available.
+            # Attach exactly one target later in the same witness CAS; never
+            # change the signed challenge, epoch, deadline or stop proofs.
+            if plan is not None:
+                require(existing == plan or (existing is None and s["repair"] is None
+                        and s["challenge"] is None), "different_freeze_active")
+                if existing is None:
+                    f["freeze"]["plan"] = plan
             return sign(f["freeze"]["challenge"], w.key)
         require(s["repair"] is None, "witness_busy")
         # An emergency freeze supersedes a pending anchor scan; its evidence
