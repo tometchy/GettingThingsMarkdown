@@ -94,6 +94,16 @@ class Tests(unittest.TestCase):
         self.assertFalse(first["stopEvidenceEligible"])
         self.assertFalse(first["workloadAdmissionVerified"])
 
+    def test_actor_is_scoped_to_one_tenant_and_no_policy_management(self):
+        manifest = f.actor_manifest(self.cfg["tenant"], "gtm-system")
+        sa, role, binding = manifest["items"]
+        self.assertFalse(sa["automountServiceAccountToken"])
+        self.assertEqual(role["rules"], [{"apiGroups": [""], "resources": ["namespaces"],
+                                         "resourceNames": [self.cfg["tenant"]], "verbs": ["get", "patch"]}])
+        self.assertEqual(binding["subjects"][0]["name"], self.cfg["tenant"] + "-fence")
+        with self.assertRaises(crypto.RecoveryError):
+            f.actor_manifest("default")
+
     def test_missing_annotation_map(self):
         del self.api.ns["metadata"]["annotations"]
         self.assertEqual(self.run_fence()["state"], "marker_present")
