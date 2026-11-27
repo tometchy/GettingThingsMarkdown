@@ -29,7 +29,7 @@ node or disk UNKNOWN, detects affected bound tenant claims, emits repair
 proposals and safe candidate names (not capacity-validated allocations).
 Logs include opaque tenant namespace/PV IDs; keep private.
 
-Explicit storageController.reserveAvailable=true grants cluster-scoped PV
+Explicit storageController.reserveAvailable=true plus managedClasses allowlist grants cluster-scoped PV
 patch permission and enables reservation of **only** unclaimed Available
 Retain managed local PVs whose mapping or health is unverified. JSON Patch
 tests resourceVersion, UID, phase, Retain and reserves via claimRef to an
@@ -37,9 +37,7 @@ intentionally nonexistent PVC in gtm-storage-quarantine. Restrict creation
 of PVCs in that namespace to nobody during operation. This is standard
 Kubernetes prebinding, not deletion; never auto-unreserve even if SMART
 recovers. ResourceVersion test protects against simultaneous binding; retry
-from new inventory, not stale patch. The API RBAC cannot constrain patch
-fields or PV classes; a production validating admission policy, real CNI/RBAC
-audit, and real race test are required before enabling this write mode.
+from new inventory, not stale patch. The optional chart installs Kubernetes v1 ValidatingAdmissionPolicies (requires Kubernetes >=1.30 with feature enabled): restrict controller updates to Available unclaimed Retain local PVs in the explicitly configured classes, require the specific reservation claimRef and unchanged storage properties/metadata, and deny PVC creation in the quarantine namespace. RBAC alone cannot constrain patch fields. Audit CEL compatibility, role scopes and real race behavior before enabling write mode. Deploy admission policies and wait for enforcement before granting the controller patch access in production; chart install order is not a fencing guarantee. Never remove the policies while the controller can patch PVs.
 The controller does not stop existing writers, scale workloads, delete
 claims or change retention. Bound volumes require a verified recovery
 authorization and coordinated fencing before movement. Local PV discovery

@@ -7,6 +7,8 @@ ns=gtm-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 class=gtmd-ci-local
 cleanup() {
   kubectl -n gtm-system delete deployment storage-controller --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete validatingadmissionpolicybinding gtmd-storage-reservation-only gtmd-quarantine-no-pvcs --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete validatingadmissionpolicy gtmd-storage-reservation-only gtmd-quarantine-no-pvcs --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n gtm-system delete configmap ci-storage-inventory --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   kubectl delete pv ci-gtmd-free ci-gtmd-bound ci-gtmd-healthy --ignore-not-found --wait=false >/dev/null 2>&1 || true
@@ -94,10 +96,12 @@ test "$(kubectl auth can-i patch configmap/other --namespace=gtm-storage-reports
 # Render the actual optional Helm component; do not replace the control plane.
 helm template gtm infrastructure/helm/gtm-controlplane \
   --show-only templates/storage-controller.yaml \
+  --show-only templates/storage-admission.yaml \
   --set storageController.enabled=true \
   --set storageController.image=gtm/storage-controller:ci \
   --set storageController.inventoryConfigMap=ci-storage-inventory \
-  --set storageController.reserveAvailable=true | kubectl apply -f -
+  --set storageController.reserveAvailable=true \
+  --set "storageController.managedClasses[0]=$class" | kubectl apply -f -
 kubectl -n gtm-system rollout status deployment/storage-controller --timeout=120s
 for _ in $(seq 1 30); do
   if [ "$(kubectl get pv ci-gtmd-free -o jsonpath='{.spec.claimRef.namespace}')" = gtm-storage-quarantine ]; then
@@ -112,4 +116,32 @@ kubectl -n gtm-system logs deployment/storage-controller | grep -q '"action":"re
 kubectl apply -f "$tmp/pending.json"
 sleep 8
 test "$(kubectl -n "$ns" get pvc should-stay-pending -o jsonpath='{.status.phase}')" = Pending
-echo 'PASS: real Kubernetes PV reservation prevents binding, bound claim unchanged, healthy free PV unchanged, reporter scoped.'
+# A compromised controller identity must not be able to change arbitrary PV fields.
+actor=system:serviceaccount:gtm-system:gtm-storage-controller
+if kubectl --as="$actor" patch pv ci-gtmd-healthy --type=merge \
+  -p '{"metadata":{"labels":{"unexpected":"change"}}}' --dry-run=server > "$tmp/denial" 2>&1; then
+  echo 'Admission policy unexpectedly allowed unrelated PV mutation' >&2
+  exit 1
+fi
+grep -Eq 'Only the quarantine|Only available|Reservation must not change|denied' "$tmp/denial"
+# Even an ordinary claim creator must not bind the quarantine reservation.
+reserved="$(kubectl get pv ci-gtmd-free -o jsonpath='{.spec.claimRef.name}')"
+cat <<EOF | kubectl create --dry-run=client -f - -o yaml > "$tmp/forbidden.yaml"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $reserved
+  namespace: gtm-storage-quarantine
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: $class
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+if kubectl create --dry-run=server -f "$tmp/forbidden.yaml" > "$tmp/denial" 2>&1; then
+  echo 'Admission policy unexpectedly allowed a quarantine PVC' >&2
+  exit 1
+fi
+grep -q 'Quarantine claim names are intentionally unbindable' "$tmp/denial"
+echo 'PASS: real Kubernetes PV reservation prevents binding, bound claim unchanged, healthy free PV unchanged, reporter scoped, unsafe writes denied.'

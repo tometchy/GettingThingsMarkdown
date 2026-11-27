@@ -194,8 +194,10 @@ jobs:
           helm template gtm infrastructure/helm/gtm-controlplane \
             --set storageController.enabled=true \
             --set storageController.inventoryConfigMap=ci-inventory \
-            --set storageController.reserveAvailable=true > /tmp/storage-controller-write.yaml
+            --set storageController.reserveAvailable=true \
+            --set storageController.managedClasses[0]=ci-local > /tmp/storage-controller-write.yaml
           grep -q -- '--reserve-available' /tmp/storage-controller-write.yaml
+          grep -q 'kind: ValidatingAdmissionPolicyBinding' /tmp/storage-controller-write.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0
