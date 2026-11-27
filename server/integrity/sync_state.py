@@ -4,7 +4,7 @@
 No network fetch, new repository, Syncthing serve, user-data decryption or
 live writes. The only decrypted secret is the infrastructure identity.
 """
-import hashlib
+import gzip
 import io
 import os
 from pathlib import Path
@@ -74,7 +74,10 @@ def identity_bundle(repo, manifest, cfg, age_key, deadline):
     require(0 < len(p.stdout) <= MAX_IDENTITY, "identity_bundle_too_large")
     result = {}
     # Stream archive members. Never extract tar paths or trust file modes.
-    with tarfile.open(fileobj=io.BytesIO(p.stdout), mode="r|gz") as archive:
+    with gzip.GzipFile(fileobj=io.BytesIO(p.stdout)) as compressed:
+        tar_bytes = compressed.read(2*MAX_IDENTITY+1)
+    require(len(tar_bytes) <= 2*MAX_IDENTITY, "identity_archive_expansion_limit")
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as archive:
         for member in archive:
             require(member.name in IDENTITY_FILES and member.name not in result
                     and member.isfile() and 0 < member.size <= MAX_IDENTITY
@@ -90,9 +93,10 @@ def identity_bundle(repo, manifest, cfg, age_key, deadline):
 
 
 def validate_config(raw, cfg):
-    require(b"<!DOCTYPE" not in raw.upper() and b"<!ENTITY" not in raw.upper(),
+    xml = raw.decode("utf-8", errors="strict")
+    require("<!DOCTYPE" not in xml.upper() and "<!ENTITY" not in xml.upper(),
             "unsupported_identity_xml")
-    root = ET.fromstring(raw)
+    root = ET.fromstring(xml)
     require(root.tag == "configuration", "invalid_syncthing_configuration")
     folders = root.findall("folder")
     require(len(folders) == 1 and folders[0].get("id") == cfg["folderId"]
@@ -194,6 +198,7 @@ def prepare(repo, dest, manifest, raw_cfg, age_key, timeout=86400):
         verify_identity(home,bundle,cfg,deadline)
         restore_files(repo,dest/"files",main,deadline)
     verify_identity(dest/"syncthing",bundle,cfg,deadline)
+    require((dest/"files").is_dir() and not (dest/"files").is_symlink(), "invalid_sync_files_directory")
     checked = verify(repo,dest/"files",main,remaining(deadline))
     # No Syncthing index is fabricated, no technical files injected. The
     # later fenced start must safely rebuild the index before opening peers.
