@@ -9,14 +9,15 @@ managed by trusted provisioning. Config schema:
 
 Do not place the witness key or the independent replica evidence keys in
 tenant workloads. Commands in server/integrity/recovery_witness.py:
-challenge anchor; collect replica_evidence.py attest on stable snapshots in
+explicitly initialize each new tenant offline exactly once; challenge anchor; collect replica_evidence.py attest on stable snapshots in
 both clouds; anchor with both signed files. A challenge is single-use,
 short-lived and bound to the previous generation/ref map. Both agents
 verify full Git and append-only ancestry. Non-head refs cannot be rewritten
 or removed. No purge support. The witness serializes each tenant transition
 with flock, atomic file replace and fsync of file and directory, and signs
 the monotonic generation record. Ref maps are metadata only. No implicit
-reset on invalid state. Restore from an old witness backup is not safe:
+reset on missing or invalid state. Reinitialization is an offline privileged
+provisioning action and still requires an independent watermark in production. Restore from an old witness backup is not safe:
 independent anti-rollback storage/watermark and HA remain required.
  
 For repair: challenge repair --target-role sync --target-pvc <uid>;
@@ -28,8 +29,8 @@ the receipt after independently verifying its provenance. The witness
 requires physicalScrub=true and matching ticket digest/identity. It records
 staged_verified, never activation. Repeated issue before expiry returns the
 same ticket; after expiry a new attempt is generated. Abort only after ticket
-expiry. The reference CLI is for trusted orchestration; no remotely exposed
-API, actual agent authentication channel, external monotonic watermark,
+expiry. The CLI and optional private mTLS API are for trusted orchestration; actual
+agent authentication channel, external monotonic watermark,
 automatic ticket worker or storage/job binding yet. A ticket expiry governs
 start, not guaranteed termination of an in-flight rebuild. Do not activate
 or reuse a staging target while a job may still be running.
@@ -42,3 +43,17 @@ Actual writer enforcement, quorum during partitions, independent retention,
 provider fencing, stable snapshot, correct full-Git branch consolidation,
 and verified cutover are still mandatory. This CLI does not authorize writes
 or make the service production ready.
+
+## Private network API
+Build server/recovery-witness/Dockerfile and deploy only in the independent
+trust domain, not alongside tenant data. Mount the private persistent state
+(0700 UID 1000), config/public keys, witness Ed25519 private key and separate
+TLS certificate/key/client CA. The API defaults to loopback, bind to a private
+interface only after firewall approval. TLS 1.3 and mutual certificate
+authentication plus exact SHA256 DER coordinator certificate allowlist are
+required. No public ingress or general admin API. POST /v1/recovery supports
+status, challenge, anchor, start-repair, ticket, receipt, abort; never
+initialize or activate. Use witness_client.py with a pinned server CA and
+coordinator cert/key. API cert holder still cannot forge either replica's
+independent evidence. CI tests real TLS with approved and unapproved certs.
+No remote provisioning or automatic HA deployment is performed.

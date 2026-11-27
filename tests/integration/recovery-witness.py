@@ -36,6 +36,7 @@ class Tests(unittest.TestCase):
         self.cfg = w.config(self.config, self.keys["witness"])
         self.state = self.root / "state"
         self.w = w.Witness(self.state, self.cfg, self.keys["witness"], lambda:self.now)
+        self.w.initialize(TENANT)
         self.repo = self.root / "work"
         self.repo.mkdir()
         self.git("init","-qb","main")
@@ -163,9 +164,11 @@ class Tests(unittest.TestCase):
             w.config(self.config,self.keys["witness"])
 
     def test_missing_state_is_not_valid_anchor(self):
-        self.assertEqual(self.w.status(TENANT)["generation"],0)
-        with self.assertRaises(crypto.RecoveryError):
-            self.w.challenge(TENANT,"repair","sync","new-pvc")
+        (self.state / (TENANT+".json")).unlink()
+        with self.assertRaisesRegex(crypto.RecoveryError,"witness_state_missing"):
+            self.w.status(TENANT)
+        with self.assertRaisesRegex(crypto.RecoveryError,"witness_state_missing"):
+            self.w.challenge(TENANT,"anchor")
 
 
 if __name__=="__main__":

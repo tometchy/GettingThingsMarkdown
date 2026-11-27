@@ -92,7 +92,7 @@ class Witness:
         return int(self.clock())
 
     @contextlib.contextmanager
-    def transaction(self, tenant):
+    def transaction(self, tenant, initialize=False):
         require(tenant in self.cfg and TENANT.fullmatch(tenant), "unknown_tenant")
         lock = self.root / (tenant + ".lock")
         fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -104,9 +104,14 @@ class Witness:
                 state = decode(read(path))
                 require(state.get("schema") == 1 and state.get("tenant") == tenant, "invalid_witness_state")
             else:
+                require(initialize, "witness_state_missing")
+                # A missing state is never implicitly treated as genesis. The
+                # independent provisioning process must explicitly enroll it.
                 state = {"schema": 1, "tenant": tenant, "generation": 0,
                          "refs": {}, "anchorDigest": None, "challenge": None,
                          "repair": None, "lastClosedRepair": None, "revision": 0}
+            if initialize:
+                require(not path.exists(), "tenant_already_initialized")
             yield state
             state["revision"] += 1
             self.write(path, canonical(state))
@@ -133,12 +138,16 @@ class Witness:
         finally:
             Path(tmp).unlink(missing_ok=True)
 
+    def initialize(self, tenant):
+        with self.transaction(tenant, initialize=True):
+            return {"tenant": tenant, "generation": 0, "activationAllowed": False}
+
     def status(self, tenant):
         # Read with same lock; no state-changing command required.
         require(tenant in self.cfg and TENANT.fullmatch(tenant), "unknown_tenant")
         path = self.root / (tenant + ".json")
         if not path.exists():
-            return {"tenant": tenant, "generation": 0, "state": "uninitialized"}
+            raise RecoveryError("witness_state_missing")
         state = decode(read(path))
         require(state.get("tenant") == tenant, "invalid_witness_state")
         return state
@@ -273,6 +282,7 @@ def main():
         p.add_argument("--" + key, required=True)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
+    sub.add_parser("initialize")
     c = sub.add_parser("challenge")
     c.add_argument("kind", choices=("anchor", "repair"))
     c.add_argument("--target-role", choices=ROLES)
@@ -294,7 +304,9 @@ def main():
     try:
         w = Witness(args.state_dir, config(args.config, args.key), args.key)
         tenant = args.tenant
-        if args.cmd == "status":
+        if args.cmd == "initialize":
+            result = w.initialize(tenant)
+        elif args.cmd == "status":
             s = w.status(tenant)
             result = {"tenant": tenant, "generation": s["generation"], "revision": s.get("revision", 0),
                       "repairState": (s.get("repair") or {}).get("state"),

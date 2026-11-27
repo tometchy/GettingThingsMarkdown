@@ -48,6 +48,7 @@ jobs:
           python3 tests/integration/authorized-rebuild.py
           python3 tests/integration/worktree-integrity.py
           python3 tests/integration/recovery-witness.py
+          python3 tests/integration/witness-api.py
           python3 tests/integration/history-purge-candidate.py
       - name: Test storage-health Prometheus alert rules
         run: |
@@ -70,6 +71,8 @@ jobs:
           for f in server/sync/*.sh server/history/*.sh; do sh -n "$f"; done
       - name: Verify immutable backup rejects weak retention
         run: bash tests/security/worm-fail-closed.sh
+      - name: Build independent witness image
+        run: docker build -f server/recovery-witness/Dockerfile -t gtm/recovery-witness:ci .
       - name: Build shared storage controller image
         run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
       - name: Build Control Plane image
