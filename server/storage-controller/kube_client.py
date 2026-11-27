@@ -57,7 +57,7 @@ class Kube:
             try:
                 body = json.loads(exc.read(65536))
                 message = body.get("message", "")
-                denied = (exc.code == 403 and isinstance(message, str)
+                denied = (exc.code in (403, 422) and isinstance(message, str)
                           and "gtmd-storage-reservation-only" in message
                           and "Only the quarantine claim reservation may be added" in message)
                 if denied:

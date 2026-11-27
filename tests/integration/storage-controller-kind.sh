@@ -119,8 +119,10 @@ done
 if [ "$(kubectl get pv ci-gtmd-free -o jsonpath='{.spec.claimRef.namespace}')" != gtm-storage-quarantine ]; then
   echo "Expected free PV to be quarantined" >&2
   actor=system:serviceaccount:gtm-system:gtm-storage-controller
-  kubectl --as="$actor" patch pv ci-gtmd-free --type=merge --dry-run=server \
-    -p '{"spec":{"claimRef":{"apiVersion":"v1","kind":"PersistentVolumeClaim","namespace":"gtm-storage-quarantine","name":"quarantine-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}' || true
+  for dest in default gtm-storage-quarantine; do
+    kubectl --as="$actor" patch pv ci-gtmd-free --type=merge --dry-run=server \
+      -p "{\"spec\":{\"claimRef\":{\"apiVersion\":\"v1\",\"kind\":\"PersistentVolumeClaim\",\"namespace\":\"$dest\",\"name\":\"quarantine-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}" || true
+  done
   exit 1
 fi
 test "$(kubectl get pv ci-gtmd-bound -o jsonpath='{.spec.claimRef.uid}')" = "$bound_uid"

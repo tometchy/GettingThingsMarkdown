@@ -106,3 +106,61 @@ only through explicit loopback test mode, not CLI production config.
 Real multi-cloud mTLS/IaC, peer latency and failure-domain validation,
 external anti-rollback watermark after full cluster restore, writer
 enforcement/fencing and independent retention are not yet complete.
+
+## Writer freeze and short-lived permits (opt-in)
+Offline enroll-writers binds both roles to exact pod, all PVC and node UIDs. The
+trusted host agent signs renewal requests with its role key and publishes
+witness-signed 60s permits in a host-owned directory, mounted read-only at
+/run/gtmd-writer-fence with pinned witness.pub. Renew every 10–15s, not via
+slow Kubernetes Secret refresh. The data image uses GTM_WRITER_FENCE_MODE=required,
+GTM_FENCE_TENANT, GTM_FENCE_POD_UID, GTM_FENCE_PVC_UIDS (comma-separated all data PVC UIDs), GTM_FENCE_NODE_UID;
+the guard must be PID1 in an unshared container PID namespace. Default
+development mode preserves legacy behavior and is NOT production fenced.
+No deployment automatically sets these variables yet. Provisioner must
+verify exact mount and identity and forbid override/bypass/exec and shared PID.
+Freeze-writers advances epoch atomically and denies renewals. Both roles must
+provide signed stop/isolation evidence after all prior permits expire plus
+clock-skew allowance. A stopped pod status, elapsed lease or deleted API
+object is NOT by itself proof of actual isolation. Trusted host or provider
+adapter must establish runtime stop, revoked write access and isolated volume.
+Only then can an enrolled tenant proceed to a repair challenge. The source
+must be served by a separately authenticated read-only snapshot endpoint;
+normal Gitea/Syncthing writers are stopped. That endpoint and collection of
+actual provider/host evidence are not implemented yet. No release/unfreeze
+or replacement writer activation. cutover-status lists mandatory blockers.
+
+## Read-only recovery source
+Trusted host service recovery_source.py serves a verified stable snapshot
+through HTTPS Git upload-pack only (/repo.git). Require a read-only mount,
+exact refs manifest, signed generation anchor from witness, pinned witness
+public key and independent target client TLS certificate fingerprint.
+No receive-pack or web UI, no Git private data beyond the authorized repo.
+Configure sourceUrl in witness trust provisioning to this endpoint, not an
+unavailable stopped Gitea. TLS client cert/key/CA passed to the staging Git
+process through GIT_SSL_CERT/GIT_SSL_KEY/GIT_SSL_CAINFO from a trusted host.
+Service must be isolated and launched only after verified source selection;
+source must be the existing replica or a transient filesystem snapshot of
+it, not a third persistent data copy. CLI verifies read-only mount and exact
+refs; it does not mount disks or prove physical isolation. Tests use a
+stable disposable repo and real mTLS Git fetch, not a real provider mount.
+
+## Restartable orchestration
+recovery_orchestrator.py reconciles one immutable incident in the witness.
+plan-repair atomically freezes enrolled writers and pins target role, NEW
+PVC UID, anchor and generation. The orchestrator accepts fresh trusted stop
+proofs, waits for both, issues or resumes a signed source challenge, consumes
+source evidence and creates/reuses a durable staging operation. The separate
+stage runner fetches the signed ticket and submits its receipt. Later calls
+report staged_verified with cutover blockers. Pass challenge-output to write
+private challenge metadata; ordinary status logs omit refs. No automatic
+allocator/host fencing evidence collection, staging Job scheduling, live PVC
+changes, unfreeze or provider API operations. The controller is not yet wired
+to this orchestrator; run only in trusted test/orchestration environment.
+
+The read-only recovery_binding.py inspector derives writer identities from
+all PVC references (including sync-live where present), exact bound claim/PV
+UIDs, node inventory and separate clouds. It validates an already allocated
+new bound Retain PVC on a different healthy node in the same cloud, with
+compatible storage class/mode/capacity, no references by tenant pods.
+This is API-level validation only, not actual mount or physical isolation.
+Needs read-only scoped pod/PVC API access; does not allocate or mutate.

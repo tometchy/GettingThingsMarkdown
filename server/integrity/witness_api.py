@@ -28,14 +28,33 @@ def dispatch(witness, data):
               "anchor": {"sync", "history"}, "start-repair": {"evidence"},
               "ticket": {"operation"}, "receipt": {"operation", "evidence"},
               "retire-attempt": {"operation", "evidence"},
-              "abort": {"operation"}}
+              "abort": {"operation"}, "writer-permit": {"role","evidence"},
+              "freeze-writers": {"incident"}, "confirm-writer-stop": {"role","evidence"},
+              "cutover-status": set(), "plan-repair": {"incident","targetRole","targetPvcUid"},
+              "resume-challenge": set()}
     require(isinstance(operation, str) and operation in fields and set(data) == base | fields[operation],
             "invalid_request_fields")
+    if operation == "resume-challenge":
+        from recovery_crypto import sign
+        ch = witness.status(tenant).get("challenge")
+        require(ch is not None and witness.now() < ch["expiresUnix"], "no_active_challenge")
+        return sign(ch,witness.key)
+    if operation in ("writer-permit","freeze-writers","confirm-writer-stop","cutover-status","plan-repair"):
+        import writer_fence as fence
+        if operation == "writer-permit":
+            return fence.permit(witness,tenant,data["role"],data["evidence"])
+        if operation == "plan-repair":
+            return fence.freeze(witness,tenant,data["incident"],data["targetRole"],data["targetPvcUid"])
+        if operation == "freeze-writers":
+            return fence.freeze(witness,tenant,data["incident"])
+        if operation == "confirm-writer-stop":
+            return fence.confirm_stop(witness,tenant,data["role"],data["evidence"])
+        return fence.cutover_status(witness.status(tenant))
     if operation == "status":
         s = witness.status(tenant)
         return {"tenant": tenant, "generation": s["generation"], "revision": s["revision"],
-                "anchorDigest": s["anchorDigest"], "repair": s["repair"],
-                "challenge": s["challenge"], "activationAllowed": False}
+                "anchorDigest": s["anchorDigest"], "anchor": s.get("anchor"), "repair": s["repair"],
+                "challenge": s["challenge"], "writerFence": s.get("writerFence"), "activationAllowed": False}
     if operation == "challenge":
         return witness.challenge(tenant, data["kind"], data["targetRole"], data["targetPvcUid"])
     if operation == "anchor":

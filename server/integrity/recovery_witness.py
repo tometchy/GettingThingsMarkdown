@@ -196,8 +196,11 @@ class Witness:
             require(active is None or active["expiresUnix"] <= now, "challenge_already_active")
             require(s["repair"] is None, "repair_already_active")
             if kind == "repair":
+                from writer_fence import require_repair_frozen
+                require_repair_frozen(s, target_role, target_pvc)
                 require(s["generation"] > 0 and target_role in ROLES and identifier(target_pvc), "invalid_repair_target")
             else:
+                require(s.get("writerFence") is None or s["writerFence"]["phase"] == "open", "writers_frozen")
                 require(target_role is None and target_pvc is None, "invalid_anchor_target")
             challenge = {"schema": 1, "kind": kind, "tenant": tenant, "nonce": secrets.token_hex(32),
                          "generation": s["generation"], "anchorDigest": s["anchorDigest"],
@@ -241,9 +244,12 @@ class Witness:
 
     def start_repair(self, tenant, evidence):
         with self.transaction(tenant) as s:
+            from writer_fence import require_repair_frozen
+            require_repair_frozen(s)
             ch = s["challenge"]
             require(ch is not None and ch["kind"] == "repair" and s["repair"] is None, "no_repair_challenge")
             target = ch["targetRole"]
+            require_repair_frozen(s, target, ch["targetPvcUid"])
             source = "history" if target == "sync" else "sync"
             require(self.evidence(s, source, evidence) == s["refs"], "source_not_current_anchor")
             op = "repair-" + secrets.token_hex(16)
@@ -256,6 +262,8 @@ class Witness:
 
     def ticket(self, tenant, operation):
         with self.transaction(tenant) as s:
+            from writer_fence import require_repair_frozen
+            require_repair_frozen(s)
             repair = s["repair"]
             require(repair and repair["operation"] == operation and repair["state"] in ("authorized", "ticket_issued"),
                     "repair_not_authorized")
@@ -350,6 +358,8 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     sub.add_parser("initialize")
+    c = sub.add_parser("enroll-writers")
+    c.add_argument("identities")
     c = sub.add_parser("challenge")
     c.add_argument("kind", choices=("anchor", "repair"))
     c.add_argument("--target-role", choices=ROLES)
@@ -378,6 +388,9 @@ def main():
         tenant = args.tenant
         if args.cmd == "initialize":
             result = w.initialize(tenant)
+        elif args.cmd == "enroll-writers":
+            from writer_fence import enroll
+            result = enroll(w, tenant, decode(read(args.identities)))
         elif args.cmd == "status":
             s = w.status(tenant)
             result = {"tenant": tenant, "generation": s["generation"], "revision": s.get("revision", 0),
