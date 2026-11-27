@@ -64,6 +64,11 @@ class Kube:
                     category = "expected_admission_denial"
                 elif isinstance(message, str) and "gtmd-storage-reservation-only" in message:
                     category = "reservation_admission_rejected"
+                elif (exc.code in (403, 422) and isinstance(message, str)
+                      and "gtmd-writer-freeze-marker" in message
+                      and ("GTMD freeze marker must be a SHA-256 digest" in message
+                           or "GTMD frozen namespace marker is immutable" in message)):
+                    category = "freeze_marker_admission_denied"
                 elif exc.code == 403:
                     category = "forbidden"
             except (OSError, ValueError, TypeError, AttributeError):
