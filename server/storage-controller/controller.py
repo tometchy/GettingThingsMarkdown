@@ -101,7 +101,7 @@ def report_states(node, live_node, report, now):
             return unknown
         return {d["id"]: d["state"] if d["state"] in ("healthy", "suspect", "failed", "unknown")
                 and stamp(d["checkedUnix"], now) else "unknown" for d in disks}
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, AttributeError):
         return unknown
 
 
@@ -253,7 +253,7 @@ def main():
     while True:
         try:
             reconcile(api, inventory(json.loads(Path(args.inventory).read_text())), args.reserve_available)
-        except (OSError, ValueError, KeyError, TypeError, ApiError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, ApiError) as exc:
             print(json.dumps({"event": "gtmd_storage_reconcile", "state": "failed",
                               "reason": type(exc).__name__}), flush=True)
             if args.once:

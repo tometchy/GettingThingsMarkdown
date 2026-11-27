@@ -47,3 +47,32 @@ and allocator must coordinate to prevent new PV creation on suspect disks;
 periodic reservations do not guarantee zero admission race. No live cutover.
 
 No paid resources started; test only with kind and synthetic host reports.
+
+
+## Verified staging and physical read
+
+Both tenant images include authorized_rebuild.py and physical_scrub.py.
+The former verifies an Ed25519 signature against an independently provisioned
+pinned public key (OpenSSL). A short-lived ticket binds tenant, current
+generation, source/target role/cloud, target PVC UID, operation ID, source
+HTTPS URL and exact complete ref map. The caller must supply the current
+generation and target identity from an authenticated external coordinator,
+not from the ticket itself. All four logical branches are mandatory; a legacy
+split recovery repository fails closed. Fetch into a unique fresh staging
+directory, no redirects, no hardlinks/alternates; verify full Git and exact
+refs. On success a receipt is written with activationAllowed=false.
+No signer/witness, fencing, verified target mount binding, automatic job
+or publication is implemented. Reflog-only retained data must first be
+rooted via protected refs. This is a staging primitive, not live failover.
+
+physical_scrub.py requires a stable repository (offline or trusted snapshot).
+It enumerates HEAD, packed refs, objects, refs and reflogs, checks regular
+files and stable inode/stat metadata, compares SHA256 of aligned Linux
+O_DIRECT reads against buffered reads, then runs Git fsck/verify-pack.
+Unsupported O_DIRECT fails closed; never silently fall back. No guarantee
+of bypassing drive/controller caches. This reads files at least twice
+and Git may read again; benchmark throughput. A live repository can
+change during scan: detected changes invalidate the result, but this is
+not a replacement for an actual snapshot or writer lease. Do not claim
+a 24/48h physical SLO yet. No filesystem scrub scheduling, encrypted
+working-tree verification or node repair cutover yet.

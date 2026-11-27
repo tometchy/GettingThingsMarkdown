@@ -47,11 +47,12 @@ No customer filenames, secrets, Git OIDs or hardware serials are exported in
 metrics/logs. A hashed serial is a stable opaque disk identifier, not a secret.
 The local private JSON is intended for a future disk-to-PV controller and
 hardware ticket adapter. If config becomes invalid, metrics become explicitly
-unknown; the old private JSON is retained only as historical diagnostic data,
-not current authorization. Do not act on it without fresh successful telemetry.
+unknown; the private JSON is atomically replaced with an explicitly invalid report. Do not act without fresh successful telemetry.
 
 CI validates Python fixtures and Prometheus rule behavior with promtool. Both tenant images now also expose a minimal private port 8390 /metrics endpoint for local Git status, including independent scrape and stale/failure alert rules. Tenant NetworkPolicies allow only the gtm-monitoring namespace AND app=gtm-prometheus pod label to scrape this port, no public Service. See git-scrape-example.yaml. Actual Prometheus deployment, CNI NetworkPolicy enforcement, dedicated scraper RBAC and expected-tenant inventory reconciliation remain pending; dynamic pod discovery alone cannot detect a fully deleted target. Local Git health is not cross-cloud agreement or physical disk scrub. Pending: working-tree/physical scrub,
 kernel journal I/O error events, persistent expected node+PV mapping, operator
 quarantine/fencing, source authentication and automatic volume rebuild,
 provider ticket submission, failover and real hardware/throughput validation.
 No paid infrastructure or cluster modifications are performed by this change.
+
+See CONTROLLER.md for the shared incident controller, scoped report transport and opt-in PV reservation. Physical scrub and authenticated staging are documented there too.

@@ -36,7 +36,7 @@ def git(repo, *args, timeout=DAY, capture=False):
                GIT_CONFIG_GLOBAL=os.devnull, GIT_OPTIONAL_LOCKS="0")
     command = ["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
                "-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
-               "-c", "protocol.https.allow=always"]
+               "-c", "protocol.https.allow=always", "-c", "http.followRedirects=false"]
     if repo is not None:
         command += ["--git-dir", str(Path(repo).resolve())]
     try:
