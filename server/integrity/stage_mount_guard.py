@@ -56,6 +56,7 @@ def verify_binding(kube, witness, public, storage_inventory, repair_class, host_
     node = storage_inventory[1].get(cfg["nodeName"])
     require(node and node["cloud"] == identity["target_cloud"] and where
             and where[0] == cfg["nodeName"] and metadata(pv).get("uid") == cfg["pvUid"]
+            and metadata(pv).get("name") == cfg["pvName"]
             and not metadata(pv).get("deletionTimestamp")
             and pv["spec"]["local"]["path"] == cfg["mount"]
             and pv["spec"]["claimRef"]["uid"] == cfg["pvcUid"]
