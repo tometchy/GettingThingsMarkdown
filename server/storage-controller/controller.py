@@ -226,6 +226,7 @@ def reserve(api, record):
         api.patch(endpoint + "?dryRun=All", forbidden)
     except ApiError as exc:
         if not exc.reservation_policy_denied:
+            record["apiFailure"] = {"code": exc.code, "category": exc.category}
             return "reservation_conflict" if exc.code in (409, 422) else "admission_unverified"
     else:
         return "admission_unverified"
@@ -233,6 +234,7 @@ def reserve(api, record):
         api.patch(endpoint, record["patch"])
         return "reservation_requested"
     except ApiError as exc:
+        record["apiFailure"] = {"code": exc.code, "category": exc.category}
         return "reservation_conflict" if exc.code in (409, 422) else "reservation_failed"
 
 

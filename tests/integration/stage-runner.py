@@ -1,0 +1,127 @@
+import base64
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"server/integrity"))
+import stage_runner as runner
+import recovery_crypto as c
+import git_integrity as g
+
+TENANT="gtm-"+"b"*32
+
+
+class FakeAPI:
+    def __init__(self,ticket,key):
+        raw=c.canonical(ticket)
+        self.ticket={"ticket":base64.b64encode(raw).decode(),
+                     "signature":base64.b64encode(c.sign_bytes(raw,key)).decode(),
+                     "activationAllowed":False}
+        self.receipt=None
+        self.fail_submit=False
+
+    def call(self,value):
+        if value["action"]=="status":
+            return {"generation":1,"repair":{"operation":"repair-1","targetRole":"sync",
+                "targetPvcUid":"pvc-uid","state":"staged_verified" if self.receipt else "ticket_issued"}}
+        if value["action"]=="ticket":
+            return self.ticket
+        if self.fail_submit:
+            raise c.RecoveryError("simulated_connection_loss")
+        self.receipt=value["evidence"]
+        return {"state":"staged_verified","activationAllowed":False}
+
+
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root=Path(self.tmp.name)
+        self.root=root/"stage"
+        self.root.mkdir()
+        self.repo=root/"repo"
+        self.repo.mkdir()
+        self.git("init","-qb","main")
+        self.git("config","user.name","CI")
+        self.git("config","user.email","ci@example.invalid")
+        (self.repo/"file").write_bytes(b"ciphertext"*100)
+        self.git("add","file")
+        self.git("commit","-qm","test")
+        for name in ("gtm-tenant","gtm-vault","gtm-mail"):
+            self.git("branch",name)
+        self.keys={}
+        for name in ("witness","target"):
+            key,pub=root/(name+".key"),root/(name+".pub")
+            subprocess.run(["openssl","genpkey","-algorithm","ED25519","-out",str(key)],check=True)
+            subprocess.run(["openssl","pkey","-in",str(key),"-pubout","-out",str(pub)],check=True)
+            self.keys[name]=(key,pub)
+        now=int(time.time())
+        ticket={"schema":1,"operation":"repair-1-1","tenant":TENANT,"generation":1,
+                "issuedUnix":now-1,"expiresUnix":now+600,"sourceRole":"history","sourceCloud":"b",
+                "sourceUrl":str(self.repo/".git"),"targetRole":"sync","targetCloud":"a",
+                "targetPvcUid":"pvc-uid","refs":g.refs(self.repo/".git")}
+        self.api=FakeAPI(ticket,self.keys["witness"][0])
+        self.identity={"tenant":TENANT,"generation":1,"target_role":"sync",
+                       "target_cloud":"a","target_pvc_uid":"pvc-uid"}
+
+    def git(self,*args):
+        return subprocess.check_output(["git","-C",str(self.repo),*args],stderr=subprocess.DEVNULL)
+
+    def run_stage(self):
+        return runner.run(self.api,self.identity,"repair-1",self.root,self.keys["witness"][1],
+                          self.keys["target"][0],60,allow_local_test_source=True)
+
+    def test_rebuild_and_resume_after_lost_receipt(self):
+        self.api.fail_submit=True
+        try:
+            with self.assertRaisesRegex(c.RecoveryError,"simulated_connection_loss"):
+                self.run_stage()
+        except g.IntegrityError as exc:
+            if str(exc)=="direct_io_unsupported":
+                self.skipTest("filesystem does not support direct I/O")
+            raise
+        receipt=self.root/"repair-1-1"/"receipt.json"
+        self.assertTrue(receipt.exists())
+        self.api.fail_submit=False
+        self.assertEqual(self.run_stage()["state"],"staged_verified")
+        signed=c.verify(self.api.receipt,self.keys["target"][1])
+        self.assertTrue(signed["physicalScrub"])
+        self.assertFalse(signed["activationAllowed"])
+        self.assertEqual(self.run_stage()["state"],"already_recorded")
+
+    def test_expired_ticket_cannot_start_new_execution(self):
+        # Expired signature is valid only for receipt recovery from an already
+        # completed staging directory, never for a new fetch.
+        raw=base64.b64decode(self.api.ticket["ticket"])
+        t=json.loads(raw)
+        t["issuedUnix"]=int(time.time())-1200
+        t["expiresUnix"]=int(time.time())-600
+        self.api=FakeAPI(t,self.keys["witness"][0])
+        with self.assertRaisesRegex(c.RecoveryError,"ticket_expired_before_execution"):
+            self.run_stage()
+        self.assertFalse((self.root/"repair-1-1").exists())
+
+    def test_incomplete_staging_never_overwritten(self):
+        stage=self.root/"repair-1-1"
+        stage.mkdir()
+        (stage/"marker").write_text("keep")
+        with self.assertRaisesRegex(c.RecoveryError,"incomplete_staging_requires_new_attempt"):
+            self.run_stage()
+        self.assertEqual((stage/"marker").read_text(),"keep")
+
+    def test_mismatch_and_unverified_mount(self):
+        self.identity["target_pvc_uid"]="wrong"
+        with self.assertRaises(c.RecoveryError):
+            self.run_stage()
+        with self.assertRaises(c.RecoveryError):
+            runner.validate_mount(self.root,"0:0")
+
+
+if __name__=="__main__":
+    unittest.main()
