@@ -37,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Compile Python host code and integration fixtures
+        run: python3 -m compileall -q server/integrity server/storage-controller tests/integration
       - name: Verify Git-only mailbox commit and failed push retry
         run: |
           python3 tests/integration/git-mail-writer.py
