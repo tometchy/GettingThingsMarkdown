@@ -200,6 +200,36 @@ class Tests(unittest.TestCase):
             with self.assertRaises(c.RecoveryError):
                 f.freeze(self.w,TENANT,incident,role,pvc)
 
+    def test_orchestrator_collects_stop_proofs_before_allocation(self):
+        ch=self.w.challenge(TENANT,"anchor")
+        refs={r:"1"*40 for r in w.REQUIRED}
+        def evidence(role):
+            return c.sign({"schema":1,"kind":"replica_scan","tenant":TENANT,"role":role,
+                "cloud":role,"challengeDigest":c.digest(ch["payload"]),"refs":refs,
+                "verifiedUnix":self.now,"appendOnlyVerified":True},self.keys[role][0])
+        self.w.anchor(TENANT,evidence("sync"),evidence("history"))
+        class API:
+            def call(_,value):
+                return api.dispatch(self.w,value)
+        client=API()
+        frozen=f.freeze(self.w,TENANT,"pending")
+        self.now=frozen["payload"]["notBeforeUnix"]
+        allocation={"tenant":TENANT,"incident":"pending","role":"sync",
+                    "activationAllowed":False,"state":"waiting_for_capacity"}
+        def run(**kwargs):
+            return orchestration.reconcile_with_allocator(client,TENANT,"pending","sync",
+                                                           lambda:allocation,**kwargs)
+        result=run(stop_proofs={role:self.stop(frozen,role) for role in ("sync","history")})
+        self.assertEqual(result["state"],"waiting_for_capacity")
+        self.assertEqual(result["missingRoles"],[])
+        self.assertEqual(result["freezeChallenge"],frozen)
+        self.assertEqual(self.w.status(TENANT)["writerFence"]["phase"],"frozen")
+        f.freeze(self.w,TENANT,"pending","sync","new-pvc")
+        allocation.update(state="allocated",targetPvcUid="new-pvc")
+        result=run()
+        self.assertEqual(result["state"],"awaiting_source_evidence")
+        self.assertFalse(result["activationAllowed"])
+
     def test_freeze_concurrent_with_renewal_never_reopens(self):
         req=self.request()
         def call():
