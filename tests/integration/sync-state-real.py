@@ -4,6 +4,7 @@
 Run with --network none. No Syncthing serve, customer data or remote service.
 """
 import io
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -84,6 +85,36 @@ class Tests(unittest.TestCase):
 
     def prepare(self, cfg=None, key=None):
         return s.prepare(self.repo,self.dest,self.manifest,cfg or self.cfg,key or self.key,60)
+
+    def test_canonical_writer_preserves_tenant_metadata_and_retries(self):
+        spec=importlib.util.spec_from_file_location("writer",ROOT/"server/sync/identity-backup-git.py")
+        writer=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(writer)
+        self.git("checkout","-q","gtm-tenant")
+        (self.source/"tenant.json.age").write_bytes(b"opaque tenant configuration")
+        self.git("add","tenant.json.age")
+        self.git("commit","-qm","tenant metadata")
+        self.git("checkout","-q","main")
+        remote=self.root/"remote.git"
+        run("git","init","--bare",str(remote))
+        second=self.root/"second.key"
+        run("age-keygen","-o",str(second))
+        other=run("age-keygen","-y",str(second)).decode().strip()
+        recipients=[self.recipient,other]
+        # First push failure must retain the exact committed ciphertext.
+        with self.assertRaises(subprocess.CalledProcessError):
+            writer.backup(self.source/".git",self.home,recipients,str(self.root/"missing"))
+        first=refs(self.source/".git")["refs/heads/gtm-tenant"]
+        self.assertFalse(writer.backup(self.source/".git",self.home,recipients,str(remote)))
+        self.assertEqual(refs(remote)["refs/heads/gtm-tenant"],first)
+        self.assertEqual(self.git("show","gtm-tenant:tenant.json.age"),b"opaque tenant configuration")
+        self.assertFalse(writer.backup(self.source/".git",self.home,list(reversed(recipients)),str(remote)))
+        self.assertEqual(refs(remote)["refs/heads/gtm-tenant"],first)
+        current=refs(self.source/".git")
+        for key in (self.key,second):
+            result=s.identity_bundle(self.source/".git",current,self.cfg,key,s.time.monotonic()+30)
+            self.assertEqual(result["key.pem"],(self.home/"key.pem").read_bytes())
+        self.assertEqual((self.source/"data"/"opaque name").read_bytes(),self.data)
 
     def test_cold_restore_preserves_exact_identity_and_ciphertext_no_new_git(self):
         result = self.prepare()
