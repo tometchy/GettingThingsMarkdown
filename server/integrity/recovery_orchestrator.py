@@ -39,7 +39,8 @@ def reconcile(api, tenant, incident, target_role, target_pvc, *, evidence=None, 
         if s["writerFence"]["phase"]!="frozen":
             return {"state":"awaiting_writer_stop","incident":incident,
                     "missingRoles":[r for r in ROLES if r not in s["writerFence"]["freeze"]["proofs"]],
-                    "notBeforeUnix":freeze["challenge"]["notBeforeUnix"],"activationAllowed":False}
+                    "notBeforeUnix":freeze["challenge"]["notBeforeUnix"],
+                    "freezeChallenge":call("resume-freeze"),"activationAllowed":False}
     require(s["writerFence"]["phase"]=="frozen","unexpected_writer_phase")
     repair=s.get("repair")
     if repair is None:
@@ -83,6 +84,7 @@ def main():
     p.add_argument("--sync-stop")
     p.add_argument("--history-stop")
     p.add_argument("--challenge-output")
+    p.add_argument("--freeze-output")
     a=p.parse_args()
     try:
         def load(path):
@@ -90,6 +92,10 @@ def main():
         proofs={r:load(v) for r,v in (("sync",a.sync_stop),("history",a.history_stop)) if v}
         result=reconcile(Client(a.endpoint,a.ca,a.cert,a.tls_key),a.tenant,a.incident,a.target_role,
                           a.target_pvc,evidence=load(a.source_evidence),stop_proofs=proofs)
+        freeze_challenge=result.pop("freezeChallenge",None)
+        if freeze_challenge is not None and a.freeze_output:
+            from git_integrity import atomic_json
+            atomic_json(Path(a.freeze_output),freeze_challenge)
         challenge=result.pop("challenge",None)
         if challenge is not None and a.challenge_output:
             # The challenge contains refs, keep it out of logs and private.

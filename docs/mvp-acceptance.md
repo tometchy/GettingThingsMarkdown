@@ -244,3 +244,11 @@ Merged main 1231371b5581932c5985a910facaf6c6e85bd756 CI 46007938584: all jobs pa
 - First HTTPS recovery-source integration failed fetch exit 128 with no production stderr (intentional redaction). Added explicit HTTP/1.1 chunked streaming and successful terminator, and synthetic-only Git transport diagnostics on failure. Actual fetch test must pass before claiming this integration.
 
 - Fence identity now binds every data PVC UID (including optional sync-live), not only Git volume. Read-only recovery_binding.py inspects real-shaped Kubernetes pod/PVC/PV/node identities and expected disk reports, rejects shared PID namespace, mismatched binding, attached/too-small/unhealthy/wrong-cloud target. No Kubernetes or physical mount mutation; fixture tests added. Real allocator and host mount proof still required.
+
+
+### Host-runtime observation increment (2026-11-27)
+- PR #20 merged at cbb016244166a5af1f94a45c3ce8829ad9dc2bef; all six jobs of run 46014002316 passed, including real Kubernetes PV reservation.
+- Host-only collector verifies witness-signed freeze and independently supplied writer/PVC identity, queries local CRI, scans visible Linux cgroups and mount namespaces, reports ambiguous or writable state, and optionally stops the exact enrolled sandbox after the permit deadline. No private signing key, no authorizing stop proof, no automatic production action. Independently verified physical PVC/device inventory is required; durable restart prevention and storage isolation remain missing.
+- Witness mTLS resume-freeze returns the original signed challenge; orchestrator separately exports it for a trusted host. Writer guard ages leases using Linux CLOCK_BOOTTIME (including suspend).
+- New safety tests exercise signed challenges, runtime churn, replacement UID protection, cgroup/mount parsing and real kernel mountinfo. Added real CRI smoke test in existing kind job using disposable pod and exact sandbox stop. New PR CI pending; do not count as passed until verified.
+- No change to cutover/retention blockers, no production provisioning or paid resources. Next integrate durable admission and storage fencing, then allow independently signed role proofs only under those verified conditions.

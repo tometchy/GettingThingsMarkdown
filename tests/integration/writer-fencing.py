@@ -161,7 +161,11 @@ class Tests(unittest.TestCase):
         client=API()
         def run(**kwargs):
             return orchestration.reconcile(client,TENANT,"incident-2","sync","new-pvc",**kwargs)
-        self.assertEqual(run()["state"],"awaiting_writer_stop")
+        pending=run()
+        self.assertEqual(pending["state"],"awaiting_writer_stop")
+        self.assertEqual(c.verify(pending["freezeChallenge"],self.keys["witness"][1]),
+                         self.w.status(TENANT)["writerFence"]["freeze"]["challenge"])
+        self.assertEqual(run()["freezeChallenge"],pending["freezeChallenge"])
         with self.assertRaises(c.RecoveryError):
             orchestration.reconcile(client,TENANT,"incident-2","sync","other-pvc")
         freeze=self.w.status(TENANT)["writerFence"]["freeze"]["challenge"]

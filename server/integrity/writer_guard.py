@@ -8,7 +8,6 @@ This is cooperative process fencing, not a physical disk/provider fence.
 """
 import argparse
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -22,8 +21,14 @@ MAX_TTL = 60
 SKEW = 5
 
 
+def elapsed_clock():
+    # CLOCK_MONOTONIC excludes host suspend on Linux; a lease must age even
+    # while the entire machine is suspended. Unsupported OS fails closed.
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
 class Guard:
-    def __init__(self, tenant, role, identity, key, wall=time.time, mono=time.monotonic):
+    def __init__(self, tenant, role, identity, key, wall=time.time, mono=elapsed_clock):
         self.tenant, self.role, self.identity, self.key = tenant, role, identity, key
         self.wall, self.mono = wall, mono
         self.epoch = self.sequence = self.last_digest = None
@@ -98,7 +103,7 @@ def supervise(guard, permit, command, poll=1, require_pid1=True):
             guard.check(decode(read(permit)))
             time.sleep(min(poll,max(0,guard.deadline-guard.mono())))
         return 1
-    except (RecoveryError,OSError,ValueError,TypeError) as exc:
+    except (RecoveryError,OSError,ValueError,TypeError,AttributeError) as exc:
         print(json.dumps({"event":"gtmd_writer_guard","state":"fenced",
              "reason":str(exc) if isinstance(exc,RecoveryError) else type(exc).__name__}),flush=True)
         return 1

@@ -51,6 +51,7 @@ jobs:
           python3 tests/integration/witness-api.py
           python3 tests/integration/stage-runner.py
           python3 tests/integration/writer-fencing.py
+          python3 tests/integration/host-runtime-fence.py
           python3 tests/integration/recovery-source.py
           python3 tests/integration/recovery-binding.py
           python3 tests/integration/history-purge-candidate.py
@@ -178,6 +179,8 @@ jobs:
           kubectl create namespace gtm-system
       - name: Verify storage controller against real Kubernetes PV binder
         run: bash tests/integration/storage-controller-kind.sh
+      - name: Verify real host CRI inspection and scoped sandbox stop
+        run: python3 tests/integration/host-runtime-kind.py
   infrastructure:
     runs-on: ubuntu-latest
     steps:
