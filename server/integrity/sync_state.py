@@ -130,22 +130,42 @@ def verify_identity(home, bundle, cfg, deadline):
     require(cert == key, "restored_certificate_key_mismatch")
 
 
-def restore_files(repo, files, main, deadline):
-    # Use a disposable Git index, not a second clone or live repo index.
-    # Refuse unsafe tree entries BEFORE checkout. Post-check raw blob hashes
-    # catches any Git checkout transformation; no such tree is accepted.
+def check_tree_capacity(repo, parent, main, deadline, identity_bytes):
+    # One streamed tree traversal before checkout: reject unsafe entries
+    # and conservatively budget filesystem blocks/inodes. Shared ancestors
+    # may be counted repeatedly; fail closed instead of risking ENOSPC.
+    fs = os.statvfs(parent)
+    block = fs.f_frsize
+    require(block > 0, "invalid_staging_filesystem")
+    blocks = (identity_bytes+block-1)//block + 32
+    inodes = 16
     with tempfile.TemporaryFile() as listing:
-        git(repo, "ls-tree", "-r", "-z", "--full-tree", main, output=listing,
+        git(repo, "ls-tree", "-r", "-l", "-z", "--full-tree", main, output=listing,
             timeout=remaining(deadline))
         listing.seek(0)
         for entry in rows(listing):
             remaining(deadline)
             meta, sep, path = entry.partition(b"\t")
-            bits = meta.split(b" ")
-            require(sep and len(bits) == 3 and bits[0] in (b"100644", b"100755")
-                    and bits[1] == b"blob" and all(p not in (b"", b".", b"..", b".git",
+            bits = meta.split()
+            parts = path.lower().split(b"/")
+            require(sep and len(bits) == 4 and bits[0] in (b"100644", b"100755")
+                    and bits[1] == b"blob" and bits[3].isdigit()
+                    and all(p not in (b"", b".", b"..", b".git",
                     b".stfolder", b".stversions", b".stignore") and not p.startswith(b".syncthing.")
-                    for p in path.lower().split(b"/")), "unsafe_sync_tree_entry")
+                    for p in parts), "unsafe_sync_tree_entry")
+            blocks += max(1,(int(bits[3])+block-1)//block) + len(parts)
+            inodes += len(parts)
+    # Small additional reserve for metadata and the ready marker; this
+    # estimate is not a substitute for actual quota enforcement.
+    reserve = max((16*1024*1024+block-1)//block, blocks//20)
+    require(blocks+reserve <= fs.f_bavail and (not fs.f_files or inodes <= fs.f_favail),
+            "insufficient_sync_staging_capacity")
+
+
+def restore_files(repo, files, main, deadline):
+    # Use a disposable Git index, not a second clone or live repo index.
+    # The tree was checked before any state was written. Post-check raw
+    # blob hashes catch any Git checkout transformation.
     files.mkdir(mode=0o700)
     with tempfile.TemporaryDirectory(prefix="gtmd-sync-index-") as d:
         env = {k:v for k,v in os.environ.items() if not k.startswith("GIT_")}
@@ -186,6 +206,7 @@ def prepare(repo, dest, manifest, raw_cfg, age_key, timeout=86400):
                 and {p.name for p in dest.iterdir()} == {"files","syncthing","ready.json"},
                 "incomplete_or_conflicting_sync_state")
     else:
+        check_tree_capacity(repo, dest.parent, main, deadline, sum(map(len,bundle.values())))
         dest.mkdir(mode=0o700)
         home = dest/"syncthing"
         home.mkdir(mode=0o700)
