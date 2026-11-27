@@ -88,7 +88,7 @@ def source_context(api, config, tenant, role, ch):
     return old, where[1], capacity, metadata(claim)["uid"]
 
 
-def compatible(api, config, repair_class, context, pv, volumes, now):
+def compatible(api, config, repair_class, context, pv, volumes, now, health_cache=None):
     classes, nodes = config
     old, old_disk, capacity, _ = context
     m, spec = metadata(pv), pv["spec"]
@@ -103,22 +103,29 @@ def compatible(api, config, repair_class, context, pv, volumes, now):
             and name(ident(pv)) and not m.get("deletionTimestamp")
             and size(spec["capacity"]["storage"]) >= capacity):
         return False
+    # Reuse one health sample per candidate node during selection. Recheck
+    # independently after creation/binding. No new polling service.
+    node = nodes[where[0]]
+    cache = {} if health_cache is None else health_cache
+    if node["name"] not in cache:
+        live = get_optional(api, "/api/v1/nodes/" + node["name"])
+        report = get_optional(api, "/api/v1/namespaces/gtm-storage-reports/configmaps/" + node["name"])
+        cache[node["name"]] = (report_states(node, live, report, now) if live
+            and not metadata(live).get("deletionTimestamp") and not live.get("spec", {}).get("unschedulable") else {})
+    if cache[node["name"]].get(where[1]) != "healthy":
+        return False
     # Never use two local PV definitions of overlapping paths on one node.
     path = PurePosixPath(spec["local"]["path"])
     for v in volumes:
         if metadata(v).get("uid") == m["uid"]:
             continue
         loc = mapping(v, nodes)
-        if loc and loc[0] == where[0]:
-            p = PurePosixPath(v["spec"]["local"]["path"])
+        other_path = v.get("spec", {}).get("local", {}).get("path")
+        if other_path and (loc is None or loc[0] == where[0]):
+            p = PurePosixPath(other_path)
             if p == path or p in path.parents or path in p.parents:
                 return False
-    node = nodes[where[0]]
-    live = get_optional(api, "/api/v1/nodes/" + node["name"])
-    report = get_optional(api, "/api/v1/namespaces/gtm-storage-reports/configmaps/" + node["name"])
-    return (bool(live) and not metadata(live).get("deletionTimestamp")
-            and not live.get("spec", {}).get("unschedulable")
-            and report_states(node, live, report, now)[where[1]] == "healthy")
+    return True
 
 
 def claim_spec(pv, tenant, role, ch, context, repair_class):
@@ -179,11 +186,14 @@ def reconcile(api, witness, public, config, repair_class, tenant, incident, role
                 "existing_repair_plan_conflict")
     volumes = list(api.list("/api/v1/persistentvolumes"))
     if actual is None:
-        candidates = [pv for pv in volumes if reserve_patch(pv) and
-                      compatible(api, config, repair_class, context, pv, volumes, now())]
-        if not candidates:
+        candidates = sorted((pv for pv in volumes if reserve_patch(pv)
+                             and pv["spec"].get("storageClassName") == repair_class),
+                            key=lambda v: (size(v["spec"]["capacity"]["storage"]), ident(v)))
+        cache = {}
+        pv = next((v for v in candidates if compatible(api, config, repair_class, context,
+                   v, volumes, now(), cache)), None)
+        if pv is None:
             return result("waiting_for_capacity")
-        pv = min(candidates, key=lambda v: (size(v["spec"]["capacity"]["storage"]), ident(v)))
         expected = claim_spec(pv, tenant, role, ch, context, repair_class)
         if not apply:
             return result("allocation_required", candidatePV=ident(pv))
@@ -207,9 +217,10 @@ def reconcile(api, witness, public, config, repair_class, tenant, incident, role
     uid = metadata(actual)["uid"]
     if ref:
         require(ref.get("namespace") == NAMESPACE and ref.get("name") == claim_name
-                and ref.get("uid", uid) == uid, "target_volume_claim_conflict")
-    if actual["status"]["phase"] != "Bound" or pv["status"]["phase"] != "Bound":
-        require(actual["status"]["phase"] == "Pending"
+                and ref.get("uid") in (None, "", uid), "target_volume_claim_conflict")
+    phase = actual.get("status", {}).get("phase", "Pending")
+    if phase != "Bound" or pv["status"]["phase"] != "Bound":
+        require(phase == "Pending"
                 and pv["status"]["phase"] in ("Available", "Bound"), "repair_binding_failed")
         return result("waiting_for_binding", targetPvcUid=uid)
     bound(actual, pv, NAMESPACE)
