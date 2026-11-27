@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import time
@@ -51,14 +52,49 @@ def get_ticket(api, identity, operation):
     return base64.b64decode(result["ticket"],validate=True), base64.b64decode(result["signature"],validate=True)
 
 
+def validate_contents(root, operation):
+    # Fresh filesystem or attempts from this exact witness operation only.
+    # Never delete, reuse or overwrite other content.
+    for entry in root.iterdir():
+        if entry.name == "lost+found":
+            require(entry.is_dir() and not entry.is_symlink() and not any(entry.iterdir()),
+                    "unexpected_staging_content")
+        elif entry.name == ".gtmd-stage.lock":
+            require(entry.is_file() and not entry.is_symlink(), "unexpected_staging_content")
+        else:
+            require(re.fullmatch(re.escape(operation) + r"-[1-9][0-9]*", entry.name)
+                    and entry.is_dir() and not entry.is_symlink(), "unexpected_staging_content")
+
+
 def run(api, identity, operation, root, witness_public, target_key, timeout=86400,
-        allow_local_test_source=False):
+        allow_local_test_source=False, guard=None):
     require(identifier(operation) and TENANT.fullmatch(identity["tenant"]), "invalid_operation")
     root = Path(root)
-    # Host lock protects staging against concurrent runners on one mount.
-    fd = os.open(root/".gtmd-stage.lock", os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    require(guard is not None or allow_local_test_source, "verified_staging_binding_required")
+    # Hold the mount open throughout the job: ordinary unmount is busy.
+    # No writes before the first real binding check. A privileged lazy
+    # unmount remains outside the trusted-host guarantee.
+    root_fd = os.open(root, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    fd = None
+    def check():
+        if guard is not None:
+            observed = guard()
+            require(Path(observed["mount"]) == root, "staging_mount_path_mismatch")
+            validate_mount(root, observed["device"])
+        pinned = os.fstat(root_fd)
+        current = root.stat(follow_symlinks=False)
+        require((pinned.st_dev, pinned.st_ino) == (current.st_dev, current.st_ino),
+                "staging_mount_changed")
     try:
+        check()
+        # Lock relative to the pinned directory, not an untrusted path.
+        fd = os.open(".gtmd-stage.lock", os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC,
+                     0o600, dir_fd=root_fd)
+        lock = os.fstat(fd)
+        require(stat.S_ISREG(lock.st_mode) and lock.st_uid == os.getuid()
+                and not lock.st_mode & 0o077, "insecure_stage_lock")
         fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        validate_contents(root, operation)
         pair = get_ticket(api,identity,operation)
         if pair is None:
             return {"state":"already_recorded","activationAllowed":False}
@@ -71,6 +107,7 @@ def run(api, identity, operation, root, witness_public, target_key, timeout=8640
                     **identity,allow_local_test_source=allow_local_test_source,
                     allow_expired_for_receipt=True)
         require(ticket["operation"].startswith(operation+"-"),"ticket_operation_mismatch")
+        check()
         destination=root/ticket["operation"]
         receipt_path=destination/"receipt.json"
         if destination.exists() or destination.is_symlink():
@@ -93,27 +130,54 @@ def run(api, identity, operation, root, witness_public, target_key, timeout=8640
             require(time.time() < ticket["expiresUnix"], "ticket_expired_before_execution")
             receipt=execute(ticket,digest,destination,timeout,physical=True)
         require(receipt.get("state")=="staged_verified","invalid_receipt")
+        check()
         return api.call({"action":"receipt","tenant":identity["tenant"],
                          "operation":operation,"evidence":sign(receipt,target_key)})
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
+        os.close(root_fd)
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for k in ("endpoint","ca","cert","tls-key","tenant","target-role","target-cloud",
-              "target-pvc-uid","operation","mount","mount-dev","witness-public","target-key"):
+              "target-pvc-uid","operation","witness-public","target-key",
+              "binding-inventory","storage-inventory","repair-class","kube-endpoint","kube-ca","kube-token"):
         p.add_argument("--"+k,required=True)
     p.add_argument("--generation",type=int,required=True)
     p.add_argument("--timeout",type=int,default=86400)
     a=p.parse_args()
     try:
-        root=validate_mount(a.mount,a.mount_dev)
+        from stage_mount_guard import configuration, verify_binding
+        from controller import inventory
+        from local_lvm_fence import Lvm
+        from kube_client import Kube, ApiError
+        require(os.geteuid() == 0, "trusted_host_root_required")
+        for path in (a.binding_inventory, a.storage_inventory, a.witness_public, a.target_key,
+                     a.ca, a.cert, a.tls_key, a.kube_ca, a.kube_token):
+            st = Path(path).lstat()
+            require(stat.S_ISREG(st.st_mode) and st.st_uid == 0 and not st.st_mode & 0o022,
+                    "host_trust_file_not_root_owned")
+        for path in (a.target_key, a.tls_key, a.kube_token):
+            require(not Path(path).stat().st_mode & 0o077, "insecure_host_credential")
+        host = configuration(decode(read(a.binding_inventory)))
+        storage = inventory(decode(read(a.storage_inventory)))
         identity={k:getattr(a,k) for k in ("tenant","generation","target_role","target_cloud","target_pvc_uid")}
-        result=run(Client(a.endpoint,a.ca,a.cert,a.tls_key),identity,a.operation,root,
-                   a.witness_public,a.target_key,a.timeout)
+        witness = Client(a.endpoint,a.ca,a.cert,a.tls_key)
+        kube = Kube(a.kube_endpoint,a.kube_ca,a.kube_token)
+        lvm = Lvm()
+        machine = Path("/etc/machine-id").read_text().strip()
+        def guard():
+            try:
+                return verify_binding(kube,witness,a.witness_public,storage,a.repair_class,
+                                      host,identity,a.operation,lvm,machine)
+            except ApiError as exc:
+                raise RecoveryError("staging_kubernetes_http_" + str(exc.code)) from None
+        result=run(witness,identity,a.operation,Path(host["mount"]),
+                   a.witness_public,a.target_key,a.timeout,guard=guard)
         print(json.dumps(result,separators=(",",":")))
-    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError) as exc:
+    except (RecoveryError,IntegrityError,OSError,ValueError,KeyError,TypeError,AttributeError,ImportError) as exc:
         print(json.dumps({"event":"gtmd_stage_runner","state":"failed",
             "reason":str(exc) if isinstance(exc,(RecoveryError,IntegrityError)) else type(exc).__name__}))
         return 1
