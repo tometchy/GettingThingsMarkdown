@@ -97,8 +97,9 @@ Independent root-owned binding inventory:
 
 The host must independently prepare the exact LV, name pvc-<PVC UID>,
 owner tags and mounted ext4/XFS path; no implicit formatting, rename or
-mount action. Use read-only Kubernetes GET/LIST/report credentials (no
-claim creation or mutation) and private witness/target signing keys.
+mount action. Use the gtm-repair-stage service account from the optional allocator chart
+(short-lived TokenRequest; no claim creation or mutation), and private
+witness/target signing keys.
 The CLI currently runs on trusted root host because LVM inspection needs
 privileged access; production privilege separation and hardening remain
 required. Reuses allocator inspection in read-only mode, so actual bound
