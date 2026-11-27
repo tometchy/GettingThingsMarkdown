@@ -52,6 +52,7 @@ jobs:
           python3 tests/integration/stage-runner.py
           python3 tests/integration/writer-fencing.py
           python3 tests/integration/host-runtime-fence.py
+          python3 tests/integration/namespace-fence.py
           python3 tests/integration/recovery-source.py
           python3 tests/integration/recovery-binding.py
           python3 tests/integration/history-purge-candidate.py
@@ -167,20 +168,27 @@ jobs:
       - name: Build only the storage controller
         run: docker build -f server/storage-controller/Dockerfile -t gtm/storage-controller:ci .
       - uses: helm/kind-action@v1.14.0
+        id: kind_ready
         with:
           cluster_name: gtm
           config: infrastructure/kind/config.yaml
       - uses: azure/setup-helm@v4.3.0
+        id: helm_ready
         with:
           version: v3.17.4
       - name: Load controller and create its system namespace
+        id: controller_ready
         run: |
           kind load docker-image --name gtm gtm/storage-controller:ci
           kubectl create namespace gtm-system
       - name: Verify storage controller against real Kubernetes PV binder
         run: bash tests/integration/storage-controller-kind.sh
       - name: Verify real host CRI inspection and scoped sandbox stop
+        if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
         run: python3 tests/integration/host-runtime-kind.py
+      - name: Verify signed freeze admission barrier against real Kubernetes
+        if: ${{ !cancelled() && steps.kind_ready.outcome == 'success' && steps.helm_ready.outcome == 'success' && steps.controller_ready.outcome == 'success' }}
+        run: python3 tests/integration/namespace-fence-kind.py
   infrastructure:
     runs-on: ubuntu-latest
     steps:
@@ -225,6 +233,13 @@ jobs:
             --set storageController.managedClasses[0]=ci-local > /tmp/storage-controller-write.yaml
           grep -q -- '--reserve-available' /tmp/storage-controller-write.yaml
           grep -q 'kind: ValidatingAdmissionPolicyBinding' /tmp/storage-controller-write.yaml
+      - name: Validate optional writer freeze admission policy
+        run: |
+          helm template gtm infrastructure/helm/gtm-controlplane > /tmp/gtm-no-writer-fence.yaml
+          ! grep -q 'gtmd-frozen-namespace-no-writers' /tmp/gtm-no-writer-fence.yaml
+          helm template gtm infrastructure/helm/gtm-controlplane --set writerFence.enabled=true > /tmp/gtm-writer-fence.yaml
+          grep -q 'gtmd-frozen-namespace-no-writers' /tmp/gtm-writer-fence.yaml
+          grep -q 'gtmd-writer-freeze-marker' /tmp/gtm-writer-fence.yaml
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.10.0

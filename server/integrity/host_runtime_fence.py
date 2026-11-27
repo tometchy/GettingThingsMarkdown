@@ -17,6 +17,7 @@ import time
 from recovery_crypto import RecoveryError, decode, digest, read, verify
 from recovery_witness import TENANT, identifier, require
 from writer_fence import identity, CLOCK_SKEW
+from witness_client import Client
 
 UID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 DEVICE = re.compile(r"[0-9]+:[0-9]+\Z")
@@ -205,10 +206,19 @@ def observe(cri, cfg, ch, *, stop=False, kernel=kernel_view, now=time.time):
             "stopEvidenceEligible": False}
 
 
+def verify_active_freeze(witness, public, cfg, expected, now):
+    current = challenge(witness.call({"tenant": cfg["tenant"], "action": "resume-freeze"}),
+                        public, cfg, now)
+    require(digest(current) == digest(expected), "freeze_not_current")
+    return current
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("inventory", "freeze-challenge", "witness-public", "cri-socket"):
         p.add_argument("--" + name, required=True)
+    for name in ("witness-endpoint", "witness-ca", "witness-cert", "witness-tls-key"):
+        p.add_argument("--" + name)
     p.add_argument("--stop-enrolled", action="store_true",
                    help="Stop exact enrolled sandbox only; never use for automatic live cutover.")
     a = p.parse_args()
@@ -220,6 +230,11 @@ def main():
                     "host_trust_file_not_root_owned")
         cfg = configuration(decode(read(a.inventory)))
         ch = challenge(decode(read(a.freeze_challenge)), a.witness_public, cfg, int(time.time()))
+        if a.stop_enrolled:
+            require(all((a.witness_endpoint, a.witness_ca, a.witness_cert, a.witness_tls_key)),
+                    "online_witness_required_for_runtime_stop")
+            verify_active_freeze(Client(a.witness_endpoint, a.witness_ca, a.witness_cert, a.witness_tls_key),
+                                 a.witness_public, cfg, ch, int(time.time()))
         result = observe(Cri(a.cri_socket), cfg, ch, stop=a.stop_enrolled)
         print(json.dumps(result, separators=(",", ":")))
     except (RecoveryError, OSError, ValueError, KeyError, TypeError, AttributeError,

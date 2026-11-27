@@ -70,6 +70,22 @@ class Tests(unittest.TestCase):
             with self.assertRaises(c.RecoveryError):
                 f.challenge(envelope, public, CFG, 165)
 
+    def test_stop_rejects_valid_but_different_current_freeze(self):
+        with tempfile.TemporaryDirectory() as d:
+            private, public = Path(d) / "key", Path(d) / "pub"
+            subprocess.run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(private)], check=True)
+            subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)], check=True)
+            class Witness:
+                envelope = c.sign(CH, private)
+                def call(self, request):
+                    assert request == {"tenant": TENANT, "action": "resume-freeze"}
+                    return self.envelope
+            witness = Witness()
+            self.assertEqual(f.verify_active_freeze(witness, public, CFG, CH, 165), CH)
+            witness.envelope = c.sign({**CH, "nonce": "d" * 64}, private)
+            with self.assertRaises(c.RecoveryError):
+                f.verify_active_freeze(witness, public, CFG, CH, 165)
+
     def test_observation_and_scoped_stop_never_authorize(self):
         cri = Runtime()
         report = f.observe(cri, CFG, CH, kernel=kernel, now=lambda: 165)

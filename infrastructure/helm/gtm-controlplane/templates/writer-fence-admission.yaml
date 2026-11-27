@@ -1,0 +1,93 @@
+{{- if .Values.writerFence.enabled }}
+# Optional fail-closed admission barrier. Install and test before granting
+# the separately provisioned per-tenant actor patch access.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-writer-freeze-marker
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["namespaces", "namespaces/finalize", "namespaces/status"]
+        scope: Cluster
+  matchConditions:
+    - name: tenant-namespace
+      expression: '(request.operation == "DELETE" ? oldObject.metadata.name : object.metadata.name).matches("^gtm-[a-f0-9]{32}$")'
+  variables:
+    - name: key
+      expression: '"gtmd.io/freeze-digest"'
+    - name: before
+      expression: 'oldObject != null && has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {}'
+    - name: after
+      expression: 'object != null && has(object.metadata.annotations) ? object.metadata.annotations : {}'
+    - name: subresource
+      expression: 'has(request.subResource) ? request.subResource : ""'
+    - name: actor
+      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Values.namespace }}:" + (request.operation == "DELETE" ? oldObject.metadata.name : object.metadata.name) + "-fence"'
+  validations:
+    - expression: '!(variables.key in variables.before) || (request.operation == "UPDATE" && variables.subresource != "finalize" && variables.key in variables.after && variables.after[variables.key] == variables.before[variables.key])'
+      message: "GTMD frozen namespace marker is immutable; deletion and finalization are denied"
+      reason: Forbidden
+    - expression: '!(variables.key in variables.after) || variables.after[variables.key].matches("^[a-f0-9]{64}$")'
+      message: "GTMD freeze marker must be a SHA-256 digest"
+      reason: Forbidden
+    - expression: '!(variables.key in variables.after) || variables.key in variables.before || (request.operation == "UPDATE" && variables.subresource == "" && variables.actor)'
+      message: "GTMD freeze marker may only be installed by the dedicated actor"
+      reason: Forbidden
+    - expression: '!variables.actor || (request.operation == "UPDATE" && variables.subresource == "" && variables.key in variables.after && object.spec == oldObject.spec && object.status == oldObject.status && (has(object.metadata.labels) == has(oldObject.metadata.labels)) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && (has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && (has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && variables.before.all(k, k == variables.key || (k in variables.after && variables.before[k] == variables.after[k])) && variables.after.all(k, k == variables.key || (k in variables.before && variables.before[k] == variables.after[k])))'
+      message: "GTMD freeze actor may only add the immutable freeze marker"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-writer-freeze-marker
+spec:
+  policyName: gtmd-writer-freeze-marker
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gtmd-frozen-namespace-no-writers
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers", "pods/resize", "pods/binding", "bindings"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["persistentvolumeclaims"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CONNECT"]
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
+        scope: Namespaced
+  matchConditions:
+    - name: tenant-namespace
+      expression: 'request.namespace.matches("^gtm-[a-f0-9]{32}$")'
+  validations:
+    # No objectSelector: a differently named or labeled pod is not an escape.
+    # A missing namespace object is unknown, not an unfrozen tenant.
+    - expression: 'namespaceObject != null && (!has(namespaceObject.metadata.annotations) || !("gtmd.io/freeze-digest" in namespaceObject.metadata.annotations))'
+      message: "GTMD tenant namespace is frozen; writer admission denied"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gtmd-frozen-namespace-no-writers
+spec:
+  policyName: gtmd-frozen-namespace-no-writers
+  validationActions: [Deny]
+{{- end }}

@@ -227,3 +227,70 @@ before declaring the integration verified.
 Writer guard now uses Linux CLOCK_BOOTTIME for lease expiry across host
 suspend; a resumed process may still run before the next supervisor
 poll. This is not a replacement for external host/storage fencing.
+
+
+## Kubernetes admission barrier (development, no release path)
+
+Install the optional Helm writerFence.enabled=true policy and its Deny
+bindings on Kubernetes >=1.30 before granting any actor RBAC. Provision
+one independent service account per tenant in the configured chart system
+namespace, named <tenant>-fence, using namespace_fence.actor_manifest().
+It grants only GET/PATCH of that exact Namespace resource name; no pod,
+PVC, PV, policy, secret or RBAC writes. Use short-lived TokenRequest
+credentials outside tenant pods. Do not give tenant users token creation
+or service-account impersonation permissions in the system namespace.
+The actor can cause denial of service to its tenant if compromised, but
+cannot remove the marker or activate a writer. CEL does not verify the
+witness signature; the trusted actor does. A cluster administrator who
+can remove admission policies remains outside this guarantee.
+
+Install server/storage-controller/namespace_fence.py and kube_client.py
+with the existing server/integrity Python modules on a trusted coordinator
+(PYTHONPATH must include both directories). The inventory is independently
+provisioned and pinned to the real Namespace UID and local role's enrolled
+pod/node/PVC identities:
+
+    {"tenant":"gtm-<32 hex>","namespaceUid":"<UUID>","role":"sync",
+     "identity":{"podUid":"<UUID>","nodeUid":"<UUID>","pvcUids":["<UUID>"]}}
+
+The adapter fetches the CURRENT signed freeze from the mTLS witness,
+validates the signature and identity, then compares Namespace UID,
+resourceVersion, and phase. Read-only by default. With explicit
+--apply-development-freeze it dry-runs a malformed marker write and
+requires the exact expected admission denial (generic 403/422 is
+insufficient), then installs gtmd.io/freeze-digest with JSON Patch CAS.
+Reconciliation is idempotent; different marker, missing policy, missing
+namespace, CAS conflict or unavailable witness block the operation.
+On both clouds apply against each independently provisioned namespace
+and role. This is an explicit development operation, not yet automatically
+called by the incident controller.
+
+The marker is immutable, including for the actor; namespace delete and
+finalize are denied. The dedicated actor cannot modify unrelated
+annotations, labels, status or namespace spec. Frozen tenant namespaces
+deny new pods (any name/label), pod updates including ephemeral containers,
+binding, resize, new/changed/deleted PVCs, and pod exec/attach/portforward
+connections. Pod deletion and pod/PVC status updates remain allowed.
+No in-namespace staging Job is allowed: later use the separately trusted
+host runner or another explicitly isolated staging location. Allocate the
+replacement claim before freeze. No release/unfreeze mechanism exists yet.
+Never remove a production policy binding to bypass the barrier.
+
+This is admission-level prevention, NOT physical storage fencing.
+API-server caches, already admitted requests, kubelet restarts of existing
+containers, existing exec connections, static pods, host root/raw device
+access, an unreachable cluster and rollback of its datastore are not
+covered. Marker presence and marker-policy dry-run do NOT prove the
+workload policy is currently enforced on every API server. The adapter
+always reports workloadAdmissionVerified=false, stopEvidenceEligible=false
+and activationAllowed=false. Durable host/provider isolation is mandatory.
+Existing CRI collector --stop-enrolled now additionally requires
+--witness-endpoint, --witness-ca, --witness-cert, --witness-tls-key and
+compares the challenge against the current online witness freeze before
+requesting a stop. This still cannot prove physical isolation.
+
+CI tests real Kubernetes admission with an enrolled disposable StatefulSet,
+real witness signatures and a scoped service account token, attempts
+alternate pod access to the old claim, tests immutable marker and
+cross-tenant isolation, and verifies StatefulSet recreation rejection.
+These are development tests, not production multi-cloud proof.
