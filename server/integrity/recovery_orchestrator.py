@@ -21,12 +21,17 @@ def reconcile(api, tenant, incident, target_role, target_pvc, *, evidence=None, 
         return api.call({"tenant":tenant,"action":action,**fields})
     s=call("status")
     require(s.get("writerFence"), "writer_fencing_not_enrolled")
-    # Initial mutation writes target identity and freezes in one witness CAS.
-    # Every later retry must match the immutable intent.
+    # An emergency freeze may precede allocation. Attach the target once;
+    # every later retry must match the immutable incident and intent.
     if s["writerFence"]["phase"]=="open":
         call("plan-repair",incident=incident,targetRole=target_role,targetPvcUid=target_pvc)
         s=call("status")
     freeze=s["writerFence"]["freeze"]
+    if freeze.get("plan") is None:
+        require(freeze["incident"]==incident,"repair_intent_mismatch")
+        call("plan-repair",incident=incident,targetRole=target_role,targetPvcUid=target_pvc)
+        s=call("status")
+        freeze=s["writerFence"]["freeze"]
     plan=freeze.get("plan")
     require(freeze["incident"]==incident and plan and plan["targetRole"]==target_role
             and plan["targetPvcUid"]==target_pvc and plan["generation"]==s["generation"]
