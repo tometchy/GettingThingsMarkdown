@@ -49,6 +49,7 @@ jobs:
           python3 tests/integration/worktree-integrity.py
           python3 tests/integration/recovery-witness.py
           python3 tests/integration/witness-api.py
+          python3 tests/integration/stage-runner.py
           python3 tests/integration/history-purge-candidate.py
       - name: Test storage-health Prometheus alert rules
         run: |

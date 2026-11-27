@@ -27,7 +27,8 @@ ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 ROLES = ("sync", "history")
 REQUIRED = {"refs/heads/" + b for b in ("main", "gtm-tenant", "gtm-vault", "gtm-mail")}
-TTL = 600
+TTL = 48 * 3600
+EVIDENCE_MAX_AGE = 24 * 3600
 TICKET_TTL = 900
 
 
@@ -91,6 +92,21 @@ class Witness:
     def now(self):
         return int(self.clock())
 
+    def trust_digest(self, tenant):
+        return digest({role: {k: entry[k] for k in ('cloud', 'sourceUrl', 'fingerprint')}
+                       for role, entry in self.cfg[tenant].items()})
+
+    def read_state(self, path, tenant):
+        state = verify(decode(read(path)), self.key, private=True)
+        require(isinstance(state, dict) and state.get('schema') == 1 and state.get('tenant') == tenant
+                and state.get('trustDigest') == self.trust_digest(tenant), 'invalid_witness_state_or_trust_change')
+        if state['generation']:
+            anchor = verify(state['anchor'], self.key, private=True)
+            require(anchor['generation'] == state['generation'] and anchor['tenant'] == tenant
+                    and anchor['refsDigest'] == digest(state['refs'])
+                    and digest(anchor) == state['anchorDigest'], 'invalid_anchor')
+        return state
+
     @contextlib.contextmanager
     def transaction(self, tenant, initialize=False):
         require(tenant in self.cfg and TENANT.fullmatch(tenant), "unknown_tenant")
@@ -101,20 +117,20 @@ class Witness:
             path = self.root / (tenant + ".json")
             if path.exists():
                 # Corrupt metadata fails closed; no implicit reinitialization.
-                state = decode(read(path))
-                require(state.get("schema") == 1 and state.get("tenant") == tenant, "invalid_witness_state")
+                state = self.read_state(path, tenant)
             else:
                 require(initialize, "witness_state_missing")
                 # A missing state is never implicitly treated as genesis. The
                 # independent provisioning process must explicitly enroll it.
                 state = {"schema": 1, "tenant": tenant, "generation": 0,
+                         "trustDigest": self.trust_digest(tenant),
                          "refs": {}, "anchorDigest": None, "challenge": None,
                          "repair": None, "lastClosedRepair": None, "revision": 0}
             if initialize:
                 require(not path.exists(), "tenant_already_initialized")
             yield state
             state["revision"] += 1
-            self.write(path, canonical(state))
+            self.write(path, canonical(sign(state, self.key)))
         finally:
             os.close(fd)
 
@@ -148,9 +164,7 @@ class Witness:
         path = self.root / (tenant + ".json")
         if not path.exists():
             raise RecoveryError("witness_state_missing")
-        state = decode(read(path))
-        require(state.get("tenant") == tenant, "invalid_witness_state")
-        return state
+        return self.read_state(path, tenant)
 
     def challenge(self, tenant, kind, target_role=None, target_pvc=None):
         with self.transaction(tenant) as s:
@@ -180,7 +194,8 @@ class Witness:
         require(data["schema"] == 1 and data["kind"] == "replica_scan" and data["tenant"] == s["tenant"]
                 and data["role"] == role and data["cloud"] == entry["cloud"]
                 and data["challengeDigest"] == digest(challenge), "evidence_identity_mismatch")
-        require(type(data["verifiedUnix"]) is int and challenge["issuedUnix"] <= data["verifiedUnix"] <= self.now(),
+        require(type(data["verifiedUnix"]) is int and challenge["issuedUnix"] <= data["verifiedUnix"] <= self.now()
+                and self.now() - data["verifiedUnix"] <= EVIDENCE_MAX_AGE,
                 "evidence_time_invalid")
         require(data["appendOnlyVerified"] is True, "append_only_not_verified")
         return refmap(data["refs"])

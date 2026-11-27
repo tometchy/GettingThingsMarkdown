@@ -86,13 +86,15 @@ def sign_bytes(raw, key):
     return sig
 
 
-def verify_bytes(raw, sig, key):
-    public_der(key)
+def verify_bytes(raw, sig, key, private=False):
+    der = public_der(key, private)
+    # Verify using only the derived public key, even for local witness state.
+    pem = b'-----BEGIN PUBLIC KEY-----\n' + base64.b64encode(der) + b'\n-----END PUBLIC KEY-----\n'
     if len(sig) != 64:
         raise RecoveryError("invalid_signature_length")
     with tempfile.TemporaryDirectory() as d:
         p = Path(d)
-        for name, content in (("message", raw), ("sig", sig), ("key", read(key, 4096))):
+        for name, content in (("message", raw), ("sig", sig), ("key", pem)):
             (p / name).write_bytes(content)
         run("pkeyutl", "-verify", "-pubin", "-inkey", str(p / "key"), "-rawin",
             "-in", str(p / "message"), "-sigfile", str(p / "sig"))
@@ -102,12 +104,12 @@ def sign(payload, key):
     return {"payload": payload, "signature": base64.b64encode(sign_bytes(canonical(payload), key)).decode()}
 
 
-def verify(envelope, key):
+def verify(envelope, key, private=False):
     if not isinstance(envelope, dict) or set(envelope) != {"payload", "signature"}:
         raise RecoveryError("invalid_envelope")
     try:
         sig = base64.b64decode(envelope["signature"], validate=True)
     except (ValueError, TypeError) as exc:
         raise RecoveryError("invalid_signature_encoding") from exc
-    verify_bytes(canonical(envelope["payload"]), sig, key)
+    verify_bytes(canonical(envelope["payload"]), sig, key, private)
     return envelope["payload"]

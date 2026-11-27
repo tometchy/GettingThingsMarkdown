@@ -163,6 +163,31 @@ class Tests(unittest.TestCase):
         with self.assertRaises(crypto.RecoveryError):
             w.config(self.config,self.keys["witness"])
 
+    def test_signed_state_detects_corruption_and_trust_change(self):
+        self.anchor()
+        path = self.state / (TENANT+".json")
+        raw = path.read_bytes()
+        envelope = json.loads(raw)
+        envelope["payload"]["generation"] = 99
+        path.write_text(json.dumps(envelope))
+        with self.assertRaises(crypto.RecoveryError):
+            self.w.status(TENANT)
+        path.write_bytes(raw)
+        changed = json.loads(self.config.read_text())
+        changed["tenants"][TENANT]["sync"]["sourceUrl"] = "https://different.example.invalid/repo.git"
+        self.config.write_text(json.dumps(changed))
+        other = w.Witness(self.state, w.config(self.config,self.keys["witness"]),
+                          self.keys["witness"], lambda:self.now)
+        with self.assertRaisesRegex(crypto.RecoveryError,"invalid_witness_state_or_trust_change"):
+            other.status(TENANT)
+
+    def test_stale_evidence_even_before_challenge_expiry(self):
+        ch = self.w.challenge(TENANT,"anchor")
+        a,b = self.attest(ch,"sync"),self.attest(ch,"history")
+        self.now += w.EVIDENCE_MAX_AGE+1
+        with self.assertRaisesRegex(crypto.RecoveryError,"evidence_time_invalid"):
+            self.w.anchor(TENANT,a,b)
+
     def test_missing_state_is_not_valid_anchor(self):
         (self.state / (TENANT+".json")).unlink()
         with self.assertRaisesRegex(crypto.RecoveryError,"witness_state_missing"):
