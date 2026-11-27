@@ -33,6 +33,28 @@ def inventory(raw):
     return raw
 
 
+def actor_manifest(tenant, system_namespace="gtm-system"):
+    """Generate scoped identities for trusted offline provisioning, never apply."""
+    require(isinstance(tenant, str) and TENANT.fullmatch(tenant)
+            and isinstance(system_namespace, str)
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", system_namespace),
+            "invalid_fence_actor_scope")
+    name = tenant + "-fence"
+    return {"apiVersion": "v1", "kind": "List", "items": [
+        {"apiVersion": "v1", "kind": "ServiceAccount",
+         "metadata": {"name": name, "namespace": system_namespace},
+         "automountServiceAccountToken": False},
+        {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+         "metadata": {"name": name},
+         "rules": [{"apiGroups": [""], "resources": ["namespaces"],
+                    "resourceNames": [tenant], "verbs": ["get", "patch"]}]},
+        {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding",
+         "metadata": {"name": name},
+         "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": name},
+         "subjects": [{"kind": "ServiceAccount", "name": name, "namespace": system_namespace}]}
+    ]}
+
+
 def namespace_state(ns, cfg):
     m = ns["metadata"]
     require(m.get("name") == cfg["tenant"] and m.get("uid") == cfg["namespaceUid"]
